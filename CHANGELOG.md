@@ -6,6 +6,16 @@ binary and is what the **Patch notes** tab in the app shows.
 Format: `## [version] - date`, an optional one-paragraph summary, then `### Added`,
 `### Changed`, `### Fixed` or `### Removed` with one bullet per change.
 
+## [0.7.10] - 2026-09-19
+
+### Added
+- **Library artwork.** The library cards now show the picture Jellyfin uses for each library on its home screen, in the top right corner, and so does the library's own page. It comes through finstats' image proxy like the posters do. A library without a picture just shows none.
+
+## [0.7.10] - 2026-09-19
+
+### Added
+- **Library artwork.** Each library card now shows the picture Jellyfin uses for that library on its home screen, in place of the plain icon on the left; the library's own page shows it too. It comes through finstats' image proxy like the posters do. A library without a picture keeps its icon.
+
 ## [0.7.9] - 2026-09-19
 
 ### Changed
