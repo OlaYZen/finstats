@@ -1311,7 +1311,14 @@ pub async fn library_insights(State(app): State<App>, _user: AuthUser, Query(q):
                 "video_ranges": lib_buckets(c, "i.video_range", "", &video, &args, by_count, 12)?,
                 "containers": lib_buckets(c, "LOWER(i.container)", "", &files, &args, by_count, 12)?,
                 "audio_codecs": lib_buckets(c, "UPPER(i.audio_codec)", "", &files, &args, by_count, 12)?,
-                "genres": lib_buckets(c, "g.value", ", json_each(i.genres) g", &titles, &args, by_count, 12)?,
+                // A series row has no size of its own, so a per-genre size would only count the films.
+                "genres": lib_buckets(c, "g.value", ", json_each(i.genres) g", &titles, &args, by_count, 12)?
+                    .into_iter()
+                    .map(|mut g| {
+                        g["size_bytes"] = json!(0);
+                        g
+                    })
+                    .collect::<Vec<_>>(),
                 "decades": lib_buckets(c, "(i.production_year / 10 * 10) || 's'", "", &format!("{titles} AND i.production_year > 1800"), &args, "name", 30)?,
                 "added": added, "largest": largest,
                 "unwatched": { "count": unwatched_totals.get("count"), "size_bytes": unwatched_totals.get("size_bytes"), "items": unwatched_items },
