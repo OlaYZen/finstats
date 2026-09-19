@@ -1,0 +1,7 @@
+target
+data
+*.jsonl
+backup_*
+.git
+.env
+docs
