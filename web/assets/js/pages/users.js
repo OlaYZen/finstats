@@ -48,6 +48,7 @@ export function userPage(ctx) {
   let days = readDays(ctx.query);
   const headerSlot = h('div');
   const view = h('div', { class: 'stack' });
+  const allTime = profileAllTime({ userId: id, signal: ctx.signal });
 
   const dv = dataView({
     container: view, signal: ctx.signal,
@@ -86,6 +87,7 @@ export function userPage(ctx) {
         h('div', { class: 'grid-2' },
           card({ title: 'Play methods', sub: 'Share of plays', body: methodsBar(d.methods) }),
           card({ title: 'Clients', sub: 'By plays', body: bucketList(d.clients) })),
+        allTime.shows,
         Array.isArray(d.genres) ? genresCard(d.genres) : null,
         groupsCard(groups, { forUser: id }),
         card({ title: 'Devices', cls: 'card-flush', body: devicesTable(d.devices) }),
@@ -97,8 +99,9 @@ export function userPage(ctx) {
     },
   });
 
-  // Streaks and show progress cover all time, so they sit above the range filter and outside what it reloads.
-  ctx.root.append(headerSlot, profileAllTime({ userId: id, signal: ctx.signal }), filterBar({ days, onDays: (v) => { days = v; saveDays(v); replaceQuery({ days }); dv.load(); } }), view);
+  // Streaks and show progress cover all time and load on their own. The streaks sit under the header;
+  // the shows card is slotted into the page further down (the same node on every re-render).
+  ctx.root.append(headerSlot, allTime.tiles, filterBar({ days, onDays: (v) => { days = v; saveDays(v); replaceQuery({ days }); dv.load(); } }), view);
   headerSlot.append(h('header', { class: 'page-header entity-header' }, h('span', { class: 'sk', style: { width: '56px', height: '56px', borderRadius: '50%' } }), h('div', null, sk.line('180px', 26))));
   dv.load();
 }

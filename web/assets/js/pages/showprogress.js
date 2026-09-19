@@ -38,8 +38,15 @@ function bar(episodes, { seasonNo, editable, onToggle, dense }) {
     }));
 }
 
+/**
+ * Returns two elements fed by one request: `tiles` (the streaks, for the top of the profile) and
+ * `shows` (the progress card, placed further down). Both cover all time, whatever range the rest
+ * of the page shows; the same nodes are handed back on every re-render, so an opened show or a
+ * chosen tab survives a change of range.
+ */
 export function profileAllTime({ userId, signal }) {
-  const root = h('div', { class: 'stack profile-alltime' });
+  const tiles = h('div', { class: 'profile-alltime' });
+  const showsEl = h('div', { class: 'profile-shows' });
   let data = null;
   let filter = 'progress';
   let shown = PAGE;
@@ -47,9 +54,9 @@ export function profileAllTime({ userId, signal }) {
   const problem = h('div');
 
   async function load(first) {
-    if (first) mount(root, sk.tiles(3), sk.cardRows(4));
+    if (first) { mount(tiles, sk.tiles(3)); mount(showsEl, sk.cardRows(4)); }
     try { data = await api.get(`/users/${userId}/shows`, null, { signal }); paint(); }
-    catch (e) { if (isAbort(e) || e.status === 401) return; if (first) mount(root, errorState(e, () => load(true))); }
+    catch (e) { if (isAbort(e) || e.status === 401) return; if (first) { mount(tiles, ''); mount(showsEl, errorState(e, () => load(true))); } }
   }
 
   async function toggle(ids, seen, btn) {
@@ -103,7 +110,8 @@ export function profileAllTime({ userId, signal }) {
       : !list.length ? emptyState(filter === 'finished' ? 'No finished shows yet.' : 'Nothing in progress. Everything started has been finished.')
       : [h('ul', { class: 'show-list' }, list.slice(0, shown).map(row)),
         list.length > shown ? h('button', { type: 'button', class: 'btn btn-ghost show-more', onClick: () => { shown = list.length; paint(); } }, `Show all ${num(list.length)}`) : null];
-    mount(root, streakTiles(data.streaks),
+    mount(tiles, streakTiles(data.streaks));
+    mount(showsEl,
       card({ title: 'Shows', sub: 'Episodes seen, out of those on the server. All time.',
         actions: shows.length ? segmented({ label: 'Which shows', value: filter, onChange: (v) => { filter = v; shown = PAGE; paint(); },
           options: [{ value: 'progress', label: `In progress · ${lists.progress.length}` }, { value: 'finished', label: `Finished · ${lists.finished.length}` }, { value: 'all', label: 'All' }] }) : null,
@@ -111,5 +119,5 @@ export function profileAllTime({ userId, signal }) {
   }
 
   load(true);
-  return root;
+  return { tiles, shows: showsEl };
 }
