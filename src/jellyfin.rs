@@ -255,6 +255,9 @@ impl Jellyfin {
             // Missing and unaired episodes exist in Jellyfin as virtual items without a file. They are
             // not part of the library as far as statistics go.
             ("ExcludeLocationTypes", "Virtual".into()),
+            // With "group movies into collections" on, Jellyfin answers with the BoxSet *instead of* the
+            // films inside it. Everything in a collection would be missing, and then flagged as removed.
+            ("CollapseBoxSetItems", "false".into()),
             ("EnableUserData", "false".into()),
             ("EnableImageTypes", "Primary,Backdrop".into()),
             ("ImageTypeLimit", "1".into()),
