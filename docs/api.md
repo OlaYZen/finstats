@@ -187,7 +187,8 @@ Both send long-lived `Cache-Control`. Use as `<img loading="lazy">` with an `one
 ```jsonc
 {"jellyfin_url","server_name","server_version",
  "allow_user_login": false,        // let non-admin Jellyfin users sign in and see their own stats
- "poll_interval_s": 5,             // session polling, 2..60
+ "active_interval_s": 1,           // session polling while something plays, 1..60 (replaced poll_interval_s in 0.10)
+ "idle_interval_s": 5,             // …and while nothing does, 1..60
  "follow_jellyfin_scan": true,     // read the library when Jellyfin's own scan task finishes, not on a timer
  "sync_interval_h": 6,             // library read interval, 1..168 — only used when not following Jellyfin's scan
  "merge_window_s": 600,            // resume the same play if it restarts within this window
@@ -557,4 +558,34 @@ most 50; anything else is a `400`). The response also carries, read-only:
 "known_home_addresses": [{"ip": "203.0.113.7", "source": "lookup"|"manual", "first_seen": 0, "last_seen": 0}],
 "public_ip_services": ["https://checkip.amazonaws.com", "…"]      // who is asked, in order
 ```
+
+---
+
+# v0.10 — Backups, and the polling intervals
+
+`poll_interval_s` is gone from the settings. In its place: `"active_interval_s": 1` (while something plays) and
+`"idle_interval_s": 5` (while nothing does), both 1..60. New: `"backup_every_d": 7` (0 = off, 0..365) and `"backup_keep": 5` (1..100).
+
+All of the following are for **Jellyfin administrators** (`403` otherwise): a backup is everyone's history, and a restore
+can bring permissions back. `{name}` must look exactly like `finstats-backup-YYYYMMDD-HHMMSS.jsonl.gz`; anything else is a `404`.
+
+| | |
+|---|---|
+| `GET /api/backups` | `{"backups": [{"name","size_bytes","created_at"}], "every_d": 7, "keep": 5, "next_at": 0\|null}` — newest first |
+| `POST /api/backups` | Start writing one now. `202`; progress is task `backup` in `/api/tasks`. `409` while one is running. |
+| `GET /api/backups/{name}` | The file (`application/gzip`, `Content-Disposition: attachment`), streamed. |
+| `DELETE /api/backups/{name}` | Remove it. |
+| `POST /api/backups/{name}/restore?settings=true` | Restore a stored backup. `202`; task `restore`. |
+| `POST /api/backups/restore?settings=true` | The same from an uploaded file: raw request body, no size limit. |
+
+`settings` (default `true`) also restores the settings and the permissions; `false` merges history only. The finished
+`restore` task carries `result: {"plays_imported","plays_skipped","events","other_rows","settings_restored","from_version"}`.
+
+**The file** is gzip-compressed JSON Lines. Line 1: `{"finstats_backup": 1, "app_version", "created_at", "server_name", "counts": {table: rows}}`.
+Every other line: `{"t": "<table>", "r": {column: value}}` for `settings` (the one settings row), `playbacks`, `playback_events`,
+`manual_seen`, `user_permissions`, `home_addresses`, `server_events`, `devices`. Rows are matched by column name in both
+directions, so backups move between versions. Never in it: the Jellyfin address and API key, sessions, the library.
+Restoring merges: a play already present (same `source_id`, or same user, item and start) is skipped with its timeline;
+restored plays are never `active`, and groups, local/remote and library links are worked out again afterwards.
+CLI: `finstats backup`, `finstats restore <file>`.
 

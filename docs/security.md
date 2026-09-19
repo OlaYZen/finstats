@@ -39,6 +39,12 @@ but finishing it requires a Jellyfin administrator's credentials.
 proxied from your own Jellyfin, and a strict Content-Security-Policy is sent with every response.
 Requests that change anything are refused when their `Origin` does not match.
 
+**Backups** (`data/backups`, and whatever you download from **Settings → Backups**) hold the full viewing history
+with IP addresses, the permissions and the settings. They never contain the Jellyfin address or API key, nor any
+sign-in session, so a leaked backup exposes history but grants no access. Only Jellyfin administrators can list,
+download, delete or restore them, and a backup's file name is checked against the exact pattern finstats generates
+before it touches the disk. Restoring validates the settings it brings back the same way the settings page does.
+
 **No telemetry, and one outside request you can switch off.** finstats talks to your Jellyfin server and, by
 default, to a public "what is my IP" service (`checkip.amazonaws.com`, falling back to Cloudflare's `cdn-cgi/trace`, by name and by `1.1.1.1`,
 then `api.ipify.org` and `icanhazip.com`; several because ad-blocking DNS often blocks such services) every 15 minutes. It needs the answer to tell plays from your own household's public address apart

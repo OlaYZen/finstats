@@ -34,7 +34,7 @@ docker build -t finstats:latest .
 ## Architecture
 
 ```
-Jellyfin ──/Sessions every 5 s──▶ collector ──▶ SQLite ◀── stats / recap API ◀── embedded SPA (web/)
+Jellyfin ──/Sessions 1 s / 5 s idle─▶ collector ──▶ SQLite ◀── stats / recap API ◀── embedded SPA (web/)
          ──/Users /Items /Devices /System/* (scheduler)──▶ sync ──┘        ▲
 Jellystat backup ──▶ import ─────────────────────────────────────┘   relink (after sync/import/start-up)
 ```
@@ -128,6 +128,12 @@ public IP, looked up with the light syncs from a plain-text service (the only no
 `public_ip_lookup`, override `FINSTATS_PUBLIC_IP_URL`), plus the manual `home_addresses` setting. Always go through
 `network::classify(conn, ip)`; after the set changes call `network::reclassify`, which re-decides the whole history. The lookup
 must stay anonymous (no version, no ids in the request) and the docs' privacy claims must stay true to it.
+
+**Backups (`backup.rs`).** gzip JSON Lines, one row per line tagged with its table, matched *by column name* both ways so files move
+between versions; a new table that holds something Jellyfin cannot give back must be added to `backup::TABLES`. Secrets (Jellyfin
+URL/API key, sessions) and the library are never exported; a test asserts the key is absent. Restore merges (dedupe on `source_id`
+or user+item+start), remaps timeline rows to the new play ids, and re-derives groups, `is_local` and library links. The scheduler
+writes one when the newest file is older than `backup_every_d`; endpoints are `JellyfinAdmin`-only and names go through `valid_name`.
 
 **HTTP contract.** `docs/api.md` is the contract the UI is written against; change it together with the endpoint.
 

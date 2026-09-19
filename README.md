@@ -168,7 +168,7 @@ Everything works out of the box. If you want to tune it, **Settings** in the app
 |---|---|
 | **Access** | Who may sign in and what they may see, for everyone or per person: *sign in*, *see everyone's activity*, *see network details*, *see the server*, *manage finstats*. Jellyfin administrators always have everything, and only they can change this. |
 | **Follow Jellyfin's library scan** | On by default. finstats refreshes its copy of your library right after Jellyfin's own scheduled scan — no second schedule to manage. |
-| **Check for playback every** | How often finstats looks for streams. Default 5 seconds. |
+| **Check every…** | How often finstats looks at what is playing: every second while someone is watching, every 5 seconds while nobody is. |
 | **Treat a restart as the same play** | A stream that stops and resumes within 10 minutes counts as one viewing. |
 | **Home network** | Which plays count as local. Private addresses always do; with *Recognise my own public address* on (the default), so does your household's public IP, looked up every 15 minutes and remembered as it changes. You can add more addresses by hand. |
 | **Count it as watching together within** | How close together different people must start the same title to count as a group. Default 60 seconds. |
@@ -189,6 +189,12 @@ Everything works out of the box. If you want to tune it, **Settings** in the app
 
 </details>
 
+## Moving finstats to another machine
+
+Download a backup under **Settings → Backups**, set up the new finstats, and restore the file on its
+**Settings → Backups** page (or `finstats restore <file>`). Restoring merges, so nothing is lost if the new
+instance has already been collecting. The library is read from Jellyfin again by itself.
+
 ## Updating
 
 Rebuild or pull the new image and start the container again with the same command. Your data
@@ -202,8 +208,9 @@ No. It asks Jellyfin one small question every few seconds and reads your library
 Jellyfin has finished its own scan.
 
 **Where is my data, and how do I back it up?**
-In one file: `data/finstats.db`. Copy it while finstats is stopped, or run
-`sqlite3 data/finstats.db ".backup backup.db"` while it is running.
+finstats backs itself up every week into `data/backups` and keeps the newest five; download them under
+**Settings → Backups**, where you can also restore one into a new install. A backup has your whole history,
+settings and permissions, but never your Jellyfin API key. The database itself is the single file `data/finstats.db`.
 
 **Can I put it behind a reverse proxy?**
 Yes. Forward to port 8080 and set `FINSTATS_TRUST_PROXY=1`. Sign-in cookies are marked secure
