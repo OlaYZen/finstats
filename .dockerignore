@@ -11,3 +11,7 @@ backup_*
 .env
 .env.*
 docs
+
+# Local tools and references: never part of an image
+qa/
+ux-rules.md
