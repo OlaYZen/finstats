@@ -6,6 +6,11 @@ binary and is what the **Patch notes** tab in the app shows.
 Format: `## [version] - date`, an optional one-paragraph summary, then `### Added`,
 `### Changed`, `### Fixed` or `### Removed` with one bullet per change.
 
+## [0.4.5] - 2026-09-19
+
+### Changed
+- finstats is now licensed under the **GNU General Public License v3.0**. No earlier version was ever published, so nothing was released under different terms. The licenses of the bundled fonts ship alongside them.
+
 ## [0.4.4] - 2026-09-19
 
 ### Added
