@@ -80,6 +80,8 @@ export function nowPlayingCard(sn) {
         methodBadge(sn.play_method),
         [sn.video, sn.audio].filter(Boolean).map((x) => h('span', { class: 'chip mono' }, x)),
         sn.bitrate ? h('span', { class: 'chip mono' }, bitrate(sn.bitrate)) : null,
+        sn.group && sn.group.with && sn.group.with.length ? h('span', { class: 'chip chip-group', title: `Watching together · ${sn.group.size} people` }, icon('users', 12),
+          'With ', sn.group.with.map((w) => w.user_name).join(', ')) : null,
         can('see_network') && sn.remote_ip ? h('span', { class: 'chip mono', title: 'IP address' }, sn.remote_ip) : null),
       h('div', { class: 'np-progress' },
         h('div', { class: 'meter meter-wide', role: 'progressbar', 'aria-label': 'Playback position', 'aria-valuemin': 0, 'aria-valuemax': 100, 'aria-valuenow': prog == null ? null : Math.round(prog * 100) },
