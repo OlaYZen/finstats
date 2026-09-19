@@ -100,19 +100,16 @@ export function nowPlayingCard(sn) {
  * that means something: it is ahead, the viewer paused, or the gap is too big to be reporting lag
  * (a skip).
  */
-const REPORT_LAG_S = 15;
+const BEHIND_OK_S = 15; // the server may trail us by this much: that is just reporting lag
+const AHEAD_OK_S = 3;   // and lead us by this much: rounding and poll timing, not news
 export function nowPlayingView() {
   const root = h('div', { class: 'np-live' });
-  let live = new Map(); // key -> { s, pos, at, shape, clockEl, fillEl, barEl }
+  let live = new Map(); // key -> { s, pos (whole seconds), shape, clockEl, fillEl, barEl }
   // Everything about a session except the numbers that change every second: if this is the same,
   // the card on screen is still right and only its clock needs attention.
   const shapeOf = (s) => JSON.stringify({ ...s, position_s: 0, watched_s: 0, transcode: s.transcode ? { ...s.transcode, progress: 0 } : null });
-  const posNow = (l, now) => {
-    const p = l.s.is_paused ? l.pos : l.pos + (now - l.at) / 1000;
-    return l.s.runtime_s ? Math.min(p, l.s.runtime_s) : p;
-  };
-  function paint(l, now) {
-    const pos = Math.floor(posNow(l, now));
+  function paint(l) {
+    const pos = l.s.runtime_s ? Math.min(l.pos, l.s.runtime_s) : l.pos;
     if (l.clockEl) l.clockEl.textContent = l.s.runtime_s ? `${clock(pos)} / ${clock(l.s.runtime_s)}` : clock(pos);
     if (l.fillEl && l.s.runtime_s) {
       const pr = Math.max(0, Math.min(1, pos / l.s.runtime_s));
@@ -120,36 +117,44 @@ export function nowPlayingView() {
       if (l.barEl) l.barEl.setAttribute('aria-valuenow', String(Math.round(pr * 100)));
     }
   }
-  const timer = setInterval(() => { const now = performance.now(); for (const l of live.values()) if (!l.s.is_paused) paint(l, now); }, 1000);
+  // The ticker is the only thing that moves a clock: exactly one second per beat, so the display
+  // is a metronome. A poll landing between two beats must never nudge the number off the beat.
+  const timer = setInterval(() => { for (const l of live.values()) if (!l.s.is_paused) { l.pos += 1; paint(l); } }, 1000);
 
   function update(sessions) {
-    const now = performance.now();
     const next = new Map();
     let sameCards = sessions.length === live.size;
+    const corrected = [];
     for (const s of sessions) {
       const old = live.get(s.key);
       const shape = shapeOf(s);
-      const server = s.position_s ?? 0;
+      const server = Math.floor(s.position_s ?? 0);
       let pos = server;
       if (old && old.shape === shape && !s.is_paused) {
-        const ours = posNow(old, now);
-        if (server <= ours && ours - server <= REPORT_LAG_S) pos = ours; // the server is merely behind on reports
+        const drift = server - old.pos; // > 0: the server is ahead of what we show
+        if (drift <= AHEAD_OK_S && -drift <= BEHIND_OK_S) pos = old.pos; // close enough: keep counting, stay on the beat
       }
       if (!old || old.shape !== shape) sameCards = false;
-      next.set(s.key, { s, pos, at: now, shape, clockEl: old && old.clockEl, fillEl: old && old.fillEl, barEl: old && old.barEl });
+      const l = { s, pos, shape, clockEl: old && old.clockEl, fillEl: old && old.fillEl, barEl: old && old.barEl };
+      if (old && pos !== old.pos) corrected.push(l); // a skip, a pause, or real drift (a throttled background tab)
+      next.set(s.key, l);
     }
+    live = next;
     if (!sameCards) {
       // Someone started, stopped, paused or changed quality: draw the cards again.
       mount(root, nowPlayingList(sessions));
-      for (const l of next.values()) {
+      for (const l of live.values()) {
         const card = root.querySelector(`[data-np-key="${CSS.escape(l.s.key)}"]`);
         l.clockEl = card && card.querySelector('.np-time');
         l.barEl = card && card.querySelector('.np-progress .meter');
         l.fillEl = card && card.querySelector('.np-progress .meter-fill');
+        paint(l);
       }
+    } else {
+      // Even a correction waits for the beat: set the clock one short and let the next tick land
+      // on the right second, so the number only ever changes in time with the others.
+      for (const l of corrected) l.pos -= 1;
     }
-    live = next;
-    for (const l of live.values()) paint(l, now);
   }
   return { el: root, update, destroy: () => clearInterval(timer) };
 }
