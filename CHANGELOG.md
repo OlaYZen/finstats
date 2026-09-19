@@ -6,6 +6,14 @@ binary and is what the **Patch notes** tab in the app shows.
 Format: `## [version] - date`, an optional one-paragraph summary, then `### Added`,
 `### Changed`, `### Fixed` or `### Removed` with one bullet per change.
 
+## [0.10.2] - 2026-09-20
+
+### Fixed
+- **On a phone, Settings and the page of a show could scroll sideways.** A label meant only for screen readers escaped the table it belongs to and stretched the whole page; the episode lists and the cast row did the same on narrow screens. Tables and the cast row now scroll inside themselves.
+- The recap no longer scrolls a few pixels sideways when a chapter's background word is wider than the page.
+- A long "watching on…" line under **Now playing** ends in an ellipsis instead of being cut mid-letter.
+- The poster in front of each show on a profile was a second, nameless link to the same page for screen readers. It is hidden from them now; the title next to it is the link.
+
 ## [0.10.1] - 2026-09-20
 
 ### Fixed
