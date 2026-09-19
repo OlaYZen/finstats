@@ -360,3 +360,36 @@ Default: the year whose recap is "ready" — the current year during December, o
   ]
 }
 ```
+
+---
+
+# v0.5 — Permissions
+
+`user` (from `/api/auth/login`, `/api/auth/me`, `/api/setup`) gains
+`"permissions": {"see_everyone": false, "see_network": false, "see_server": false, "manage": false}` — all `true` for
+Jellyfin administrators. They are evaluated on every request, so a change applies at once.
+
+What each one gates, server-side:
+
+| Permission | Effect |
+|---|---|
+| *(none)* | Every list and statistic is pinned to the caller's own `user_id` (a `user_id` filter is ignored); `/api/users` returns only them; `/api/users/{other}` → `403`. |
+| `see_everyone` | `user_id` filters are honoured, `/api/users` and `/api/users/{id}` for anyone, all sessions in `/api/now-playing`, users in `/api/search`, everyone in `watchers` / `played_by`. |
+| `see_network` | `remote_ip`, `device_id`, `is_local` in plays and sessions; `ips` on user pages; `network` in insights; IP search in `/api/activity?q=`. Otherwise `null` / `[]`. |
+| `see_server` | `/api/server`, `/api/events`, `failed_logins` in insights, `item.path`. Otherwise `403` / `[]` / `null`. |
+| `manage` | `/api/settings`, `/api/tasks*`, `/api/import/jellystat`, `DELETE /api/activity/{id}`. Otherwise `403`. |
+
+`/api/recap` is never widened: it is always the caller's own. `PUT /api/settings` rejects `allow_user_login` and
+`default_permissions` with `403` unless the caller is a Jellyfin administrator.
+
+## Managing permissions — Jellyfin administrators only (🔒 `403` for everyone else, including `manage`)
+
+`GET /api/permissions`
+```jsonc
+{"available": [{"key": "sign_in" | "see_everyone" | "see_network" | "see_server" | "manage", "label": "…", "description": "…"}],
+ "defaults": ["sign_in"],                  // what every non-admin has; "sign_in" here = sign-in is open to everyone
+ "users": [{"id","name","is_admin","is_disabled","has_image","permissions": ["see_everyone"]}]}   // own grants only, defaults not included
+```
+`PUT /api/permissions/defaults` `{"permissions": [...]}` → `{"defaults": [...]}`
+`PUT /api/permissions/users/{id}` `{"permissions": [...]}` → `{"permissions": [...]}`; `400` for an unknown key or an
+administrator (they already have everything), `404` for an unknown user. Effective = defaults ∪ own grants.

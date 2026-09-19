@@ -68,8 +68,10 @@ Each person sees only their own. Even administrators.
 
 ### Private by design
 - **Sign in with your Jellyfin account.** No new passwords, and finstats never stores yours.
-- **Users see only themselves.** Let family and friends sign in if you like: they get their own
-  statistics and recap — never other people's activity, IP addresses or file paths.
+- **You decide who sees what.** Let family and friends sign in if you like. By default they get
+  their own statistics and recap and nothing else. From there you grant more, per person or for
+  everyone: other people's activity, network details like IP addresses, the server pages, or
+  managing finstats itself. The recap always stays personal.
 - **Nothing leaves your network.** No telemetry, no external services, no fonts or scripts loaded
   from the internet. Posters are fetched from your own Jellyfin.
 - **Read-only.** finstats never changes anything on your Jellyfin server and never starts a library scan.
@@ -141,7 +143,7 @@ Everything works out of the box. If you want to tune it, **Settings** in the app
 
 | | |
 |---|---|
-| **Let other users sign in** | Off by default. When on, non-admin Jellyfin users can sign in and see their own statistics only. |
+| **Access** | Who may sign in and what they may see, for everyone or per person: *sign in*, *see everyone's activity*, *see network details*, *see the server*, *manage finstats*. Jellyfin administrators always have everything, and only they can change this. |
 | **Follow Jellyfin's library scan** | On by default. finstats refreshes its copy of your library right after Jellyfin's own scheduled scan — no second schedule to manage. |
 | **Check for playback every** | How often finstats looks for streams. Default 5 seconds. |
 | **Treat a restart as the same play** | A stream that stops and resumes within 10 minutes counts as one viewing. |

@@ -73,7 +73,7 @@ first, then cleaned title + year, episodes by series + S/E number — only when 
 
 **Stats layer (`stats.rs`).** Every query goes through `Scope` → `Cond`: the time window ("last N days" = N full
 local days, so chart buckets and totals agree), user/library filters, `min_play_s`, and the rule that **non-admins
-are force-scoped to their own `user_id` and never receive IPs, device ids or file paths — enforced server-side**.
+without `see_everyone` are force-scoped to their own `user_id`, and IPs/device ids/file paths are only sent with `see_network`/`see_server` — enforced server-side**.
 `row_json` maps SQL rows to JSON by column name (`BOOL_COLS` / `JSON_COLS` decide bool and JSON columns), so adding a
 field is usually just adding a column to a SELECT. Local-time bucketing relies on SQLite's `'localtime'` and the
 process `TZ` (the Docker image ships tzdata for this). Do not use `#[serde(flatten)]` in `Query` structs —
@@ -83,8 +83,16 @@ serde_urlencoded then hands numbers over as strings and every numeric filter 400
 defaults to the year that is "ready": the current year in December, otherwise the previous one.
 
 **Auth (`auth.rs`).** Login forwards credentials to Jellyfin's `AuthenticateByName`, immediately logs that Jellyfin
-session out, and mints an own opaque session token (stored hashed, HttpOnly SameSite=Lax cookie). Extractors:
-`AuthUser`, and `Admin` for admin-only routes. `api.rs` adds an Origin check on writes and a strict CSP
+session out, and mints an own opaque session token (stored hashed, HttpOnly SameSite=Lax cookie).
+
+**Permissions.** `AuthUser.perms` (`Perms`: `see_everyone`, `see_network`, `see_server`, `manage`) is rebuilt on every
+request from `user_permissions` ∪ `Settings.default_permissions`; `sign_in` (or `allow_user_login`) gates access at
+all; Jellyfin admins always get `Perms::ALL`. Grants only add, there are no denies. Extractors: `AuthUser` (anyone
+signed in), `ServerViewer`, `Manager`, and `JellyfinAdmin` — the only one allowed to edit permissions, and
+`put_settings` refuses the access keys from anyone else, so a manager cannot self-promote. In `stats.rs` decide by
+the specific permission (`scope.perms.see_network` for IPs, `see_server` for paths, `see_everyone` for whose rows),
+never by `is_admin`. The recap ignores permissions and is always the caller's own. The UI mirrors this with
+`can('perm')` from `state.js`; it is cosmetic — every rule is enforced server-side. `api.rs` adds an Origin check on writes and a strict CSP
 (`style-src 'self'` — the UI must not use inline `<style>`/`style=""`; `el.style.x` via JS is fine).
 
 **HTTP contract.** `docs/api.md` is the contract the UI is written against; change it together with the endpoint.
