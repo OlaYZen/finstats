@@ -338,7 +338,7 @@ kbd {
 .spark { flex: none; }
 
 /* ------------------------------------------------------------ tables */
-.table-scroll { overflow-x: auto; }
+.table-scroll { position: relative; overflow-x: auto; } /* relative: a visually hidden label inside must scroll with the table, not widen the page */
 .table th, .table td { padding: 9px 12px; text-align: left; vertical-align: middle; border-bottom: 1px solid var(--border-soft); }
 .table th.r, .table td.r { text-align: right; }
 .table thead th { font-size: 11.5px; font-weight: 600; letter-spacing: .03em; text-transform: uppercase; color: var(--text-faint); white-space: nowrap; padding-top: 6px; padding-bottom: 8px; }
@@ -489,7 +489,8 @@ th[aria-sort="descending"] .th-sort-icon { transform: rotate(180deg); }
 .np-title a { color: #ececec; }
 .np-sub { font-size: 13px; color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .np-user { display: flex; align-items: center; gap: 7px; font-size: 13px; min-width: 0; white-space: nowrap; overflow: hidden; }
-.np-user a { color: var(--text); }
+.np-user a { flex: none; color: var(--text); }
+.np-user .muted { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .np-badges { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 2px; }
 .np-progress { display: flex; align-items: center; gap: 10px; margin-top: 4px; }
 /* The bar shares its row with the clock, so it flexes instead of claiming 100%. */
@@ -588,7 +589,7 @@ a.lib-card:hover { border-color: var(--accent); text-decoration: none; }
 
 .item-grid { display: grid; gap: 16px 14px; grid-template-columns: repeat(auto-fill, minmax(118px, 1fr)); }
 /* cast & crew on a title's page: one row, scrolls sideways */
-.cast-row { list-style: none; display: grid; grid-auto-flow: column; grid-auto-columns: 104px; gap: 14px; margin: 0; padding: 2px 2px 8px; overflow-x: auto; }
+.cast-row { max-width: 100%; list-style: none; display: grid; grid-auto-flow: column; grid-auto-columns: 104px; gap: 14px; margin: 0; padding: 2px 2px 8px; overflow-x: auto; }
 .cast-person { display: flex; flex-direction: column; gap: 2px; min-width: 0; color: var(--text); }
 .cast-person:hover { text-decoration: none; }
 .cast-person:hover .poster { outline: 2px solid var(--accent); outline-offset: 1px; }
@@ -834,7 +835,7 @@ a.chip-link:hover { border-color: var(--accent); color: var(--text); text-decora
 .rc-story > * + * { margin-top: clamp(72px, 11vw, 148px); }
 .rc-story > .empty { margin-top: 32px; }
 
-.rc-chapter { position: relative; isolation: isolate; scroll-margin-top: 72px; }
+.rc-chapter { position: relative; isolation: isolate; scroll-margin-top: 72px; overflow-x: clip; } /* clip: the watermark word may not widen the page */
 .rc-mark { position: absolute; z-index: -1; right: 0; top: -.2em; max-width: 100%; overflow: hidden; white-space: nowrap; direction: rtl;
   font-size: clamp(88px, 17vw, 230px); line-height: 1; font-weight: 800; letter-spacing: -.05em; text-transform: uppercase;
   color: rgba(255, 255, 255, .032); pointer-events: none; user-select: none; }

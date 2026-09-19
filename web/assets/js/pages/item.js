@@ -5,7 +5,7 @@ import { replaceQuery } from '../router.js';
 import { card, filterBar, dataView, sk, poster, avatar, chip, statTile, playsTable, emptyState, facts } from '../components.js';
 import { activityCard } from '../widgets.js';
 import { openPlayModal } from '../playmodal.js';
-import { plainTable, sortable } from '../tables.js';
+import { plainTable } from '../tables.js';
 
 const TYPE_LABEL = { Movie: 'Movie', Series: 'Series', Episode: 'Episode', Season: 'Season', Audio: 'Track', MusicAlbum: 'Album' };
 
@@ -132,7 +132,7 @@ function seasons(list) {
     const det = h('details', { class: 'season' },
       h('summary', null, icon('chevronRight', 14), h('span', { class: 'season-name' }, sn.name || `Season ${sn.season_number}`),
         h('span', { class: 'season-meta mono' }, `${num(sn.episodes.length)} ep · ${num(plays)} ${plays === 1 ? 'play' : 'plays'}`)),
-      sortable(h('table', { class: 'table table-dense episodes' },
+      plainTable(h('table', { class: 'table table-dense episodes' },
         h('thead', null, h('tr', null, h('th', null, '#'), h('th', null, 'Episode'), h('th', { 'data-nosort': '' }, h('span', { class: 'sr-only' }, 'Share')), h('th', { class: 'r' }, 'Plays'), h('th', { class: 'r' }, 'Watch time'))),
         h('tbody', null, sn.episodes.map((e) => h('tr', null,
           h('td', { class: 'mono muted ep-num' }, e.episode_number != null ? String(e.episode_number) : '–'),

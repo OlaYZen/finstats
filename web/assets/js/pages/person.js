@@ -1,6 +1,6 @@
 // One actor or director: what they are in on this server, and how much of it has been watched.
 
-import { h, icon, num, duration, durationExact, durEl, relEl, compact } from '../dom.js';
+import { h, num, duration, durationExact, durEl, relEl, compact } from '../dom.js';
 import { api } from '../api.js';
 import { readDays, saveDays, can } from '../state.js';
 import { replaceQuery } from '../router.js';

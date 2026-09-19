@@ -86,7 +86,7 @@ export function profileAllTime({ userId, signal }) {
       return null;
     };
     return h('li', { class: ['show-row', isOpen && 'is-open', done && 'is-done'] },
-      s.removed ? h('span', { class: 'poster poster-sm poster-ph', 'aria-hidden': 'true' }, icon('tv', 16)) : h('a', { href: `/items/${s.id}`, tabindex: -1 }, poster(s.image_item_id, s.name, { w: 160, cls: 'poster-sm' })),
+      s.removed ? h('span', { class: 'poster poster-sm poster-ph', 'aria-hidden': 'true' }, icon('tv', 16)) : h('a', { href: `/items/${s.id}`, tabindex: -1, 'aria-hidden': 'true' }, poster(s.image_item_id, s.name, { w: 160, cls: 'poster-sm' })),
       h('div', { class: 'show-main' }, head,
         isOpen ? null : bar(all, { editable: false }),
         isOpen ? h('div', { class: 'show-seasons' },
