@@ -6,6 +6,23 @@ binary and is what the **Patch notes** tab in the app shows.
 Format: `## [version] - date`, an optional one-paragraph summary, then `### Added`,
 `### Changed`, `### Fixed` or `### Removed` with one bullet per change.
 
+## [0.8.0] - 2026-09-19
+
+The recap has a new look, and more to say.
+
+### Added
+- **Most watched people.** The actors you spent the most time with, and the directors behind what you watched, as a row of portraits. finstats now reads cast and crew for films and shows along with the library; they appear after the first library read following this update, which finstats does by itself on start.
+- **Your year in days.** Every day of the year as one square, brighter the more you watched, with your longest streak and biggest day called out above it. Hover a day, or walk the calendar with the arrow keys, to see what it held.
+- **By the numbers.** Plays, watch time, different titles, days watched, longest streak and how much of your watching was a **rewatch**, plus how the year splits between episodes, movies and music.
+- The genre chapter now says how many genres you touched and how large a share the top one took.
+
+### Changed
+- **A new design for the recap.** It opens on your year "replayed": the headline beside the posters that filled it, over a waveform of the year with one bar per week and the loudest week lit. You pick the year right above it. Every chapter now has a headline with its key word in violet, a sentence that carries the figures, and the chapter's word standing large and faint behind it. It ends the way films do, with the credits: starring, directed by, screened on, running time.
+- Hours, weekdays and months now share one **Activity patterns** chapter with a switch between them; the headline follows what you are looking at ("Friday took the crown").
+
+### Fixed
+- **Now playing** on the dashboard was left blank when nobody was watching, so the heading seemed to belong to the filters under it. It shows its "Nothing is playing right now" box again.
+
 ## [0.7.10] - 2026-09-19
 
 ### Added
