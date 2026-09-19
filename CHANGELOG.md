@@ -6,6 +6,11 @@ binary and is what the **Patch notes** tab in the app shows.
 Format: `## [version] - date`, an optional one-paragraph summary, then `### Added`,
 `### Changed`, `### Fixed` or `### Removed` with one bullet per change.
 
+## [0.7.2] - 2026-09-19
+
+### Added
+- **Group watching, live.** When people are watching the same thing together right now, each of their Now playing cards says so: "With maria". Until now a group was only recognised once the plays had ended. Live, people count as together when they are on the same title and either started within the group window or are at nearly the same position, which still works if finstats was restarted mid-stream.
+
 ## [0.7.1] - 2026-09-19
 
 ### Changed
