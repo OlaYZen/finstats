@@ -6,6 +6,7 @@ import { pageHeader, card, filterBar, dataView, sk, avatar, emptyState, topList,
 import { activityCard, heatmapCard, genresCard } from '../widgets.js';
 import { bucketList, methodsBar } from '../charts.js';
 import { openPlayModal } from '../playmodal.js';
+import { profileAllTime } from './showprogress.js';
 
 // ---------------------------------------------------------------- /users
 export function usersPage(ctx) {
@@ -93,7 +94,8 @@ export function userPage(ctx) {
     },
   });
 
-  ctx.root.append(headerSlot, filterBar({ days, onDays: (v) => { days = v; saveDays(v); replaceQuery({ days }); dv.load(); } }), view);
+  // Streaks and show progress cover all time, so they sit above the range filter and outside what it reloads.
+  ctx.root.append(headerSlot, profileAllTime({ userId: id, signal: ctx.signal }), filterBar({ days, onDays: (v) => { days = v; saveDays(v); replaceQuery({ days }); dv.load(); } }), view);
   headerSlot.append(h('header', { class: 'page-header entity-header' }, h('span', { class: 'sk', style: { width: '56px', height: '56px', borderRadius: '50%' } }), h('div', null, sk.line('180px', 26))));
   dv.load();
 }
