@@ -6,6 +6,17 @@ binary and is what the **Patch notes** tab in the app shows.
 Format: `## [version] - date`, an optional one-paragraph summary, then `### Added`,
 `### Changed`, `### Fixed` or `### Removed` with one bullet per change.
 
+## [1.0.0] - 2026-09-20
+
+finstats 1.0. Everything a Jellyfin server owner needs from a statistics tool is here and has settled: live sessions and every play down to the pause button, the library and playback insights, group watching, profiles with show progress, the yearly recap, people pages, permissions, sortable tables, the Jellystat import, and backups that move between installs. From here on, version numbers mean what they say: 1.x updates will not break your data, your backups or your settings.
+
+### Added
+- **A ready-made image.** finstats is now published at `ghcr.io/olayzen/finstats`, for 64-bit Intel/AMD and ARM machines (a Raspberry Pi 4 or 5 works). `docker pull ghcr.io/olayzen/finstats:latest` replaces building it yourself. `:latest` is the newest release, `:1` follows every 1.x update, `:1.0.0` stays exactly where it is, and `:edge` is the development version.
+- Every release now appears on the project's GitHub releases page with these patch notes.
+
+### Changed
+- The Docker Compose file and all instructions use the published image. If you built `finstats:latest` yourself, switch the image name in your `docker run` or Compose file; your `data` folder carries over untouched.
+
 ## [0.10.2] - 2026-09-20
 
 ### Fixed
