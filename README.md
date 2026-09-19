@@ -114,6 +114,10 @@ docker run -d --name finstats …        # the same run command as before; ./dat
 Play timelines, pause/skip counts and resume points only exist for plays recorded live by
 finstats 0.2+; Jellystat never captured them, so imported plays show none.
 
+Every release is described in [`CHANGELOG.md`](CHANGELOG.md). The same file is compiled into
+the binary and shown in the app under **Patch notes**, where a dot on the tab tells you an
+update has landed since you last looked.
+
 ## Configuration
 
 Everything is optional.

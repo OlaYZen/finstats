@@ -344,3 +344,19 @@ Default: the year whose recap is "ready" — the current year during December, o
   "clients": [Bucket]                    // top 3
 }
 ```
+
+---
+
+# v0.4 — Patch notes
+
+`GET /api/changelog` (any signed-in user) — `CHANGELOG.md`, compiled into the binary and parsed.
+
+```jsonc
+{
+  "current": "0.4.0",                       // the running version
+  "releases": [                             // newest first
+    {"version": "0.4.0", "date": "2026-09-19" | null, "summary": "One paragraph." | null,
+     "groups": [ {"kind": "Added" | "Changed" | "Fixed" | "Removed", "items": ["One change. May contain **bold** and `code`."]} ]}
+  ]
+}
+```
