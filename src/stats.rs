@@ -855,9 +855,10 @@ pub async fn item_detail(State(app): State<App>, user: AuthUser, Path(id): Path<
                      FROM items e
                      LEFT JOIN items sn ON sn.id = e.season_id
                      LEFT JOIN (SELECT p.item_id, COUNT(*) AS plays, SUM(p.duration_s) AS watch_s FROM playbacks p {} GROUP BY p.item_id) s ON s.item_id = e.id
-                     WHERE e.series_id = ? AND e.type = 'Episode' AND e.removed = 0
+                     WHERE e.series_id = ? AND e.type = 'Episode' AND (e.removed = 0 OR {series_removed})
                      ORDER BY COALESCE(e.parent_index_number, 9999), COALESCE(e.index_number, 9999), e.name",
-                    cond.sql()
+                    cond.sql(),
+                    series_removed = if item.get("removed").and_then(Value::as_bool).unwrap_or(false) { 1 } else { 0 },
                 ),
                 &args,
             )?;
