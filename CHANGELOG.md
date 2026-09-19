@@ -6,6 +6,11 @@ binary and is what the **Patch notes** tab in the app shows.
 Format: `## [version] - date`, an optional one-paragraph summary, then `### Added`,
 `### Changed`, `### Fixed` or `### Removed` with one bullet per change.
 
+## [0.7.1] - 2026-09-19
+
+### Changed
+- **Now playing counts every second.** The clock and the progress bar used to jump forward each time the server was asked, every 5 seconds. They now tick once a second in between and the bar glides, like a player. The server is still only asked every 5 seconds and stays the source of truth: the display re-syncs when someone pauses, skips or when the server turns out to be ahead, but not when Jellyfin's position is merely a few seconds stale (clients report it only every ten seconds or so), so the clock never stutters backwards. Paused streams stand still.
+
 ## [0.7.0] - 2026-09-19
 
 Who watches together.
