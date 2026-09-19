@@ -395,6 +395,6 @@ fn finalize(conn: &Connection) -> Result<()> {
            AND EXISTS (SELECT 1 FROM items WHERE items.id = playbacks.item_id AND items.type <> playbacks.item_type);",
     )?;
     backfill_playbacks(conn)?;
-    crate::db::backfill_is_local(conn)?;
+    crate::network::reclassify(conn)?;
     Ok(())
 }

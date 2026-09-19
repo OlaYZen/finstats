@@ -58,11 +58,15 @@ pub struct Settings {
     pub min_play_s: i64,
     /// Different people starting the same title within this many seconds are watching together.
     pub group_window_s: i64,
+    /// Ask a public "what is my IP" service for this network's address, so that plays from it count as local.
+    pub public_ip_lookup: bool,
+    /// More addresses that count as home, added by hand.
+    pub home_addresses: Vec<String>,
 }
 
 impl Default for Settings {
     fn default() -> Self {
-        Self { follow_jellyfin_scan: true, allow_user_login: false, default_permissions: vec![], poll_interval_s: 5, sync_interval_h: 6, merge_window_s: 600, min_play_s: 0, group_window_s: 60 }
+        Self { follow_jellyfin_scan: true, allow_user_login: false, default_permissions: vec![], poll_interval_s: 5, sync_interval_h: 6, merge_window_s: 600, min_play_s: 0, group_window_s: 60, public_ip_lookup: true, home_addresses: vec![] }
     }
 }
 
@@ -80,6 +84,12 @@ impl Settings {
         };
         if let Some(bad) = self.default_permissions.iter().find(|p| !crate::auth::GRANTABLE.contains(&p.as_str())) {
             return Err(format!("unknown permission `{bad}`"));
+        }
+        if let Some(bad) = self.home_addresses.iter().find(|a| crate::network::canonical(a).is_none()) {
+            return Err(format!("`{bad}` is not an IP address"));
+        }
+        if self.home_addresses.len() > 50 {
+            return Err("at most 50 home addresses".into());
         }
         check("poll_interval_s", self.poll_interval_s, 2, 60)?;
         check("sync_interval_h", self.sync_interval_h, 1, 168)?;

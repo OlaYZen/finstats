@@ -730,7 +730,7 @@ pub async fn user_detail(State(app): State<App>, user: AuthUser, Path(id): Path<
             )?
             .into_iter()
             .map(|mut m| {
-                let local = m.get("ip").and_then(Value::as_str).and_then(db::is_local_ip).unwrap_or(false);
+                let local = m.get("ip").and_then(Value::as_str).and_then(|ip| crate::network::classify(c, ip).ok().flatten()).unwrap_or(false);
                 m.insert("is_local".into(), json!(local));
                 Value::Object(m)
             })

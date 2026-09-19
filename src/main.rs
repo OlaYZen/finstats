@@ -8,6 +8,7 @@ mod groups;
 mod import;
 mod jellyfin;
 mod media;
+mod network;
 mod playback;
 mod profile;
 mod recap;
@@ -119,7 +120,8 @@ async fn serve(db: db::Db, data_dir: PathBuf) -> Result<()> {
                 _ => None,
             };
             c.execute("DELETE FROM sessions WHERE expires_at <= ?1", [db::now()])?;
-            db::backfill_is_local(c)?;
+            network::set_manual(c, &Settings::load(c)?.home_addresses)?;
+            network::reclassify(c)?;
             relink::relink_orphans(c)?;
             let settings_now = Settings::load(c)?;
             groups::detect(c, settings_now.group_window_s, None)?;

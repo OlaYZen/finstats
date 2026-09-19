@@ -251,6 +251,16 @@ const MIGRATIONS: &[&str] = &[
     CREATE INDEX idx_item_people_person ON item_people(person_id, kind);
     DELETE FROM settings WHERE key = 'library_synced_at';
     "#,
+    // 9 — addresses that count as "at home" although they are public: this network's own public
+    //     address (looked up, every one ever seen) and any the owner adds by hand
+    r#"
+    CREATE TABLE home_addresses (
+        ip         TEXT PRIMARY KEY,
+        source     TEXT NOT NULL,           -- lookup | manual
+        first_seen INTEGER NOT NULL,
+        last_seen  INTEGER NOT NULL
+    ) WITHOUT ROWID;
+    "#,
 ];
 
 impl Db {
@@ -339,20 +349,6 @@ pub fn is_local_ip(ip: &str) -> Option<bool> {
     }
 }
 
-/// Fill `is_local` for rows that predate the column or were imported without it.
-pub fn backfill_is_local(conn: &Connection) -> Result<usize> {
-    let ips: Vec<String> = conn
-        .prepare("SELECT DISTINCT remote_ip FROM playbacks WHERE is_local IS NULL AND remote_ip IS NOT NULL")?
-        .query_map([], |r| r.get(0))?
-        .collect::<Result<_, _>>()?;
-    let mut n = 0;
-    for ip in ips {
-        if let Some(local) = is_local_ip(&ip) {
-            n += conn.execute("UPDATE playbacks SET is_local = ?1 WHERE remote_ip = ?2 AND is_local IS NULL", params![local, ip])?;
-        }
-    }
-    Ok(n)
-}
 
 pub fn now() -> i64 {
     chrono::Utc::now().timestamp()

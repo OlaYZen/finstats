@@ -275,8 +275,19 @@ fn settings_json(app: &App) -> Value {
     v
 }
 
+/// The settings plus what is only read: the home addresses finstats knows, and who it would ask.
+async fn settings_response(app: &App) -> ApiResult {
+    let mut v = settings_json(app);
+    let known = app.db.call(|c| crate::network::list(c)).await?;
+    if let Some(obj) = v.as_object_mut() {
+        obj.insert("known_home_addresses".into(), json!(known));
+        obj.insert("public_ip_services".into(), json!(crate::network::services()));
+    }
+    Ok(Json(v))
+}
+
 async fn get_settings(State(app): State<App>, Manager(_): Manager) -> ApiResult {
-    Ok(Json(settings_json(&app)))
+    settings_response(&app).await
 }
 
 async fn put_settings(State(app): State<App>, Manager(user): Manager, Json(patch): Json<Value>) -> ApiResult {
@@ -297,6 +308,9 @@ async fn put_settings(State(app): State<App>, Manager(user): Manager, Json(patch
     next.validate().map_err(ApiError::bad_request)?;
     let raw = serde_json::to_string(&next).map_err(anyhow::Error::from)?;
     let regroup = (next.group_window_s != app.settings().group_window_s).then_some(next.group_window_s);
+    let before = app.settings();
+    let homes = (next.home_addresses != before.home_addresses).then(|| next.home_addresses.clone());
+    let lookup_switched_on = next.public_ip_lookup && !before.public_ip_lookup;
     app.db
         .call(move |c| {
             db::set_setting(c, "settings", &raw)?;
@@ -304,12 +318,20 @@ async fn put_settings(State(app): State<App>, Manager(user): Manager, Json(patch
             if let Some(window) = regroup {
                 groups::detect(c, window, None)?;
             }
+            // Home addresses decide which plays were local, for the whole history.
+            if let Some(list) = &homes {
+                crate::network::set_manual(c, list)?;
+                crate::network::reclassify(c)?;
+            }
             Ok(())
         })
         .await?;
     *app.settings.write().unwrap() = next;
     app.wake.notify_waiters();
-    Ok(Json(settings_json(&app)))
+    if lookup_switched_on {
+        crate::network::refresh(&app).await;
+    }
+    settings_response(&app).await
 }
 
 async fn get_tasks(State(app): State<App>, Manager(_): Manager) -> ApiResult {

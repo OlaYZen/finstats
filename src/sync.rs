@@ -63,6 +63,7 @@ pub async fn scheduler(app: App) {
                 // Users, the activity log and server details are tiny; keep them fresh.
                 last_light = now;
                 refresh_server_info(&app).await;
+                crate::network::refresh(&app).await;
                 spawn(&app, "sync_users");
                 spawn(&app, "sync_events");
                 spawn(&app, "sync_server");

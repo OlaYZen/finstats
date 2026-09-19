@@ -107,7 +107,7 @@ impl PlayRecord {
             ":pause_count": self.pause_count,
             ":seek_count": self.seek_count,
             ":start_position_s": self.start_position_s,
-            ":is_local": self.remote_ip.as_deref().and_then(crate::db::is_local_ip),
+            ":is_local": match self.remote_ip.as_deref() { Some(ip) => crate::network::classify(conn, ip)?, None => None },
         })?;
         Ok((n > 0).then(|| conn.last_insert_rowid()))
     }
@@ -133,7 +133,7 @@ impl PlayRecord {
             ":position_s": self.position_s,
             ":play_method": self.play_method,
             ":remote_ip": self.remote_ip,
-            ":is_local": self.remote_ip.as_deref().and_then(crate::db::is_local_ip),
+            ":is_local": match self.remote_ip.as_deref() { Some(ip) => crate::network::classify(conn, ip)?, None => None },
             ":pause_count": self.pause_count,
             ":seek_count": self.seek_count,
             ":audio_codec": self.streams.audio_codec,
