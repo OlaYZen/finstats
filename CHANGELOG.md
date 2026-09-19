@@ -6,6 +6,11 @@ binary and is what the **Patch notes** tab in the app shows.
 Format: `## [version] - date`, an optional one-paragraph summary, then `### Added`,
 `### Changed`, `### Fixed` or `### Removed` with one bullet per change.
 
+## [0.5.1] - 2026-09-19
+
+### Added
+- finstats has a logo: a play button sliced into three chart bars. It replaces the generic pulse icon in the sidebar and on the sign-in screens, and is the new browser-tab icon, as a sharp SVG with a classic multi-size `favicon.ico` for browsers and bookmark bars that want one, plus a home-screen icon for phones and tablets.
+
 ## [0.5.0] - 2026-09-19
 
 You decide who sees what.
