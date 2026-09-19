@@ -1079,6 +1079,13 @@ a.chip-link:hover { border-color: var(--accent); color: var(--text); text-decora
 .cl-code { padding: 1px 5px; border-radius: 4px; background: var(--bg-sunken); border: 1px solid var(--border-soft); font-size: 12px; }
 @media (max-width: 560px) { .cl-date { margin-left: 0; flex-basis: 100%; } }
 
+/* ------------------------------------------------------------ settings: home network */
+.net-stack { display: grid; gap: 18px; }
+.net-stack > .field { margin: 0; }
+.home-ips { list-style: none; display: grid; gap: 6px; margin: 6px 0 0; padding: 0; font-size: 13px; }
+.home-ips li { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; }
+.home-input { width: min(100%, 360px); min-height: 58px; resize: vertical; }
+
 /* ------------------------------------------------------------ permissions */
 .perm-intro { margin: 0 0 12px; max-width: 78ch; }
 .table-scroll { overflow-x: auto; }

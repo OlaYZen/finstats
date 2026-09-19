@@ -38,6 +38,7 @@ export default function settings(ctx) {
   const connSlot = h('div', null, sk.rows(2));
   const accessSlot = h('div', null, sk.rows(1));
   const collectSlot = h('div', null, sk.rows(3));
+  const networkSlot = h('div', { class: 'net-stack' }, sk.rows(2));
   const tasksSlot = h('div', null, sk.rows(3));
   const importSlot = h('div');
   const dbSlot = h('div', null, sk.rows(1));
@@ -47,6 +48,7 @@ export default function settings(ctx) {
       card({ title: 'Jellyfin connection', body: connSlot }),
       card({ title: 'Access', sub: 'Who can use finstats and what they can see', body: accessSlot }),
       card({ title: 'Collection', sub: 'How finstats gathers data from Jellyfin', body: collectSlot }),
+      card({ title: 'Home network', sub: 'Which plays count as local and which as remote', body: networkSlot }),
       card({ title: 'Tasks', body: tasksSlot }),
       card({ title: 'Import from Jellystat', sub: 'Bring your playback history with you', body: importSlot, id: 'import' }),
       card({ title: 'Database', body: dbSlot })));
@@ -56,10 +58,10 @@ export default function settings(ctx) {
   async function loadSettings() {
     try {
       settingsData = await api.get('/settings', null, { signal: ctx.signal });
-      renderAccess(); renderCollect(); renderConn();
+      renderAccess(); renderCollect(); renderNetwork(); renderConn();
     } catch (e) {
       if (isAbort(e) || e.status === 401) return;
-      mount(accessSlot, errorState(e, loadSettings)); mount(collectSlot, ''); mount(connSlot, '');
+      mount(accessSlot, errorState(e, loadSettings)); mount(collectSlot, ''); mount(networkSlot, ''); mount(connSlot, '');
     }
   }
 
@@ -80,7 +82,7 @@ export default function settings(ctx) {
   }
 
   /** An immediate-effect setting: a switch that saves on change and confirms next to itself. */
-  function toggleRow({ key, label, help }) {
+  function toggleRow({ key, label, help, onSaved }) {
     const note = h('span', { class: 'saved-note', 'aria-live': 'polite' });
     const err = h('div');
     let noteTimer;
@@ -90,6 +92,7 @@ export default function settings(ctx) {
         try {
           settingsData = await api.put('/settings', { [key]: next });
           note.replaceChildren(icon('check', 13), 'Saved');
+          if (onSaved) onSaved();
           clearTimeout(noteTimer); noteTimer = setTimeout(() => note.replaceChildren(), 2000);
         } catch (e) {
           revert(!next); note.replaceChildren();
@@ -227,6 +230,47 @@ export default function settings(ctx) {
     });
     mount(collectSlot, toggleRow({ key: 'follow_jellyfin_scan', label: 'Follow Jellyfin’s library scan',
       help: 'finstats never starts a scan on Jellyfin. With this on, it re-reads your library only after Jellyfin’s own “Scan Media Library” task has finished, so Jellyfin’s schedule is the only schedule.' }), form);
+  }
+
+  // ------------------------------------------------------------ home network
+  // Private addresses are local by nature. The household's own public address is local too (a phone on
+  // the Wi-Fi reaching Jellyfin through its public name arrives with it), and finstats has to learn that one.
+  function renderNetwork() {
+    const services = (settingsData.public_ip_services || []).map((u) => String(u).replace(/^https?:\/\//, ''));
+    const known = settingsData.known_home_addresses || [];
+    const list = known.length
+      ? h('ul', { class: 'home-ips' }, known.map((a) => h('li', null, h('span', { class: 'mono' }, a.ip),
+        h('span', { class: 'muted' }, a.source === 'manual' ? 'added by you' : ['found automatically · last seen ', h('span', { title: dateTime(a.last_seen) }, relTime(a.last_seen))]))))
+      : h('p', { class: 'help' }, settingsData.public_ip_lookup ? 'No public address learned yet. finstats looks one up within a few minutes of starting.' : 'None. Private addresses (192.168.x.x, 10.x.x.x and the like) always count as local.');
+
+    const input = h('textarea', { class: 'input home-input mono', id: 'f-home', rows: 2, spellcheck: false, autocomplete: 'off', 'aria-describedby': 'h-home',
+      placeholder: '203.0.113.7' }, (settingsData.home_addresses || []).join('\n'));
+    const note = h('span', { class: 'saved-note', 'aria-live': 'polite' });
+    const err = h('div');
+    const save = h('button', { type: 'submit', class: 'btn' }, 'Save addresses');
+    const form = h('form', { class: 'form-grid', noValidate: true },
+      h('div', { class: 'field' }, h('label', { class: 'setting-label', htmlFor: 'f-home' }, 'Other addresses that count as home'), input,
+        h('p', { class: 'help', id: 'h-home' }, 'One IP address per line: an earlier public address of yours, a second home, a VPN exit. Every play in your history is sorted into local and remote again when you save.'), err),
+      h('div', { class: 'form-actions' }, save, note));
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      mount(err, '');
+      const home_addresses = input.value.split(/[\s,;]+/).map((x) => x.trim()).filter(Boolean);
+      setBusy(save, true, 'Saving…');
+      try {
+        settingsData = await api.put('/settings', { home_addresses });
+        renderNetwork();
+      } catch (e2) {
+        input.setAttribute('aria-invalid', 'true');
+        mount(err, inlineError('home-err', `Couldn’t save: ${e2.message}`));
+      } finally { setBusy(save, false); }
+    });
+
+    mount(networkSlot,
+      toggleRow({ key: 'public_ip_lookup', label: 'Recognise my own public address', onSaved: renderNetwork,
+        help: `A device at home that reaches Jellyfin through its public name shows up with your household’s public IP, which would otherwise look remote. With this on, finstats asks a public “what is my IP” service (${services.join(', ') || 'none configured'}) every 15 minutes and counts plays from that address as local. It remembers earlier addresses, since they change. The request contains nothing about you or your server; switch it off and finstats makes no outside requests at all.` }),
+      h('div', { class: 'field' }, h('div', { class: 'setting-label' }, 'Known home addresses'), list),
+      form);
   }
 
   // ------------------------------------------------------------ tasks
