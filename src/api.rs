@@ -17,6 +17,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use tokio::io::AsyncWriteExt;
 use tower_http::compression::CompressionLayer;
+use tower_http::compression::predicate::{DefaultPredicate, NotForContentType, Predicate};
 
 use crate::auth::{self, AuthUser, JellyfinAdmin, Manager};
 use crate::state::{ApiError, ApiResult, App, Settings};
@@ -81,7 +82,9 @@ pub fn router(app: App) -> Router {
         .nest("/api", api)
         .fallback(static_handler)
         .layer(middleware::from_fn(security_headers))
-        .layer(CompressionLayer::new().gzip(true))
+        // A backup is gzip already. Compressing it again gains nothing, and the doubly-encoded stream
+        // broke off in browsers: downloads failed without a word.
+        .layer(CompressionLayer::new().gzip(true).compress_when(DefaultPredicate::new().and(NotForContentType::new("application/gzip"))))
         .with_state(app)
 }
 
