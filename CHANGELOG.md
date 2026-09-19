@@ -6,6 +6,14 @@ binary and is what the **Patch notes** tab in the app shows.
 Format: `## [version] - date`, an optional one-paragraph summary, then `### Added`,
 `### Changed`, `### Fixed` or `### Removed` with one bullet per change.
 
+## [0.6.1] - 2026-09-19
+
+### Added
+- Administrators can open another person's recap: pick them at the top of the Recap page, or use **Open recap** on their profile. It then reads about them by name instead of "you".
+
+### Changed
+- Everyone else still only ever sees their own recap, whatever permissions they hold, and there is still no recap of the whole server.
+
 ## [0.6.0] - 2026-09-19
 
 Your profile, and where you are in every show.
