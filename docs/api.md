@@ -433,3 +433,30 @@ and `seen: false` only removes manual marks, never a recorded play.
 `GET /api/recap?year=&user_id=` — `user_id` is honoured for **Jellyfin administrators** only and selects one other
 user's recap (`scope` then names them). Everyone else always gets their own, whatever permissions they hold
 (`see_everyone` included); the parameter is ignored rather than refused. There is no whole-server recap.
+
+---
+
+# v0.7 — Group watching
+
+Plays of one item by at least two different users that start within `group_window_s` (setting, default 60, 5–600) of
+each other and overlap for at least two minutes share a `group_id`. Jellyfin's sessions do not expose SyncPlay groups,
+so this is inferred; it is recomputed for an item whenever one of its plays ends, after an import, at start-up, and for
+the whole history when the setting changes.
+
+- `Play` rows gain `"group_id": 123|null` and `"group_size": 3|null` (distinct people).
+- `GET /api/activity/{id}` gains `"watched_with": [{"user_id","user_name"}]` — the other people in the group.
+
+`GET /api/stats/groups` (common filters; without `see_everyone` only groups the caller was part of; with a `user_id`
+filter only that person's groups)
+```jsonc
+{
+  "totals": {"sessions": 150, "together_s": 0, "person_s": 0, "people": 3},
+  // together_s: per session, how long at least two people were watching (the second-longest stay), summed.
+  // person_s: everyone's watch time in those sessions, summed.
+  "companions": [ {"members": [{"user_id","user_name","has_image"}], "sessions", "together_s", "last_at"} ],  // by exact set of people, top 8
+  "titles":     [ {"id","name","image_item_id","sessions","together_s"} ],                                   // series or movie, top 8
+  "recent":     [ {"item_id","item_name","item_type","series_id","series_name","season_number","episode_number","image_item_id",
+                   "started_at","together_s","members": [{"user_id","user_name","has_image","duration_s"}]} ]   // newest 10
+}
+```
+`GET/PUT /api/settings` gains `"group_window_s": 60`.

@@ -79,6 +79,12 @@ field is usually just adding a column to a SELECT. Local-time bucketing relies o
 process `TZ` (the Docker image ships tzdata for this). Do not use `#[serde(flatten)]` in `Query` structs —
 serde_urlencoded then hands numbers over as strings and every numeric filter 400s.
 
+**Group watching (`groups.rs`).** Inferred, because `/Sessions` exposes no SyncPlay groups: plays of one item by ≥ 2
+different users starting within `group_window_s` (default 60 — real data shows a third of genuine groups start 6–60 s
+apart) and overlapping ≥ 2 min share `playbacks.group_id` (= lowest play id in the group). `detect()` re-runs per item
+when a play ends, fully after import/start-up, and fully when the setting changes. "Time together" is the
+second-longest stay in a session.
+
 **Profiles (`profile.rs`).** Show progress counts only episodes that exist as files (`path`/`size_bytes` set; the sync
 asks Jellyfin to exclude virtual items, and season 0 is skipped). "Seen" merges three sources in order: a recorded
 play ≥ 80%, Jellyfin's played flag (`user_items`), a manual mark (`manual_seen`, written via `POST /api/me/seen` for

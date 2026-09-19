@@ -54,6 +54,11 @@ video and audio format, bitrate, time watched versus time paused.
 Renamed a file? Jellyfin treats it as a new item and orphans its history. finstats notices and
 re-attaches the old plays to the new entry.
 
+### Who watches together
+When two or more people press play on the same thing at the same time, finstats notices: which
+groups watch together, what they watch, and how many hours they have spent doing it. It shows on
+the dashboard, on each profile ("most often with"), and as a small mark on every shared play.
+
 ### Where you are in every show
 Your profile shows each series as a bar with one segment per episode: seen, started, or not yet.
 Only episodes that are actually on your server count, so an announced season does not spoil a
@@ -156,6 +161,7 @@ Everything works out of the box. If you want to tune it, **Settings** in the app
 | **Follow Jellyfin's library scan** | On by default. finstats refreshes its copy of your library right after Jellyfin's own scheduled scan — no second schedule to manage. |
 | **Check for playback every** | How often finstats looks for streams. Default 5 seconds. |
 | **Treat a restart as the same play** | A stream that stops and resumes within 10 minutes counts as one viewing. |
+| **Count it as watching together within** | How close together different people must start the same title to count as a group. Default 60 seconds. |
 | **Ignore plays shorter than** | Leave accidental clicks out of the statistics. |
 
 <details>
