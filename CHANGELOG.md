@@ -6,6 +6,11 @@ binary and is what the **Patch notes** tab in the app shows.
 Format: `## [version] - date`, an optional one-paragraph summary, then `### Added`,
 `### Changed`, `### Fixed` or `### Removed` with one bullet per change.
 
+## [0.7.6] - 2026-09-19
+
+### Changed
+- On profiles the **Shows** card moved down, to just above Genres, so a long list of shows no longer pushes the watch time, activity chart and top titles out of sight. The day streaks stay at the top. A show you have opened stays open when you change the time range.
+
 ## [0.7.5] - 2026-09-19
 
 ### Changed
