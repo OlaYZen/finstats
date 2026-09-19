@@ -6,6 +6,17 @@ binary and is what the **Patch notes** tab in the app shows.
 Format: `## [version] - date`, an optional one-paragraph summary, then `### Added`,
 `### Changed`, `### Fixed` or `### Removed` with one bullet per change.
 
+## [0.4.3] - 2026-09-19
+
+Pages you have already seen open instantly.
+
+### Changed
+- finstats remembers what each page last showed. Going back to a profile, a library or a time range you have already looked at paints it immediately, profile picture and all, while fresh numbers load quietly behind it; the page only redraws if something actually changed. What is remembered lives in the browser tab only and is dropped when you sign out or change anything.
+- Loading placeholders now appear only when loading is actually slow. Before, every page showed them for at least a third of a second, even when the server had answered at once.
+
+### Fixed
+- Libraries that were deleted in Jellyfin and never had a single play are no longer listed. A deleted library with history is still shown, marked as removed.
+
 ## [0.4.2] - 2026-09-19
 
 ### Fixed
