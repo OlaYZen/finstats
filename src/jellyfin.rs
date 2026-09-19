@@ -252,6 +252,9 @@ impl Jellyfin {
                 "Movie,Series,Season,Episode,Audio,MusicAlbum,MusicVideo,Video,Book,AudioBook".into(),
             ),
             ("Fields", "Genres,DateCreated,MediaSources,Path,Overview,OriginalTitle,ProviderIds,Studios".into()),
+            // Missing and unaired episodes exist in Jellyfin as virtual items without a file. They are
+            // not part of the library as far as statistics go.
+            ("ExcludeLocationTypes", "Virtual".into()),
             ("EnableUserData", "false".into()),
             ("EnableImageTypes", "Primary,Backdrop".into()),
             ("ImageTypeLimit", "1".into()),
