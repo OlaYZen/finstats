@@ -161,7 +161,7 @@ export default function settings(ctx) {
     mount(accessSlot,
       h('p', { class: 'help perm-intro' }, 'Jellyfin administrators',
         admins.length ? [' (', admins.map((u) => u.name).join(', '), ')'] : null,
-        ' always have full access. Everyone else gets what you switch on here. The year recap is always personal, whatever is granted.'),
+        ' always have full access. Everyone else gets what you switch on here. No permission opens other people’s recaps; only administrators can look at those.'),
       h('div', { class: 'table-scroll' },
         h('table', { class: 'perm-table' },
           h('thead', null, h('tr', null, h('th', { scope: 'col' }, 'Who'),

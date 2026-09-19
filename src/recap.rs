@@ -1,4 +1,5 @@
-//! The year in review: one endpoint that tells the signed-in user the story of their own year.
+//! The year in review: one endpoint that tells one person the story of their year. Your own, or,
+//! for a Jellyfin administrator, any one user's.
 
 use std::collections::BTreeSet;
 
@@ -18,6 +19,8 @@ use crate::stats::{one_json, rows_json};
 #[derive(Deserialize)]
 pub struct RecapQuery {
     year: Option<String>,
+    /// Honoured for Jellyfin administrators only.
+    user_id: Option<String>,
 }
 
 /// `WHERE` over `playbacks p` for the period and scope, plus its arguments.
@@ -41,8 +44,13 @@ const TITLE_ID: &str = "COALESCE(p.series_id, p.item_id)";
 const NOT_LIVE_TV: &str = "p.item_type NOT IN ('TvChannel', 'LiveTvChannel', 'Program', 'LiveTvProgram')";
 
 pub async fn recap(State(app): State<App>, user: AuthUser, Query(q): Query<RecapQuery>) -> ApiResult {
-    // A recap is personal: everyone, administrators included, only ever gets their own.
-    let scope_user = Some(user.id.clone());
+    // A recap is one person's year. Everyone gets their own; only a Jellyfin administrator may open
+    // someone else's, and no permission widens that. There is deliberately no whole-server edition.
+    let requested_user = q.user_id.as_deref().map(db::norm_id).filter(|s| !s.is_empty());
+    let scope_user = Some(match requested_user {
+        Some(other) if user.is_admin => other,
+        _ => user.id.clone(),
+    });
     let min_play_s = app.settings().min_play_s;
     let server_name = app.config.read().unwrap().as_ref().map(|c| c.server_name.clone()).unwrap_or_else(|| "Jellyfin".into());
     let requested = q.year.unwrap_or_default();

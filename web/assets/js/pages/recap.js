@@ -3,9 +3,9 @@
 
 import { h, icon, mount, num, duration, durationExact, pct, parseDay } from '../dom.js';
 import { api, imgItem } from '../api.js';
-import { state } from '../state.js';
+import { state, isAdmin, userList } from '../state.js';
 import { replaceQuery } from '../router.js';
-import { dataView, segmented, poster, emptyState, sk } from '../components.js';
+import { dataView, segmented, poster, emptyState, sk, combobox } from '../components.js';
 import { showTip, hideTip } from '../charts.js';
 
 const BAR = '#9085e9';      // the single series hue used everywhere else in finstats
@@ -36,8 +36,12 @@ const plural = (n, one, many) => `${num(n)} ${Number(n) === 1 ? one : many}`;
 const hour2 = (i) => String(i).padStart(2, '0') + ':00';
 
 // ---------------------------------------------------------------- voice
-/** A recap is always the signed-in person's own, so the copy speaks to them directly. */
-const YOU = { who: 'You', whoLow: 'you', your: 'Your', yourLow: 'your' };
+/** Your own recap speaks to you; an administrator looking at someone else's reads about them by name. */
+function voiceFor(scope, me) {
+  if (!scope || !scope.user_id || (me && scope.user_id === me.id)) return { you: true, who: 'You', whoLow: 'you', your: 'Your', yourLow: 'your' };
+  const name = scope.user_name || 'This user';
+  return { you: false, who: name, whoLow: name, your: `${name}’s`, yourLow: `${name}’s` };
+}
 
 // ---------------------------------------------------------------- motion
 const reducedMotion = () => typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -211,7 +215,7 @@ function personaChapter(d, v) {
   if (!p && !hasHours && !hasDays) return null;
   return chapter({
     id: 'persona', eyebrow: 'Viewing personality', cls: 'rc-persona',
-    title: p ? h('span', { class: 'rc-persona-title' }, p.title || 'Creature of habit') : 'When you watch',
+    title: p ? h('span', { class: 'rc-persona-title' }, p.title || 'Creature of habit') : v.you ? 'When you watch' : `When ${v.who} watches`,
     lead: p && p.line ? p.line : null,
     body: !hasHours && !hasDays ? null : h('div', { class: 'rc-persona-charts' },
       hasHours ? h('figure', { class: 'rc-figure' }, h('figcaption', null, 'Around the clock', h('span', null, 'Watch time by hour of day')),
@@ -264,7 +268,7 @@ function recordsChapter(d, v, isYear) {
     image: r.first_play.image_item_id || null, name: r.first_play.name }));
   if (r.oldest_title) cards.push(recordCard({ label: 'Oldest title', value: r.oldest_title.year ? `From ${r.oldest_title.year}` : r.oldest_title.name, context: r.oldest_title.name, image: r.oldest_title.image_item_id || null, name: r.oldest_title.name }));
   if (!cards.length) return null;
-  return chapter({ id: 'records', eyebrow: 'Records', title: 'The days you’ll remember', body: h('div', { class: 'rc-records' }, cards) });
+  return chapter({ id: 'records', eyebrow: 'Records', title: v.you ? 'The days you’ll remember' : 'The days that stood out', body: h('div', { class: 'rc-records' }, cards) });
 }
 
 function discoveryChapter(d, v) {
@@ -272,7 +276,7 @@ function discoveryChapter(d, v) {
   if (!x) return null;
   const once = (x.one_and_done || []).filter(Boolean);
   if (!x.new_series && !x.finished_movies && !x.finished_episodes && !once.length) return null;
-  const started = 'New shows you started';
+  const started = v.you ? 'New shows you started' : `New shows ${v.who} started`;
   return chapter({
     id: 'discovery', eyebrow: 'Discovery', title: started,
     body: [
@@ -294,14 +298,14 @@ function clientsChapter(d, v) {
   if (!rows.length) return null;
   const total = (d.totals && d.totals.plays) || rows.reduce((a, c) => a + (c.plays || 0), 0) || 1;
   return chapter({
-    id: 'clients', eyebrow: 'How you watched', title: `Mostly on ${rows[0].name}.`,
+    id: 'clients', eyebrow: v.you ? 'How you watched' : `How ${v.who} watched`, title: `Mostly on ${rows[0].name}.`,
     body: h('ul', { class: 'rc-chips' }, rows.map((c) => h('li', { class: 'rc-chip' }, h('span', { class: 'rc-chip-name' }, c.name), h('span', { class: 'rc-chip-val mono' }, pct((c.plays || 0) / total), ' of plays')))),
   });
 }
 
 // ---------------------------------------------------------------- page
 function buildStory(d, me, periodLabel) {
-  const v = YOU;
+  const v = voiceFor(d.scope, me);
   const parts = [
     heroChapter(d, v, periodLabel),
     topChapter('shows', d.top_series, {
@@ -329,10 +333,10 @@ function buildStory(d, me, periodLabel) {
     clientsChapter(d, v),
     chapter({
       id: 'outro', cls: 'rc-outro', title: `That was ${periodLabel.toLowerCase().startsWith('last') ? 'the ' + periodLabel.toLowerCase() : periodLabel}.`,
-      lead: 'Everything you watch from here on is already counting towards the next one.',
+      lead: v.you ? 'Everything you watch from here on is already counting towards the next one.' : `Everything ${v.who} watches from here on is already counting towards the next one.`,
       body: [
         h('div', { class: 'rc-outro-links' }, h('a', { class: 'btn', href: '/activity' }, icon('activity', 14), 'See all activity'),
-          me && me.id ? h('a', { class: 'btn btn-ghost', href: `/users/${me.id}` }, icon('user', 14), 'Your stats') : null),
+          d.scope && d.scope.user_id ? h('a', { class: 'btn btn-ghost', href: `/users/${d.scope.user_id}` }, icon('user', 14), v.you ? 'Your profile' : `${v.your} profile`) : null),
       ],
     }),
   ];
@@ -344,11 +348,16 @@ export default function recapPage(ctx) {
   const me = state.user;
   const qYear = ctx.query.get('year');
   let year = /^\d{4}$/.test(qYear || '') || qYear === 'last12' ? qYear : '';
+  // Administrators can open one other person's recap. There is no "everyone" recap.
+  let userId = isAdmin() ? ctx.query.get('user') || '' : '';
   let reveal = revealer();
   ctx.onCleanup(() => { reveal.stop(); hideTip(); });
 
   const yearSlot = h('div', { class: 'rc-yearslot' });
-  const controls = h('div', { class: 'filters rc-controls' }, yearSlot);
+  const controls = h('div', { class: 'filters rc-controls' }, yearSlot,
+    isAdmin() ? combobox({ value: userId, allLabel: 'My recap', placeholder: 'My recap', label: 'Whose recap',
+      load: () => userList(ctx.signal).then((us) => us.filter((u) => !me || u.id !== me.id).map((u) => ({ value: u.id, label: u.name }))),
+      onChange: (val) => { userId = val; year = ''; sync(); dv.load(); } }) : null);
   const view = h('div', { class: 'rc-story' });
 
   const periodLabel = (y) => (y === 'last12' ? 'Last 12 months' : String(y));
@@ -361,14 +370,14 @@ export default function recapPage(ctx) {
     const options = [...years.map((y) => ({ value: y, label: y })), { value: 'last12', label: 'Last 12 months' }];
     mount(yearSlot, segmented({ label: 'Period', value: current, options, onChange: (val) => { year = val; sync(); dv.load(); } }));
   }
-  const sync = () => replaceQuery({ year });
+  const sync = () => replaceQuery({ year, user: userId });
 
   const dv = dataView({
     container: view, signal: ctx.signal,
     skeleton: () => [h('div', { class: 'rc-hero rc-sk' }, h('div', { class: 'rc-hero-text' }, sk.line('160px', 12), sk.line('min(70%, 420px)', 96), sk.line('min(90%, 520px)', 16))),
       h('div', { class: 'rc-chapter is-in' }, sk.line('120px', 12), sk.line('min(80%, 380px)', 30), sk.block(220)),
       h('div', { class: 'rc-chapter is-in' }, sk.line('120px', 12), sk.line('min(80%, 380px)', 30), sk.block(220))],
-    fetch: () => api.get('/recap', { year }, { signal: ctx.signal }),
+    fetch: () => api.get('/recap', { year, user_id: userId }, { signal: ctx.signal }),
     render: (d) => {
       if (d.year != null) year = String(d.year);
       paintYears(d);
@@ -378,7 +387,8 @@ export default function recapPage(ctx) {
       reveal = revealer();
       view.classList.toggle('rc-anim', reveal.animated); // content is only ever hidden when something will reveal it
       if (d.empty || !d.totals || !d.totals.plays) {
-        return emptyState(`Nothing was played in ${year === 'last12' ? 'the last 12 months' : label}.`, 'You didn’t play anything in this period. Pick another one above.');
+        const v = voiceFor(d.scope, me);
+        return emptyState(`Nothing was played in ${year === 'last12' ? 'the last 12 months' : label}.`, `${v.who} didn’t play anything in this period. Pick another one above.`);
       }
       const story = buildStory(d, me, label);
       // Observe after mount so the first screen reveals immediately.

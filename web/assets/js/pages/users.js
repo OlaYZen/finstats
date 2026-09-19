@@ -1,6 +1,6 @@
-import { h, num, durEl, relEl, compact, duration, durationExact } from '../dom.js';
+import { h, icon, num, durEl, relEl, compact, duration, durationExact } from '../dom.js';
 import { api } from '../api.js';
-import { readDays, saveDays, can } from '../state.js';
+import { readDays, saveDays, can, isAdmin, state } from '../state.js';
 import { replaceQuery } from '../router.js';
 import { pageHeader, card, filterBar, dataView, sk, avatar, emptyState, topList, chip, playsTable, statTile } from '../components.js';
 import { activityCard, heatmapCard, genresCard } from '../widgets.js';
@@ -66,6 +66,7 @@ export function userPage(ctx) {
       headerSlot.replaceChildren(h('header', { class: 'page-header entity-header' },
         avatar(u.id, u.name, { size: 56, hasImage: u.has_image }),
         h('div', null, h('h1', { class: 'page-title' }, u.name),
+          isAdmin() && state.user && u.id !== state.user.id ? h('a', { class: 'btn btn-ghost btn-sm entity-action', href: `/recap?user=${encodeURIComponent(u.id)}` }, icon('recap', 14), 'Open recap') : null,
           h('p', { class: 'page-sub' }, [u.is_admin ? 'Administrator' : 'User', u.is_disabled ? 'disabled' : null, u.removed ? 'removed from Jellyfin' : null].filter(Boolean).join(' · '),
             u.last_activity_at ? [' · last seen ', relEl(u.last_activity_at, '')] : null))));
       const t = d.totals || {};
