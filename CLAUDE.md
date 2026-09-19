@@ -135,6 +135,9 @@ URL/API key, sessions) and the library are never exported; a test asserts the ke
 or user+item+start), remaps timeline rows to the new play ids, and re-derives groups, `is_local` and library links. The scheduler
 writes one when the newest file is older than `backup_every_d`; endpoints are `JellyfinAdmin`-only and names go through `valid_name`.
 
+The response compression layer skips `application/gzip`: re-compressing a backup broke the download in browsers. Anything served
+pre-compressed needs the same exemption.
+
 **HTTP contract.** `docs/api.md` is the contract the UI is written against; change it together with the endpoint.
 
 ## Frontend (`web/`)
@@ -164,7 +167,8 @@ remembered result at once, refreshes behind it and only re-renders when the JSON
 150 ms and then stay at least 300 ms. The cache is in-memory per tab and is cleared by `resetCaches()` (sign-out) and
 by any non-GET request. Esc is handled globally in `shell.js` (steps back out of `/libraries/:id`, `/users/:id`,
 `/items/:id`); overlays must keep calling `stopPropagation()` on their own Esc.
-`ux-rules.md` is the checklist each screen is held to. The look is Obsidian's dark theme via the tokens at the top of
+Each screen is held to the UX patterns from <https://uxgoodpatterns.com>. A generated copy, `ux-rules.md`, may sit in the working
+tree for reference; it is someone else's work, is git-ignored and must never be committed. The look is Obsidian's dark theme via the tokens at the top of
 `app.css`; categorical chart colours follow the entity (Movie/Episode/Audio/Other), never rank.
 
 ## Releases and patch notes

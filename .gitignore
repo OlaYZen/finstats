@@ -18,3 +18,9 @@ jellystat-upload.tmp
 .env
 .env.*
 docker-compose.override.yml
+
+# Third-party UX checklist (https://uxgoodpatterns.com): a local reference, not ours to redistribute
+ux-rules.md
+
+# Local QA suite: end-to-end, performance and browser checks run before a release
+/qa/

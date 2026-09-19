@@ -227,7 +227,9 @@ recommended. [Security details →](docs/security.md)
 
 ## For developers
 
-finstats is written in Rust with a dependency-free web UI compiled into the binary.
+finstats is written in Rust with a dependency-free web UI compiled into the binary. The interface follows the
+UX patterns collected at [uxgoodpatterns.com](https://uxgoodpatterns.com): forms that validate on submit, dialogs
+that close three ways, tables you can sort, states for loading, empty and failed.
 
 ```sh
 cargo build --release
