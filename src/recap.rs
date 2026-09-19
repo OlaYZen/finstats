@@ -75,8 +75,12 @@ fn build(c: &Connection, scope_user: Option<String>, min_play_s: i64, server_nam
     let (year_json, from, to) = if requested == "last12" {
         (json!("last12"), local_midnight("date('now', 'localtime', 'start of month', '-12 months')")?, db::now() + 1)
     } else {
-        let this_year: i64 = c.query_row("SELECT CAST(strftime('%Y', 'now', 'localtime') AS INTEGER)", [], |r| r.get(0))?;
-        let y = requested.parse::<i64>().ok().filter(|y| (1990..=9999).contains(y)).or(years.first().copied()).unwrap_or(this_year);
+        let (this_year, month): (i64, i64) = c.query_row(
+            "SELECT CAST(strftime('%Y', 'now', 'localtime') AS INTEGER), CAST(strftime('%m', 'now', 'localtime') AS INTEGER)",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )?;
+        let y = requested.parse::<i64>().ok().filter(|y| (1990..=9999).contains(y)).unwrap_or_else(|| default_year(this_year, month, &years));
         (json!(y), local_midnight(&format!("'{y:04}-01-01'"))?, local_midnight(&format!("'{:04}-01-01'", y + 1))?)
     };
 
@@ -152,6 +156,13 @@ fn build(c: &Connection, scope_user: Option<String>, min_play_s: i64, server_nam
         &w.args,
     )?);
     Ok(out)
+}
+
+/// A year's recap is "ready" in its December and stays the default until the next December.
+/// Falls back to the newest year with plays when the ready year has none (a new install).
+fn default_year(this_year: i64, month: i64, years_with_plays: &[i64]) -> i64 {
+    let ready = if month == 12 { this_year } else { this_year - 1 };
+    if years_with_plays.contains(&ready) { ready } else { years_with_plays.first().copied().unwrap_or(ready) }
 }
 
 fn rank(c: &Connection, w: &Window, user: Option<&str>, min_play_s: i64) -> Result<Value> {
@@ -407,6 +418,18 @@ fn discovery(c: &Connection, w: &Window) -> Result<Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_default_recap_flips_in_december() {
+        assert_eq!(default_year(2026, 9, &[2026, 2025]), 2025);
+        assert_eq!(default_year(2026, 12, &[2026, 2025]), 2026);
+        assert_eq!(default_year(2027, 1, &[2027, 2026, 2025]), 2026);
+        assert_eq!(default_year(2027, 11, &[2027, 2026, 2025]), 2026);
+        assert_eq!(default_year(2027, 12, &[2027, 2026, 2025]), 2027);
+        // Brand new install: last year has nothing, so show what there is.
+        assert_eq!(default_year(2026, 9, &[2026]), 2026);
+        assert_eq!(default_year(2026, 9, &[]), 2025);
+    }
 
     #[test]
     fn persona_prefers_the_most_distinctive_habit() {

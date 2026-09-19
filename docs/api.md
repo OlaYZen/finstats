@@ -300,7 +300,9 @@ New task ids in `/api/tasks`: `sync_server` (server info, plugins, tasks, device
 
 `GET /api/recap?year=2026` — a recap is personal: everyone, administrators included, only ever gets their **own**.
 `year` is a calendar year (server TZ) or `last12` (the last 12 full months plus the current one).
-Default: the newest year that has plays.
+Default: the year whose recap is "ready" — the current year during December, otherwise the previous year
+(2026 becomes the default in December 2026 and stays it until December 2027). If that year has no plays
+(a new install), the newest year that has.
 
 ```jsonc
 {
