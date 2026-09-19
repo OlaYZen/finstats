@@ -17,6 +17,11 @@ COPY CHANGELOG.md ./
 RUN cargo build --release --locked
 
 FROM alpine:3.22
+# Ties the published image to its source; the release workflow adds version, revision and date.
+LABEL org.opencontainers.image.title="finstats" \
+      org.opencontainers.image.description="Lightweight playback statistics for Jellyfin" \
+      org.opencontainers.image.source="https://github.com/OlaYZen/finstats" \
+      org.opencontainers.image.licenses="GPL-3.0-only"
 # tzdata: "plays per day" and the hour-of-day heatmap follow the TZ variable.
 RUN apk add --no-cache tzdata \
     && addgroup -g 1000 finstats && adduser -D -u 1000 -G finstats finstats \

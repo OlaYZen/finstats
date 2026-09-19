@@ -1,7 +1,8 @@
 services:
   finstats:
-    build: .
-    image: finstats:latest
+    image: ghcr.io/olayzen/finstats:latest
+    # Building from source instead? Comment the line above out and use:
+    # build: .
     container_name: finstats
     restart: unless-stopped
     ports:

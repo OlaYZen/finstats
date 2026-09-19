@@ -4,6 +4,9 @@ version = "0.10.2"
 edition = "2024"
 description = "Lightweight playback statistics for Jellyfin"
 license = "GPL-3.0-only"
+repository = "https://github.com/OlaYZen/finstats"
+homepage = "https://github.com/OlaYZen/finstats"
+readme = "README.md"
 
 [dependencies]
 anyhow = "1"
