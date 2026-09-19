@@ -69,6 +69,7 @@ export default function itemPage(ctx) {
           statTile({ label: 'Plays', value: compact(t.plays), title: num(t.plays), hint: t.last_played_at ? ['last ', relEl(t.last_played_at, '')] : 'Never played' }),
           statTile({ label: 'Watched by', value: `${num(t.users)} ${t.users === 1 ? 'user' : 'users'}`, hint: ' ' })),
         activityCard({ daily: d.daily, bucket: d.bucket, title: 'Plays over time' }),
+        castCard(d.people),
         d.seasons && d.seasons.length ? card({ title: 'Seasons', sub: 'Plays per episode in this range', body: seasons(d.seasons) }) : null,
         card({ title: 'Watched by', cls: 'card-flush', body: watchers(d.watchers) }),
         playedBy(d.played_by),
@@ -83,6 +84,16 @@ export default function itemPage(ctx) {
   filtersSlot.append(filterBar({ days, onDays: (v) => { days = v; saveDays(v); replaceQuery({ days }); dv.load(); } }));
   ctx.root.append(filtersSlot, view);
   dv.load();
+}
+
+/** Directors first, then the billed cast. Each one opens that person's page. */
+function castCard(people) {
+  const rows = (Array.isArray(people) ? people : []).filter((p) => p && p.id && p.name);
+  if (!rows.length) return null;
+  return card({ title: 'Cast & crew', body: h('ul', { class: 'cast-row' }, rows.map((p) => h('li', null, h('a', { class: 'cast-person', href: `/people/${p.id}` },
+    poster(p.has_image ? p.id : null, p.name, { w: 160, cls: 'cast-photo' }),
+    h('span', { class: 'cast-name' }, p.name),
+    h('span', { class: 'cast-role' }, p.kind === 'Director' ? 'Director' : p.role || 'Actor'))))) });
 }
 
 function externalLinks(list) {

@@ -344,11 +344,11 @@ function peopleChapter(d, v) {
     mount(title, tab === 'actors' ? [em(top.name), ' was everywhere'] : [em(top.name), ' called the shots']);
     mount(lead, [b(duration(top.watch_s)), tab === 'actors' ? ' on screen across ' : ' directed across ', b(plural(top.titles, 'title', 'titles')),
       top.top_title ? tail(` — most of it in ${top.top_title}.`) : '.']);
-    mount(grid, rows.map((x, i) => h('li', { class: 'rc-person' },
+    mount(grid, rows.map((x, i) => h('li', null, h('a', { class: 'rc-person', href: `/people/${x.id}` },
       h('span', { class: 'rc-person-n mono', 'aria-hidden': 'true' }, '.' + String(i + 1).padStart(2, '0')),
       poster(x.has_image ? x.id : null, x.name, { w: 300, cls: 'rc-person-photo' }),
       h('span', { class: 'rc-person-name' }, x.name),
-      h('span', { class: 'rc-person-sub mono', title: durationExact(x.watch_s) }, `${duration(x.watch_s)} · ${plural(x.titles, 'title', 'titles')}`))));
+      h('span', { class: 'rc-person-sub mono', title: durationExact(x.watch_s) }, `${duration(x.watch_s)} · ${plural(x.titles, 'title', 'titles')}`)))));
   }
   paint();
   const el = chapter({

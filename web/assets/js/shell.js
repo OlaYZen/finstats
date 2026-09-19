@@ -203,6 +203,7 @@ function escTarget(path) {
   if (/^\/libraries\/[^/]+/.test(path)) return { up: '/libraries' };
   if (/^\/users\/[^/]+/.test(path)) return can('see_everyone') && path !== `/users/${state.user.id}` ? { up: '/users' } : null; // your own profile is a top-level page
   if (/^\/items\/[^/]+/.test(path)) return { up: '/libraries', back: true };     // reached from anywhere, so return to wherever that was
+  if (/^\/people\/[^/]+/.test(path)) return { up: '/libraries', back: true };
   return null;
 }
 

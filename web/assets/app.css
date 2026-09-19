@@ -566,6 +566,15 @@ a.lib-card:hover { border-color: var(--accent); text-decoration: none; }
 .tiles-3 { grid-template-columns: repeat(auto-fit, minmax(min(100%, 200px), 1fr)); }
 
 .item-grid { display: grid; gap: 16px 14px; grid-template-columns: repeat(auto-fill, minmax(118px, 1fr)); }
+/* cast & crew on a title's page: one row, scrolls sideways */
+.cast-row { list-style: none; display: grid; grid-auto-flow: column; grid-auto-columns: 104px; gap: 14px; margin: 0; padding: 2px 2px 8px; overflow-x: auto; }
+.cast-person { display: flex; flex-direction: column; gap: 2px; min-width: 0; color: var(--text); }
+.cast-person:hover { text-decoration: none; }
+.cast-person:hover .poster { outline: 2px solid var(--accent); outline-offset: 1px; }
+.cast-photo { width: 100%; border-radius: 6px; }
+.cast-photo .poster-fallback { font-size: 20px; }
+.cast-name { margin-top: 6px; font-size: 12.5px; font-weight: 550; line-height: 1.3; overflow-wrap: anywhere; }
+.cast-role { font-size: 11.5px; color: var(--text-faint); line-height: 1.3; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 .item-card { display: flex; flex-direction: column; gap: 3px; color: var(--text); }
 .item-card:hover { text-decoration: none; }
 .item-card:hover .poster { outline: 2px solid var(--accent); outline-offset: 1px; }
@@ -938,7 +947,10 @@ a.chip-link:hover { border-color: var(--accent); color: var(--text); text-decora
 
 /* ---- most watched people */
 .rc-people { list-style: none; display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: clamp(10px, 1.6vw, 20px); margin-bottom: 0; padding: 0; max-width: 1100px; }
-.rc-person { position: relative; display: flex; flex-direction: column; min-width: 0; }
+.rc-people > li { min-width: 0; }
+.rc-person { position: relative; display: flex; flex-direction: column; min-width: 0; color: inherit; text-decoration: none; border-radius: 12px; }
+.rc-person:hover { text-decoration: none; }
+.rc-person:hover .rc-person-name { color: var(--accent-hi); }
 .rc-person-photo { width: 100%; border-radius: 12px; filter: saturate(.85); transition: filter var(--ease), transform var(--ease); }
 .rc-person:hover .rc-person-photo { filter: none; transform: translateY(-3px); }
 .rc-person-photo .poster-fallback { font-size: clamp(22px, 3vw, 40px); font-weight: 700; }
@@ -1014,7 +1026,7 @@ a.chip-link:hover { border-color: var(--accent); color: var(--text); text-decora
   .rc-credit { grid-template-columns: minmax(0, 1fr); gap: 4px; }
   .rc-credit dt, .rc-credit dd { text-align: center; }
   .rc-people { grid-template-columns: none; grid-auto-flow: column; grid-auto-columns: 44%; overflow-x: auto; padding-bottom: 8px; scroll-snap-type: x proximity; }
-  .rc-person { scroll-snap-align: start; }
+  .rc-people > li { scroll-snap-align: start; }
   .rc-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .rc-tile { padding: 14px; }
   .rc-feature { grid-template-columns: minmax(0, 1fr); align-items: start; }
