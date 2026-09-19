@@ -1,0 +1,1008 @@
+//! Read-only statistics endpoints. Everything here goes through [`Scope`], which is where
+//! the time window, user/library filters and the "non-admins only see themselves" rule live.
+
+use std::net::IpAddr;
+
+use anyhow::Result;
+use axum::Json;
+use axum::extract::{Path, Query, State};
+use chrono::{Datelike, NaiveDate};
+use serde::Deserialize;
+use serde_json::{Map, Value, json};
+
+use crate::auth::{Admin, AuthUser};
+use crate::db::rusqlite::types::ValueRef;
+use crate::db::rusqlite::{Connection, OptionalExtension, Row, params_from_iter};
+use crate::db::{self, SqlValue};
+use crate::media;
+use crate::state::{ApiError, ApiResult, App};
+
+const BOOL_COLS: [&str; 7] = ["active", "is_admin", "is_disabled", "removed", "has_image", "item_exists", "has_backdrop"];
+const JSON_COLS: [&str; 2] = ["genres", "transcode"];
+
+// ---------------------------------------------------------------- plumbing
+
+pub fn row_json(row: &Row) -> Map<String, Value> {
+    let stmt = row.as_ref();
+    let mut out = Map::new();
+    for i in 0..stmt.column_count() {
+        let name = stmt.column_name(i).unwrap_or("?").to_string();
+        let v = match row.get_ref(i).unwrap_or(ValueRef::Null) {
+            ValueRef::Null => Value::Null,
+            ValueRef::Integer(n) if BOOL_COLS.contains(&name.as_str()) => Value::Bool(n != 0),
+            ValueRef::Integer(n) => json!(n),
+            ValueRef::Real(f) => json!(f),
+            ValueRef::Text(t) => {
+                let s = String::from_utf8_lossy(t);
+                if JSON_COLS.contains(&name.as_str()) { serde_json::from_str(&s).unwrap_or(Value::Null) } else { Value::String(s.into_owned()) }
+            }
+            ValueRef::Blob(_) => Value::Null,
+        };
+        out.insert(name, v);
+    }
+    out
+}
+
+fn rows_json(conn: &Connection, sql: &str, args: &[SqlValue]) -> Result<Vec<Map<String, Value>>> {
+    let mut stmt = conn.prepare(sql)?;
+    let rows = stmt.query_map(params_from_iter(args.iter()), |r| Ok(row_json(r)))?;
+    Ok(rows.collect::<Result<_, _>>()?)
+}
+
+fn one_json(conn: &Connection, sql: &str, args: &[SqlValue]) -> Result<Option<Map<String, Value>>> {
+    Ok(conn.query_row(sql, params_from_iter(args.iter()), |r| Ok(row_json(r))).optional()?)
+}
+
+#[derive(Debug, Deserialize, Default, Clone)]
+pub struct FilterQuery {
+    pub days: Option<i64>,
+    pub user_id: Option<String>,
+    pub library_id: Option<String>,
+}
+
+/// A WHERE clause under construction over `playbacks p`.
+#[derive(Clone, Default)]
+pub struct Cond {
+    clauses: Vec<String>,
+    args: Vec<SqlValue>,
+}
+
+impl Cond {
+    pub fn add(&mut self, clause: &str, v: impl Into<SqlValue>) -> &mut Self {
+        self.clauses.push(clause.to_string());
+        self.args.push(v.into());
+        self
+    }
+    pub fn raw(&mut self, clause: &str) -> &mut Self {
+        self.clauses.push(clause.to_string());
+        self
+    }
+    pub fn with(&self, clause: &str, v: impl Into<SqlValue>) -> Self {
+        let mut c = self.clone();
+        c.add(clause, v);
+        c
+    }
+    pub fn with_raw(&self, clause: &str) -> Self {
+        let mut c = self.clone();
+        c.raw(clause);
+        c
+    }
+    pub fn sql(&self) -> String {
+        if self.clauses.is_empty() { String::new() } else { format!("WHERE {}", self.clauses.join(" AND ")) }
+    }
+}
+
+/// The resolved filter for one request.
+#[derive(Clone)]
+pub struct Scope {
+    pub days: i64,
+    /// Start of the window (local midnight `days-1` days ago); `None` = all time.
+    pub since: Option<i64>,
+    pub user_id: Option<String>,
+    pub library_id: Option<String>,
+    pub min_play_s: i64,
+    pub is_admin: bool,
+}
+
+impl Scope {
+    pub fn new(app: &App, user: &AuthUser, q: &FilterQuery) -> Self {
+        let clean = |s: &Option<String>| s.as_deref().map(db::norm_id).filter(|s| !s.is_empty());
+        Scope {
+            days: q.days.unwrap_or(0).clamp(0, 36_500),
+            since: None,
+            user_id: if user.is_admin { clean(&q.user_id) } else { Some(user.id.clone()) },
+            library_id: clean(&q.library_id),
+            min_play_s: app.settings().min_play_s,
+            is_admin: user.is_admin,
+        }
+    }
+
+    /// "Last 7 days" means today plus the six full local days before it, so the chart's
+    /// buckets and the totals always describe exactly the same plays.
+    pub fn resolve(mut self, conn: &Connection) -> Result<Self> {
+        if self.days > 0 {
+            let since: i64 = conn.query_row(
+                "SELECT CAST(strftime('%s', date('now', 'localtime', ?1), 'utc') AS INTEGER)",
+                [format!("-{} days", self.days - 1)],
+                |r| r.get(0),
+            )?;
+            self.since = Some(since);
+        }
+        Ok(self)
+    }
+
+    fn base(&self) -> Cond {
+        let mut c = Cond::default();
+        if let Some(u) = &self.user_id {
+            c.add("p.user_id = ?", u.clone());
+        }
+        if let Some(l) = &self.library_id {
+            c.add("p.library_id = ?", l.clone());
+        }
+        if self.min_play_s > 0 {
+            c.add("p.duration_s >= ?", self.min_play_s);
+        }
+        c
+    }
+
+    pub fn cond(&self) -> Cond {
+        let mut c = self.base();
+        if let Some(s) = self.since {
+            c.add("p.started_at >= ?", s);
+        }
+        c
+    }
+
+    /// The window of equal length right before the current one.
+    fn previous_cond(&self) -> Option<Cond> {
+        let since = self.since?;
+        let mut c = self.base();
+        c.add("p.started_at >= ?", since - self.days * 86_400);
+        c.add("p.started_at < ?", since);
+        Some(c)
+    }
+}
+
+async fn scoped<T, F>(app: &App, user: &AuthUser, q: &FilterQuery, f: F) -> ApiResult<T>
+where
+    T: Send + 'static,
+    F: FnOnce(&Connection, &Scope) -> Result<T> + Send + 'static,
+{
+    let scope = Scope::new(app, user, q);
+    Ok(app
+        .db
+        .call(move |c| {
+            let scope = scope.resolve(c)?;
+            f(c, &scope)
+        })
+        .await?)
+}
+
+// ---------------------------------------------------------------- building blocks
+
+fn totals(conn: &Connection, cond: &Cond) -> Result<Value> {
+    let sql = format!(
+        "SELECT COUNT(*) AS plays, COALESCE(SUM(p.duration_s), 0) AS watch_s,
+                COUNT(DISTINCT p.user_id) AS active_users, COUNT(DISTINCT p.item_id) AS distinct_items
+         FROM playbacks p {}",
+        cond.sql()
+    );
+    Ok(Value::Object(one_json(conn, &sql, &cond.args)?.unwrap_or_default()))
+}
+
+const TYPE_GROUPS: [&str; 4] = ["Movie", "Episode", "Audio", "Other"];
+
+/// Gap-free time series. Day buckets, or ISO weeks once the span passes 120 days.
+fn daily(conn: &Connection, scope: &Scope, cond: &Cond) -> Result<(Vec<Value>, &'static str)> {
+    let today: String = conn.query_row("SELECT date('now', 'localtime')", [], |r| r.get(0))?;
+    let today = NaiveDate::parse_from_str(&today, "%Y-%m-%d")?;
+    let first: Option<String> = match scope.since {
+        Some(s) => conn.query_row("SELECT date(?1, 'unixepoch', 'localtime')", [s], |r| r.get(0))?,
+        None => conn.query_row(
+            &format!("SELECT date(MIN(p.started_at), 'unixepoch', 'localtime') FROM playbacks p {}", cond.sql()),
+            params_from_iter(cond.args.iter()),
+            |r| r.get(0),
+        )?,
+    };
+    let Some(first) = first.and_then(|f| NaiveDate::parse_from_str(&f, "%Y-%m-%d").ok()) else {
+        return Ok((vec![], "day"));
+    };
+    let weekly = (today - first).num_days() > 120;
+    let (bucket_sql, step, name) = if weekly {
+        ("date(p.started_at, 'unixepoch', 'localtime', 'weekday 0', '-6 days')", 7, "week")
+    } else {
+        ("date(p.started_at, 'unixepoch', 'localtime')", 1, "day")
+    };
+    let sql = format!(
+        "SELECT {bucket_sql} AS d,
+                CASE p.item_type WHEN 'Movie' THEN 'Movie' WHEN 'Episode' THEN 'Episode' WHEN 'Audio' THEN 'Audio' ELSE 'Other' END AS g,
+                COUNT(*), COALESCE(SUM(p.duration_s), 0)
+         FROM playbacks p {} GROUP BY d, g",
+        cond.sql()
+    );
+    let mut found: std::collections::HashMap<(String, String), (i64, i64)> = Default::default();
+    let mut stmt = conn.prepare(&sql)?;
+    let mut rows = stmt.query(params_from_iter(cond.args.iter()))?;
+    while let Some(r) = rows.next()? {
+        found.insert((r.get(0)?, r.get(1)?), (r.get(2)?, r.get(3)?));
+    }
+
+    let mut cursor = if weekly { first - chrono::Duration::days(first.weekday().num_days_from_monday() as i64) } else { first };
+    let mut out = vec![];
+    while cursor <= today {
+        let date = cursor.format("%Y-%m-%d").to_string();
+        let mut by_type = Map::new();
+        let (mut plays, mut watch) = (0, 0);
+        for g in TYPE_GROUPS {
+            let (p, w) = found.get(&(date.clone(), g.to_string())).copied().unwrap_or((0, 0));
+            plays += p;
+            watch += w;
+            by_type.insert(g.to_string(), json!([p, w]));
+        }
+        out.push(json!({ "date": date, "plays": plays, "watch_s": watch, "by_type": by_type }));
+        cursor += chrono::Duration::days(step);
+    }
+    Ok((out, name))
+}
+
+fn heatmap(conn: &Connection, cond: &Cond) -> Result<Value> {
+    let sql = format!(
+        "SELECT CAST(strftime('%w', p.started_at, 'unixepoch', 'localtime') AS INTEGER),
+                CAST(strftime('%H', p.started_at, 'unixepoch', 'localtime') AS INTEGER),
+                COUNT(*), COALESCE(SUM(p.duration_s), 0)
+         FROM playbacks p {} GROUP BY 1, 2",
+        cond.sql()
+    );
+    let mut plays = vec![vec![0i64; 24]; 7];
+    let mut watch = vec![vec![0i64; 24]; 7];
+    let mut stmt = conn.prepare(&sql)?;
+    let mut rows = stmt.query(params_from_iter(cond.args.iter()))?;
+    while let Some(r) = rows.next()? {
+        let (dow, hour): (i64, i64) = (r.get(0)?, r.get(1)?);
+        let day = ((dow + 6) % 7) as usize; // SQLite: 0 = Sunday. Ours: 0 = Monday.
+        plays[day][hour.clamp(0, 23) as usize] = r.get(2)?;
+        watch[day][hour.clamp(0, 23) as usize] = r.get(3)?;
+    }
+    Ok(json!({ "plays": plays, "watch_s": watch }))
+}
+
+/// `expr` is grouped on; rows beyond `max` are folded into "Other".
+fn buckets(conn: &Connection, cond: &Cond, expr: &str, from_extra: &str, max: usize) -> Result<Vec<Value>> {
+    let sql = format!(
+        "SELECT {expr} AS name, COUNT(*) AS plays, COALESCE(SUM(p.duration_s), 0) AS watch_s
+         FROM playbacks p {from_extra} {} GROUP BY 1 HAVING name IS NOT NULL ORDER BY plays DESC, watch_s DESC",
+        cond.sql()
+    );
+    let rows = rows_json(conn, &sql, &cond.args)?;
+    let mut out: Vec<Value> = vec![];
+    let (mut other_p, mut other_w) = (0i64, 0i64);
+    for (i, r) in rows.into_iter().enumerate() {
+        if i < max {
+            out.push(Value::Object(r));
+        } else {
+            other_p += r["plays"].as_i64().unwrap_or(0);
+            other_w += r["watch_s"].as_i64().unwrap_or(0);
+        }
+    }
+    if other_p > 0 {
+        out.push(json!({ "name": "Other", "plays": other_p, "watch_s": other_w }));
+    }
+    Ok(out)
+}
+
+const RESOLUTION_SQL: &str = "CASE
+    WHEN p.width IS NULL AND p.height IS NULL THEN NULL
+    WHEN p.width >= 3800 OR p.height >= 2000 THEN '4K'
+    WHEN p.width >= 2500 OR p.height >= 1400 THEN '1440p'
+    WHEN p.width >= 1900 OR p.height >= 1000 THEN '1080p'
+    WHEN p.width >= 1260 OR p.height >= 700 THEN '720p'
+    WHEN p.width >= 1000 OR p.height >= 560 THEN '576p'
+    WHEN p.width >= 700 OR p.height >= 400 THEN '480p'
+    ELSE 'SD' END";
+
+const CHANNELS_SQL: &str = "CASE p.audio_channels WHEN 1 THEN 'Mono' WHEN 2 THEN 'Stereo'
+    WHEN 6 THEN '5.1' WHEN 8 THEN '7.1' ELSE p.audio_channels || ' ch' END";
+
+fn top(conn: &Connection, cond: &Cond, kind: &str, limit: i64, by_plays: bool) -> Result<Vec<Value>> {
+    let order = if by_plays { "plays DESC, watch_s DESC" } else { "watch_s DESC, plays DESC" };
+    let agg = "COUNT(*) AS plays, COALESCE(SUM(p.duration_s), 0) AS watch_s, COUNT(DISTINCT p.user_id) AS users, MAX(p.ended_at) AS last_played";
+    let (sql, cond) = match kind {
+        "movies" | "music" => {
+            let ty = if kind == "movies" { "Movie" } else { "Audio" };
+            let sub = if kind == "movies" { "CAST(i.production_year AS TEXT)" } else { "COALESCE(i.album_artist, i.album)" };
+            let c = cond.with("p.item_type = ?", ty.to_string());
+            (
+                format!(
+                    "SELECT p.item_id AS id, COALESCE(i.name, MAX(p.item_name)) AS name, {sub} AS sub, p.item_id AS image_item_id, {agg}
+                     FROM playbacks p LEFT JOIN items i ON i.id = p.item_id {} GROUP BY p.item_id ORDER BY {order} LIMIT {limit}",
+                    c.sql()
+                ),
+                c,
+            )
+        }
+        "series" => {
+            let c = cond.with_raw("p.item_type = 'Episode'");
+            (
+                format!(
+                    "SELECT p.series_id AS id, COALESCE(i.name, MAX(p.series_name), 'Unknown series') AS name,
+                            CAST(i.production_year AS TEXT) AS sub, p.series_id AS image_item_id, {agg}
+                     FROM playbacks p LEFT JOIN items i ON i.id = p.series_id {}
+                     GROUP BY COALESCE(p.series_id, p.series_name) ORDER BY {order} LIMIT {limit}",
+                    c.sql()
+                ),
+                c,
+            )
+        }
+        "users" => (
+            format!(
+                "SELECT p.user_id AS id, COALESCE(u.name, MAX(p.user_name)) AS name, NULL AS sub, NULL AS image_item_id,
+                        COUNT(*) AS plays, COALESCE(SUM(p.duration_s), 0) AS watch_s, MAX(p.ended_at) AS last_played
+                 FROM playbacks p LEFT JOIN users u ON u.id = p.user_id {} GROUP BY p.user_id ORDER BY {order} LIMIT {limit}",
+                cond.sql()
+            ),
+            cond.clone(),
+        ),
+        "clients" | "devices" => {
+            let col = if kind == "clients" { "p.client" } else { "p.device_name" };
+            let c = cond.with_raw(&format!("{col} IS NOT NULL"));
+            (
+                format!(
+                    "SELECT NULL AS id, {col} AS name, NULL AS sub, NULL AS image_item_id, {agg}
+                     FROM playbacks p {} GROUP BY {col} ORDER BY {order} LIMIT {limit}",
+                    c.sql()
+                ),
+                c,
+            )
+        }
+        "libraries" => {
+            let c = cond.with_raw("p.library_id IS NOT NULL");
+            (
+                format!(
+                    "SELECT p.library_id AS id, COALESCE(l.name, 'Removed library') AS name, l.collection_type AS sub, p.library_id AS image_item_id, {agg}
+                     FROM playbacks p LEFT JOIN libraries l ON l.id = p.library_id {} GROUP BY p.library_id ORDER BY {order} LIMIT {limit}",
+                    c.sql()
+                ),
+                c,
+            )
+        }
+        // Whatever the library holds: series for shows, the item itself for everything else.
+        "library_items" => (
+            format!(
+                "SELECT COALESCE(p.series_id, p.item_id) AS id,
+                        COALESCE(i.name, MAX(COALESCE(p.series_name, p.item_name))) AS name,
+                        COALESCE(CAST(i.production_year AS TEXT), i.album_artist) AS sub,
+                        COALESCE(p.series_id, p.item_id) AS image_item_id, {agg}
+                 FROM playbacks p LEFT JOIN items i ON i.id = COALESCE(p.series_id, p.item_id) {}
+                 GROUP BY COALESCE(p.series_id, p.item_id) ORDER BY {order} LIMIT {limit}",
+                cond.sql()
+            ),
+            cond.clone(),
+        ),
+        _ => anyhow::bail!("unknown kind"),
+    };
+    Ok(rows_json(conn, &sql, &cond.args)?.into_iter().map(Value::Object).collect())
+}
+
+// ---------------------------------------------------------------- plays
+
+const PLAY_SELECT: &str = "SELECT p.id, p.source, p.active, p.user_id, COALESCE(u.name, p.user_name) AS user_name,
+    p.item_id, p.item_name, p.item_type, p.series_id, p.series_name, p.season_number, p.episode_number,
+    CASE WHEN p.item_type = 'Episode' AND p.series_id IS NOT NULL THEN p.series_id ELSE p.item_id END AS image_item_id,
+    (i.id IS NOT NULL AND i.removed = 0) AS item_exists,
+    p.started_at, p.ended_at, p.duration_s, p.paused_s, p.position_s,
+    COALESCE(p.runtime_s, i.runtime_s) AS runtime_s,
+    p.client, p.device_name, p.device_id, p.app_version, p.remote_ip, p.play_method, p.container, p.bitrate,
+    p.video_codec, p.width, p.height, p.video_range, p.bit_depth,
+    p.audio_codec, p.audio_channels, p.audio_language, p.subtitle_codec, p.subtitle_language, p.transcode
+  FROM playbacks p
+  LEFT JOIN items i ON i.id = p.item_id
+  LEFT JOIN users u ON u.id = p.user_id";
+
+const DETAIL_ONLY: [&str; 12] = [
+    "device_id", "bitrate", "video_codec", "width", "height", "video_range", "bit_depth", "audio_codec", "audio_channels",
+    "audio_language", "subtitle_codec", "subtitle_language",
+];
+
+fn decorate_play(mut m: Map<String, Value>, is_admin: bool, detail: bool) -> Value {
+    let text = |m: &Map<String, Value>, k: &str| m.get(k).and_then(Value::as_str).map(str::to_string);
+    let num = |m: &Map<String, Value>, k: &str| m.get(k).and_then(Value::as_i64);
+
+    let video = media::video_label(text(&m, "video_codec").as_deref(), num(&m, "width"), num(&m, "height"), text(&m, "video_range").as_deref());
+    let audio = media::audio_label(text(&m, "audio_codec").as_deref(), num(&m, "audio_channels"), text(&m, "audio_language").as_deref());
+    let subtitle = media::subtitle_label(if detail { text(&m, "subtitle_codec") } else { None }.as_deref(), text(&m, "subtitle_language").as_deref());
+
+    // Live rows know where playback stopped. Imported rows only know how long it ran.
+    let completion = match (num(&m, "runtime_s").filter(|r| *r > 0), num(&m, "position_s"), num(&m, "duration_s")) {
+        (Some(rt), Some(pos), _) => Some((pos as f64 / rt as f64).clamp(0.0, 1.0)),
+        (Some(rt), None, Some(d)) => Some((d as f64 / rt as f64).clamp(0.0, 1.0)),
+        _ => None,
+    };
+    m.insert("video".into(), json!(video));
+    m.insert("audio".into(), json!(audio));
+    m.insert("subtitle".into(), json!(subtitle));
+    m.insert("completion".into(), json!(completion.map(|c| (c * 1000.0).round() / 1000.0)));
+
+    if !is_admin {
+        m.insert("remote_ip".into(), Value::Null);
+        m.insert("device_id".into(), Value::Null);
+    }
+    if !detail {
+        for k in DETAIL_ONLY {
+            m.remove(k);
+        }
+        m.remove("transcode");
+    }
+    Value::Object(m)
+}
+
+#[derive(Deserialize, Default)]
+pub struct ActivityQuery {
+    // Not `#[serde(flatten)]`: flattening makes serde_urlencoded hand numbers over as strings.
+    days: Option<i64>,
+    user_id: Option<String>,
+    library_id: Option<String>,
+    page: Option<i64>,
+    per_page: Option<i64>,
+    q: Option<String>,
+    method: Option<String>,
+    #[serde(rename = "type")]
+    item_type: Option<String>,
+    item_id: Option<String>,
+    series_id: Option<String>,
+}
+
+pub async fn activity(State(app): State<App>, user: AuthUser, Query(q): Query<ActivityQuery>) -> ApiResult {
+    let page = q.page.unwrap_or(1).max(1);
+    let per_page = q.per_page.unwrap_or(50).clamp(1, 200);
+    let filter = FilterQuery { days: q.days, user_id: q.user_id.clone(), library_id: q.library_id.clone() };
+    let out = scoped(&app, &user, &filter, move |c, scope| {
+        let mut cond = scope.cond();
+        if let Some(m) = q.method.filter(|m| !m.is_empty()) {
+            cond.add("p.play_method = ?", m);
+        }
+        if let Some(t) = q.item_type.filter(|t| !t.is_empty()) {
+            match t.as_str() {
+                "Other" => cond.raw("p.item_type NOT IN ('Movie', 'Episode', 'Audio')"),
+                _ => cond.add("p.item_type = ?", t),
+            };
+        }
+        if let Some(id) = q.item_id.filter(|s| !s.is_empty()) {
+            cond.add("p.item_id = ?", db::norm_id(&id));
+        }
+        if let Some(id) = q.series_id.filter(|s| !s.is_empty()) {
+            cond.add("p.series_id = ?", db::norm_id(&id));
+        }
+        if let Some(text) = q.q.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+            let like = format!("%{}%", text.replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_"));
+            let mut fields = vec!["p.item_name", "p.series_name", "p.user_name", "p.client", "p.device_name"];
+            if scope.is_admin {
+                fields.push("p.remote_ip");
+            }
+            let ors: Vec<String> = fields.iter().map(|f| format!("{f} LIKE ? ESCAPE '\\'")).collect();
+            cond.clauses.push(format!("({})", ors.join(" OR ")));
+            for _ in &fields {
+                cond.args.push(like.clone().into());
+            }
+        }
+        let total: i64 = c.query_row(&format!("SELECT COUNT(*) FROM playbacks p {}", cond.sql()), params_from_iter(cond.args.iter()), |r| r.get(0))?;
+        let sql = format!("{PLAY_SELECT} {} ORDER BY p.ended_at DESC, p.id DESC LIMIT {per_page} OFFSET {}", cond.sql(), (page - 1) * per_page);
+        let rows: Vec<Value> = rows_json(c, &sql, &cond.args)?.into_iter().map(|m| decorate_play(m, scope.is_admin, false)).collect();
+        Ok(json!({ "total": total, "page": page, "per_page": per_page, "rows": rows }))
+    })
+    .await?;
+    Ok(Json(out))
+}
+
+pub async fn activity_detail(State(app): State<App>, user: AuthUser, Path(id): Path<i64>) -> ApiResult {
+    let found = scoped(&app, &user, &FilterQuery::default(), move |c, scope| {
+        let mut cond = Cond::default();
+        cond.add("p.id = ?", id);
+        if let Some(u) = &scope.user_id {
+            cond.add("p.user_id = ?", u.clone());
+        }
+        Ok(one_json(c, &format!("{PLAY_SELECT} {}", cond.sql()), &cond.args)?.map(|m| decorate_play(m, scope.is_admin, true)))
+    })
+    .await?;
+    found.map(Json).ok_or_else(|| ApiError::not_found("Play"))
+}
+
+pub async fn activity_delete(State(app): State<App>, Admin(_): Admin, Path(id): Path<i64>) -> ApiResult {
+    let n = app.db.call(move |c| Ok(c.execute("DELETE FROM playbacks WHERE id = ?1 AND active = 0", [id])?)).await?;
+    if n == 0 {
+        return Err(ApiError::not_found("Play"));
+    }
+    Ok(Json(json!({ "ok": true })))
+}
+
+// ---------------------------------------------------------------- stats endpoints
+
+pub async fn overview(State(app): State<App>, user: AuthUser, Query(q): Query<FilterQuery>) -> ApiResult {
+    let out = scoped(&app, &user, &q, |c, scope| {
+        let cond = scope.cond();
+        let previous = scope.previous_cond().map(|p| totals(c, &p)).transpose()?;
+        let (series, bucket) = daily(c, scope, &cond)?;
+        let lib = match &scope.library_id {
+            Some(l) => Cond::default().with("library_id = ?", l.clone()),
+            None => Cond::default(),
+        }
+        .with_raw("removed = 0");
+        let library = one_json(
+            c,
+            &format!(
+                "SELECT COALESCE(SUM(type = 'Movie'), 0) AS movies, COALESCE(SUM(type = 'Series'), 0) AS series,
+                        COALESCE(SUM(type = 'Episode'), 0) AS episodes, COALESCE(SUM(type = 'Audio'), 0) AS tracks,
+                        COALESCE(SUM(size_bytes), 0) AS size_bytes,
+                        (SELECT COUNT(*) FROM users WHERE removed = 0) AS users
+                 FROM items {}",
+                lib.sql()
+            ),
+            &lib.args,
+        )?;
+        Ok(json!({ "totals": totals(c, &cond)?, "previous": previous, "daily": series, "bucket": bucket, "library": library }))
+    })
+    .await?;
+    Ok(Json(out))
+}
+
+#[derive(Deserialize)]
+pub struct TopQuery {
+    // Not `#[serde(flatten)]`: flattening makes serde_urlencoded hand numbers over as strings.
+    days: Option<i64>,
+    user_id: Option<String>,
+    library_id: Option<String>,
+    kind: Option<String>,
+    limit: Option<i64>,
+    sort: Option<String>,
+}
+
+pub async fn top_handler(State(app): State<App>, user: AuthUser, Query(q): Query<TopQuery>) -> ApiResult {
+    let kind = q.kind.clone().unwrap_or_else(|| "movies".into());
+    if !["movies", "series", "music", "users", "clients", "devices", "libraries"].contains(&kind.as_str()) {
+        return Err(ApiError::bad_request("Unknown kind"));
+    }
+    let limit = q.limit.unwrap_or(10).clamp(1, 100);
+    let by_plays = q.sort.as_deref() == Some("plays");
+    let filter = FilterQuery { days: q.days, user_id: q.user_id.clone(), library_id: q.library_id.clone() };
+    let rows = scoped(&app, &user, &filter, move |c, scope| top(c, &scope.cond(), &kind, limit, by_plays)).await?;
+    Ok(Json(json!({ "rows": rows })))
+}
+
+pub async fn heatmap_handler(State(app): State<App>, user: AuthUser, Query(q): Query<FilterQuery>) -> ApiResult {
+    Ok(Json(scoped(&app, &user, &q, |c, scope| heatmap(c, &scope.cond())).await?))
+}
+
+pub async fn playback(State(app): State<App>, user: AuthUser, Query(q): Query<FilterQuery>) -> ApiResult {
+    let out = scoped(&app, &user, &q, |c, scope| {
+        let cond = scope.cond();
+        let video = cond.with_raw("p.video_codec IS NOT NULL");
+        let video_transcode = cond.with_raw("p.play_method = 'Transcode' AND json_extract(p.transcode, '$.is_video_direct') = 0");
+        Ok(json!({
+            "methods": buckets(c, &cond, "p.play_method", "", 12)?,
+            "transcode_reasons": buckets(c, &cond.with_raw("p.transcode IS NOT NULL"), "j.value", ", json_each(p.transcode, '$.reasons') j", 12)?,
+            "hw_accel": buckets(c, &video_transcode, "COALESCE(json_extract(p.transcode, '$.hw_accel'), 'Software')", "", 12)?,
+            "video_codecs": buckets(c, &cond, "UPPER(p.video_codec)", "", 12)?,
+            "audio_codecs": buckets(c, &cond, "UPPER(p.audio_codec)", "", 12)?,
+            "resolutions": buckets(c, &cond, RESOLUTION_SQL, "", 12)?,
+            "video_ranges": buckets(c, &video, "p.video_range", "", 12)?,
+            "containers": buckets(c, &cond, "LOWER(p.container)", "", 12)?,
+            "audio_channels": buckets(c, &cond, CHANNELS_SQL, "", 12)?,
+            "clients": buckets(c, &cond, "p.client", "", 12)?,
+            "subtitles": buckets(c, &video, "COALESCE(p.subtitle_language, 'None')", "", 12)?,
+        }))
+    })
+    .await?;
+    Ok(Json(out))
+}
+
+// ---------------------------------------------------------------- users
+
+fn user_rows(conn: &Connection, scope: &Scope, only: Option<&str>) -> Result<Vec<Value>> {
+    let cond = scope.cond();
+    let mut args = cond.args.clone();
+    let mut filter = String::new();
+    if let Some(id) = only {
+        filter = "WHERE u.id = ?".into();
+        args.push(id.to_string().into());
+    }
+    let sql = format!(
+        "SELECT u.id, u.name, u.is_admin, u.is_disabled, u.removed, (u.image_tag IS NOT NULL) AS has_image,
+                u.last_login_at, u.last_activity_at,
+                COALESCE(s.plays, 0) AS plays, COALESCE(s.watch_s, 0) AS watch_s, l.last_played_at,
+                (SELECT CASE WHEN x.series_name IS NOT NULL AND x.item_type = 'Episode' THEN x.series_name || ' — ' || x.item_name ELSE x.item_name END
+                   FROM playbacks x WHERE x.user_id = u.id ORDER BY x.ended_at DESC LIMIT 1) AS last_item_name,
+                (SELECT x.client FROM playbacks x WHERE x.user_id = u.id ORDER BY x.ended_at DESC LIMIT 1) AS last_client
+         FROM users u
+         LEFT JOIN (SELECT p.user_id, COUNT(*) AS plays, SUM(p.duration_s) AS watch_s FROM playbacks p {} GROUP BY p.user_id) s ON s.user_id = u.id
+         LEFT JOIN (SELECT user_id, MAX(ended_at) AS last_played_at FROM playbacks GROUP BY user_id) l ON l.user_id = u.id
+         {filter}
+         ORDER BY watch_s DESC, u.name COLLATE NOCASE",
+        cond.sql()
+    );
+    Ok(rows_json(conn, &sql, &args)?.into_iter().map(Value::Object).collect())
+}
+
+pub async fn users(State(app): State<App>, user: AuthUser, Query(q): Query<FilterQuery>) -> ApiResult {
+    // The list is about everyone: a user filter from the URL would only blank out the others.
+    let q = FilterQuery { user_id: None, ..q };
+    let me = (!user.is_admin).then(|| user.id.clone());
+    let rows = scoped(&app, &user, &q, move |c, scope| {
+        let everyone = Scope { user_id: None, ..scope.clone() };
+        user_rows(c, &everyone, me.as_deref())
+    })
+    .await?;
+    Ok(Json(json!({ "users": rows })))
+}
+
+fn is_local_ip(ip: &str) -> bool {
+    match ip.parse::<IpAddr>() {
+        Ok(IpAddr::V4(v4)) => v4.is_private() || v4.is_loopback() || v4.is_link_local() || (v4.octets()[0] == 100 && (v4.octets()[1] & 0xC0) == 64),
+        Ok(IpAddr::V6(v6)) => {
+            if let Some(v4) = v6.to_ipv4_mapped() {
+                return v4.is_private() || v4.is_loopback() || v4.is_link_local();
+            }
+            v6.is_loopback() || (v6.segments()[0] & 0xfe00) == 0xfc00 || (v6.segments()[0] & 0xffc0) == 0xfe80
+        }
+        Err(_) => false,
+    }
+}
+
+pub async fn user_detail(State(app): State<App>, user: AuthUser, Path(id): Path<String>, Query(q): Query<FilterQuery>) -> ApiResult {
+    let id = db::norm_id(&id);
+    if !user.is_admin && user.id != id {
+        return Err(ApiError::forbidden());
+    }
+    let q = FilterQuery { user_id: Some(id.clone()), ..q };
+    let as_admin = AuthUser { is_admin: true, ..user.clone() };
+    let is_admin = user.is_admin;
+    let out = scoped(&app, &as_admin, &q, move |c, scope| {
+        let list_scope = Scope { user_id: None, ..scope.clone() };
+        let Some(u) = user_rows(c, &list_scope, Some(&id))?.into_iter().next() else { return Ok(None) };
+        let cond = scope.cond();
+        let mut t = totals(c, &cond)?;
+        let kinds = one_json(
+            c,
+            &format!(
+                "SELECT COALESCE(SUM(p.item_type = 'Movie'), 0) AS movies, COALESCE(SUM(p.item_type = 'Episode'), 0) AS episodes,
+                        COALESCE(SUM(p.item_type = 'Audio'), 0) AS tracks FROM playbacks p {}",
+                cond.sql()
+            ),
+            &cond.args,
+        )?
+        .unwrap_or_default();
+        if let Some(obj) = t.as_object_mut() {
+            obj.extend(kinds);
+            obj.remove("active_users");
+        }
+        let (series, bucket) = daily(c, scope, &cond)?;
+        let devices = rows_json(
+            c,
+            &format!(
+                "SELECT p.device_id, MAX(p.device_name) AS device_name, MAX(p.client) AS client, MAX(p.app_version) AS app_version,
+                        COUNT(*) AS plays, MAX(p.ended_at) AS last_seen
+                 FROM playbacks p {} GROUP BY COALESCE(p.device_id, p.device_name) ORDER BY last_seen DESC LIMIT 50",
+                cond.sql()
+            ),
+            &cond.args,
+        )?;
+        let ips: Vec<Value> = if is_admin {
+            let ipc = cond.with_raw("p.remote_ip IS NOT NULL");
+            rows_json(
+                c,
+                &format!(
+                    "SELECT p.remote_ip AS ip, COUNT(*) AS plays, MIN(p.started_at) AS first_seen, MAX(p.ended_at) AS last_seen
+                     FROM playbacks p {} GROUP BY p.remote_ip ORDER BY last_seen DESC LIMIT 100",
+                    ipc.sql()
+                ),
+                &ipc.args,
+            )?
+            .into_iter()
+            .map(|mut m| {
+                let local = m.get("ip").and_then(Value::as_str).is_some_and(is_local_ip);
+                m.insert("is_local".into(), json!(local));
+                Value::Object(m)
+            })
+            .collect()
+        } else {
+            vec![]
+        };
+        Ok(Some(json!({
+            "user": u, "totals": t, "daily": series, "bucket": bucket,
+            "heatmap": heatmap(c, &cond)?,
+            "top_series": top(c, &cond, "series", 8, false)?,
+            "top_movies": top(c, &cond, "movies", 8, false)?,
+            "clients": buckets(c, &cond, "p.client", "", 8)?,
+            "methods": buckets(c, &cond, "p.play_method", "", 8)?,
+            "devices": devices, "ips": ips,
+        })))
+    })
+    .await?;
+    out.map(Json).ok_or_else(|| ApiError::not_found("User"))
+}
+
+// ---------------------------------------------------------------- libraries & items
+
+fn library_rows(conn: &Connection, scope: &Scope, only: Option<&str>) -> Result<Vec<Value>> {
+    let cond = scope.cond();
+    let mut args = cond.args.clone();
+    let mut filter = String::new();
+    if let Some(id) = only {
+        filter = "WHERE l.id = ?".into();
+        args.push(id.to_string().into());
+    }
+    let sql = format!(
+        "SELECT l.id, l.name, l.collection_type, l.removed,
+                COALESCE(c.item_count, 0) AS item_count, COALESCE(c.series_count, 0) AS series_count,
+                COALESCE(c.episode_count, 0) AS episode_count, COALESCE(c.size_bytes, 0) AS size_bytes,
+                COALESCE(s.plays, 0) AS plays, COALESCE(s.watch_s, 0) AS watch_s, s.last_played_at
+         FROM libraries l
+         LEFT JOIN (SELECT library_id,
+                           SUM(type IN ('Movie', 'Series', 'Audio', 'MusicVideo', 'Video', 'Book', 'AudioBook')) AS item_count,
+                           SUM(type = 'Series') AS series_count, SUM(type = 'Episode') AS episode_count, SUM(size_bytes) AS size_bytes
+                    FROM items WHERE removed = 0 GROUP BY library_id) c ON c.library_id = l.id
+         LEFT JOIN (SELECT p.library_id, COUNT(*) AS plays, SUM(p.duration_s) AS watch_s, MAX(p.ended_at) AS last_played_at
+                    FROM playbacks p {} GROUP BY p.library_id) s ON s.library_id = l.id
+         {filter}
+         ORDER BY l.removed, watch_s DESC, l.name COLLATE NOCASE",
+        cond.sql()
+    );
+    Ok(rows_json(conn, &sql, &args)?.into_iter().map(Value::Object).collect())
+}
+
+const ITEM_CARD: &str = "SELECT i.id, i.name, i.type, i.production_year AS year,
+    COALESCE(i.album_artist, i.series_name, CAST(i.production_year AS TEXT)) AS sub, i.id AS image_item_id, i.date_created FROM items i";
+
+pub async fn libraries(State(app): State<App>, user: AuthUser, Query(q): Query<FilterQuery>) -> ApiResult {
+    let q = FilterQuery { library_id: None, ..q };
+    let rows = scoped(&app, &user, &q, |c, scope| library_rows(c, scope, None)).await?;
+    Ok(Json(json!({ "libraries": rows })))
+}
+
+pub async fn library_detail(State(app): State<App>, user: AuthUser, Path(id): Path<String>, Query(q): Query<FilterQuery>) -> ApiResult {
+    let id = db::norm_id(&id);
+    let q = FilterQuery { library_id: Some(id.clone()), ..q };
+    let out = scoped(&app, &user, &q, move |c, scope| {
+        let list_scope = Scope { library_id: None, ..scope.clone() };
+        let Some(lib) = library_rows(c, &list_scope, Some(&id))?.into_iter().next() else { return Ok(None) };
+        let cond = scope.cond();
+        let (series, bucket) = daily(c, scope, &cond)?;
+        let recent = rows_json(
+            c,
+            &format!("{ITEM_CARD} WHERE i.library_id = ?1 AND i.removed = 0 AND i.type IN ('Movie', 'Series', 'MusicAlbum', 'Video', 'MusicVideo', 'Book', 'AudioBook') ORDER BY i.date_created DESC LIMIT 18"),
+            &[id.clone().into()],
+        )?;
+        Ok(Some(json!({
+            "library": lib, "top": top(c, &cond, "library_items", 10, false)?,
+            "recently_added": recent, "daily": series, "bucket": bucket,
+        })))
+    })
+    .await?;
+    out.map(Json).ok_or_else(|| ApiError::not_found("Library"))
+}
+
+pub async fn item_detail(State(app): State<App>, user: AuthUser, Path(id): Path<String>, Query(q): Query<FilterQuery>) -> ApiResult {
+    let id = db::norm_id(&id);
+    let out = scoped(&app, &user, &q, move |c, scope| {
+        let item = one_json(
+            c,
+            "SELECT i.id, i.name, i.type, i.production_year AS year, i.overview, i.genres, i.community_rating, i.official_rating,
+                    i.runtime_s, i.premiere_date, i.date_created, i.library_id, l.name AS library_name, i.removed,
+                    i.series_id, i.series_name, i.parent_index_number AS season_number, i.index_number AS episode_number,
+                    i.album, i.album_artist, i.container, i.size_bytes, i.bitrate, i.path,
+                    i.video_codec, i.width, i.height, i.video_range, i.audio_codec, i.audio_channels,
+                    (i.backdrop_tag IS NOT NULL) AS has_backdrop
+             FROM items i LEFT JOIN libraries l ON l.id = i.library_id WHERE i.id = ?1",
+            &[id.clone().into()],
+        )?;
+        // Deleted before finstats ever saw it, but it still has history: describe it from its plays.
+        let item = match item {
+            Some(i) => Some(i),
+            None => one_json(
+                c,
+                "SELECT ?1 AS id, name, type, 1 AS removed, 0 AS has_backdrop FROM (
+                    SELECT item_name AS name, item_type AS type, ended_at FROM playbacks WHERE item_id = ?1
+                    UNION ALL
+                    SELECT series_name, 'Series', ended_at FROM playbacks WHERE series_id = ?1
+                 ) ORDER BY ended_at DESC LIMIT 1",
+                &[id.clone().into()],
+            )?,
+        };
+        let Some(mut item) = item else { return Ok(None) };
+        let text = |m: &Map<String, Value>, k: &str| m.get(k).and_then(Value::as_str).map(str::to_string);
+        let num = |m: &Map<String, Value>, k: &str| m.get(k).and_then(Value::as_i64);
+        let video = media::video_label(text(&item, "video_codec").as_deref(), num(&item, "width"), num(&item, "height"), text(&item, "video_range").as_deref());
+        let audio = media::audio_label(text(&item, "audio_codec").as_deref(), num(&item, "audio_channels"), None);
+        item.insert("video".into(), json!(video));
+        item.insert("audio".into(), json!(audio));
+        for k in ["video_codec", "width", "height", "video_range", "audio_codec", "audio_channels"] {
+            item.remove(k);
+        }
+        if !scope.is_admin {
+            item.insert("path".into(), Value::Null);
+        }
+
+        let is_series = item.get("type").and_then(Value::as_str) == Some("Series");
+        let cond = scope.cond().with(if is_series { "p.series_id = ?" } else { "p.item_id = ?" }, id.clone());
+        let totals = one_json(
+            c,
+            &format!(
+                "SELECT COUNT(*) AS plays, COALESCE(SUM(p.duration_s), 0) AS watch_s, COUNT(DISTINCT p.user_id) AS users,
+                        MAX(p.ended_at) AS last_played_at FROM playbacks p {}",
+                cond.sql()
+            ),
+            &cond.args,
+        )?;
+        let watchers = rows_json(
+            c,
+            &format!(
+                "SELECT p.user_id, COALESCE(u.name, MAX(p.user_name)) AS user_name, COUNT(*) AS plays,
+                        COALESCE(SUM(p.duration_s), 0) AS watch_s, MAX(p.ended_at) AS last_played_at
+                 FROM playbacks p LEFT JOIN users u ON u.id = p.user_id {} GROUP BY p.user_id ORDER BY watch_s DESC LIMIT 50",
+                cond.sql()
+            ),
+            &cond.args,
+        )?;
+
+        let mut seasons: Vec<Value> = vec![];
+        if is_series {
+            let mut args = cond.args.clone();
+            args.push(id.clone().into());
+            let eps = rows_json(
+                c,
+                &format!(
+                    "SELECT e.id, e.name, e.index_number AS episode_number, e.parent_index_number AS season_number, e.season_id,
+                            COALESCE(sn.name, 'Season ' || COALESCE(e.parent_index_number, '?')) AS season_name,
+                            e.runtime_s, COALESCE(s.plays, 0) AS plays, COALESCE(s.watch_s, 0) AS watch_s
+                     FROM items e
+                     LEFT JOIN items sn ON sn.id = e.season_id
+                     LEFT JOIN (SELECT p.item_id, COUNT(*) AS plays, SUM(p.duration_s) AS watch_s FROM playbacks p {} GROUP BY p.item_id) s ON s.item_id = e.id
+                     WHERE e.series_id = ? AND e.type = 'Episode' AND e.removed = 0
+                     ORDER BY COALESCE(e.parent_index_number, 9999), COALESCE(e.index_number, 9999), e.name",
+                    cond.sql()
+                ),
+                &args,
+            )?;
+            for mut e in eps {
+                let key = e.get("season_id").cloned().unwrap_or(Value::Null);
+                let season_number = e.get("season_number").cloned().unwrap_or(Value::Null);
+                let season_name = e.remove("season_name").unwrap_or(Value::Null);
+                e.remove("season_id");
+                e.remove("season_number");
+                let same = seasons.last().is_some_and(|s: &Value| s["id"] == key && s["season_number"] == season_number);
+                if !same {
+                    seasons.push(json!({ "id": key, "name": season_name, "season_number": season_number, "episodes": [] }));
+                }
+                if let Some(list) = seasons.last_mut().and_then(|s| s["episodes"].as_array_mut()) {
+                    list.push(Value::Object(e));
+                }
+            }
+        }
+        let (series, bucket) = daily(c, scope, &cond)?;
+        Ok(Some(json!({ "item": item, "totals": totals, "watchers": watchers, "seasons": seasons, "daily": series, "bucket": bucket })))
+    })
+    .await?;
+    out.map(Json).ok_or_else(|| ApiError::not_found("Item"))
+}
+
+#[derive(Deserialize)]
+pub struct SearchQuery {
+    q: Option<String>,
+    limit: Option<i64>,
+}
+
+pub async fn search(State(app): State<App>, user: AuthUser, Query(q): Query<SearchQuery>) -> ApiResult {
+    let text = q.q.unwrap_or_default().trim().to_string();
+    if text.is_empty() {
+        return Ok(Json(json!({ "items": [], "users": [] })));
+    }
+    let limit = q.limit.unwrap_or(12).clamp(1, 50);
+    let is_admin = user.is_admin;
+    let out = app
+        .db
+        .call(move |c| {
+            let esc = text.replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_");
+            let (contains, prefix) = (format!("%{esc}%"), format!("{esc}%"));
+            let items = rows_json(
+                c,
+                &format!(
+                    "{ITEM_CARD} WHERE i.removed = 0 AND i.type IN ('Movie', 'Series', 'MusicAlbum', 'Audio') AND i.name LIKE ?1 ESCAPE '\\'
+                     ORDER BY (i.name LIKE ?2 ESCAPE '\\') DESC,
+                              CASE i.type WHEN 'Series' THEN 0 WHEN 'Movie' THEN 1 WHEN 'MusicAlbum' THEN 2 ELSE 3 END,
+                              i.name COLLATE NOCASE LIMIT {limit}"
+                ),
+                &[contains.clone().into(), prefix.into()],
+            )?;
+            let users = if is_admin {
+                rows_json(c, "SELECT id, name FROM users WHERE name LIKE ?1 ESCAPE '\\' ORDER BY removed, name COLLATE NOCASE LIMIT 8", &[contains.into()])?
+            } else {
+                vec![]
+            };
+            Ok(json!({ "items": items, "users": users }))
+        })
+        .await?;
+    Ok(Json(out))
+}
+
+// ---------------------------------------------------------------- live & light status
+
+pub async fn now_playing(State(app): State<App>, user: AuthUser) -> ApiResult {
+    let mut sessions = app.live.read().unwrap().clone();
+    if !user.is_admin {
+        sessions.retain(|s| s["user_id"].as_str() == Some(user.id.as_str()));
+        for s in &mut sessions {
+            s["remote_ip"] = Value::Null;
+        }
+    }
+    Ok(Json(json!({ "sessions": sessions })))
+}
+
+pub async fn summary(State(app): State<App>, user: AuthUser) -> ApiResult {
+    let scope_user = (!user.is_admin).then(|| user.id.clone());
+    let (plays, last_sync): (i64, Option<i64>) = app
+        .db
+        .call(move |c| {
+            let plays = match &scope_user {
+                Some(u) => c.query_row("SELECT COUNT(*) FROM playbacks WHERE user_id = ?1", [u], |r| r.get(0))?,
+                None => c.query_row("SELECT COUNT(*) FROM playbacks", [], |r| r.get(0))?,
+            };
+            let last = c.query_row("SELECT MAX(updated_at) FROM items", [], |r| r.get::<_, Option<i64>>(0))?.filter(|t| *t > 0);
+            Ok((plays, last))
+        })
+        .await?;
+    let collector = app.collector.read().unwrap().clone();
+    let active = if user.is_admin {
+        collector.active_sessions
+    } else {
+        app.live.read().unwrap().iter().filter(|s| s["user_id"].as_str() == Some(user.id.as_str())).count()
+    };
+    Ok(Json(json!({
+        "active_sessions": active, "plays_total": plays, "last_sync_at": last_sync,
+        "collector_ok": collector.connected, "version": env!("CARGO_PKG_VERSION"),
+    })))
+}
+
+// ---------------------------------------------------------------- server log
+
+#[derive(Deserialize)]
+pub struct EventsQuery {
+    page: Option<i64>,
+    per_page: Option<i64>,
+    q: Option<String>,
+    #[serde(rename = "type")]
+    kind: Option<String>,
+}
+
+pub async fn events(State(app): State<App>, Admin(_): Admin, Query(q): Query<EventsQuery>) -> ApiResult {
+    let page = q.page.unwrap_or(1).max(1);
+    let per_page = q.per_page.unwrap_or(50).clamp(1, 200);
+    let out = app
+        .db
+        .call(move |c| {
+            let mut clauses: Vec<String> = vec![];
+            let mut args: Vec<SqlValue> = vec![];
+            if let Some(t) = q.kind.filter(|t| !t.is_empty()) {
+                clauses.push("e.type = ?".into());
+                args.push(t.into());
+            }
+            if let Some(text) = q.q.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+                let like = format!("%{}%", text.replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_"));
+                clauses.push("(e.name LIKE ? ESCAPE '\\' OR e.short_overview LIKE ? ESCAPE '\\' OR e.overview LIKE ? ESCAPE '\\')".into());
+                args.extend([like.clone().into(), like.clone().into(), like.into()]);
+            }
+            let wh = if clauses.is_empty() { String::new() } else { format!("WHERE {}", clauses.join(" AND ")) };
+            let total: i64 = c.query_row(&format!("SELECT COUNT(*) FROM server_events e {wh}"), params_from_iter(args.iter()), |r| r.get(0))?;
+            let rows = rows_json(
+                c,
+                &format!(
+                    "SELECT e.id, e.date, e.name, COALESCE(e.overview, e.short_overview) AS overview, e.type, e.severity,
+                            e.user_id, u.name AS user_name, e.item_id
+                     FROM server_events e LEFT JOIN users u ON u.id = e.user_id {wh}
+                     ORDER BY e.date DESC, e.id DESC LIMIT {per_page} OFFSET {}",
+                    (page - 1) * per_page
+                ),
+                &args,
+            )?;
+            Ok(json!({ "total": total, "page": page, "per_page": per_page, "rows": rows }))
+        })
+        .await?;
+    Ok(Json(out))
+}

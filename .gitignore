@@ -1,0 +1,6 @@
+/target
+/data
+# Personal Jellystat backups — never commit
+*.jsonl
+backup_*
+.env
