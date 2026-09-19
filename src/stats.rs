@@ -8,7 +8,7 @@ use chrono::{Datelike, NaiveDate};
 use serde::Deserialize;
 use serde_json::{Map, Value, json};
 
-use crate::auth::{Admin, AuthUser};
+use crate::auth::{AuthUser, Manager, ServerViewer};
 use crate::db::rusqlite::types::ValueRef;
 use crate::db::rusqlite::{Connection, OptionalExtension, Row, params_from_iter};
 use crate::db::{self, SqlValue};
@@ -99,7 +99,8 @@ pub struct Scope {
     pub user_id: Option<String>,
     pub library_id: Option<String>,
     pub min_play_s: i64,
-    pub is_admin: bool,
+    /// What the caller may see; decides which fields survive and whose plays are counted.
+    pub perms: crate::auth::Perms,
 }
 
 impl Scope {
@@ -108,10 +109,11 @@ impl Scope {
         Scope {
             days: q.days.unwrap_or(0).clamp(0, 36_500),
             since: None,
-            user_id: if user.is_admin { clean(&q.user_id) } else { Some(user.id.clone()) },
+            // Without "see everyone" a request is pinned to the caller, whatever the URL asks for.
+            user_id: if user.perms.see_everyone { clean(&q.user_id) } else { Some(user.id.clone()) },
             library_id: clean(&q.library_id),
             min_play_s: app.settings().min_play_s,
-            is_admin: user.is_admin,
+            perms: user.perms,
         }
     }
 
@@ -402,7 +404,7 @@ const DETAIL_ONLY: [&str; 12] = [
     "audio_language", "subtitle_codec", "subtitle_language",
 ];
 
-fn decorate_play(mut m: Map<String, Value>, is_admin: bool, detail: bool) -> Value {
+fn decorate_play(mut m: Map<String, Value>, see_network: bool, detail: bool) -> Value {
     let text = |m: &Map<String, Value>, k: &str| m.get(k).and_then(Value::as_str).map(str::to_string);
     let num = |m: &Map<String, Value>, k: &str| m.get(k).and_then(Value::as_i64);
 
@@ -421,7 +423,7 @@ fn decorate_play(mut m: Map<String, Value>, is_admin: bool, detail: bool) -> Val
     m.insert("subtitle".into(), json!(subtitle));
     m.insert("completion".into(), json!(completion.map(|c| (c * 1000.0).round() / 1000.0)));
 
-    if !is_admin {
+    if !see_network {
         m.insert("remote_ip".into(), Value::Null);
         m.insert("device_id".into(), Value::Null);
         m.insert("is_local".into(), Value::Null);
@@ -476,7 +478,7 @@ pub async fn activity(State(app): State<App>, user: AuthUser, Query(q): Query<Ac
         if let Some(text) = q.q.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
             let like = format!("%{}%", text.replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_"));
             let mut fields = vec!["p.item_name", "p.series_name", "p.user_name", "p.client", "p.device_name"];
-            if scope.is_admin {
+            if scope.perms.see_network {
                 fields.push("p.remote_ip");
             }
             let ors: Vec<String> = fields.iter().map(|f| format!("{f} LIKE ? ESCAPE '\\'")).collect();
@@ -487,7 +489,7 @@ pub async fn activity(State(app): State<App>, user: AuthUser, Query(q): Query<Ac
         }
         let total: i64 = c.query_row(&format!("SELECT COUNT(*) FROM playbacks p {}", cond.sql()), params_from_iter(cond.args.iter()), |r| r.get(0))?;
         let sql = format!("{PLAY_SELECT} {} ORDER BY p.ended_at DESC, p.id DESC LIMIT {per_page} OFFSET {}", cond.sql(), (page - 1) * per_page);
-        let rows: Vec<Value> = rows_json(c, &sql, &cond.args)?.into_iter().map(|m| decorate_play(m, scope.is_admin, false)).collect();
+        let rows: Vec<Value> = rows_json(c, &sql, &cond.args)?.into_iter().map(|m| decorate_play(m, scope.perms.see_network, false)).collect();
         Ok(json!({ "total": total, "page": page, "per_page": per_page, "rows": rows }))
     })
     .await?;
@@ -502,7 +504,7 @@ pub async fn activity_detail(State(app): State<App>, user: AuthUser, Path(id): P
             cond.add("p.user_id = ?", u.clone());
         }
         let Some(play) = one_json(c, &format!("{PLAY_SELECT} {}", cond.sql()), &cond.args)? else { return Ok(None) };
-        let mut play = decorate_play(play, scope.is_admin, true);
+        let mut play = decorate_play(play, scope.perms.see_network, true);
         let events = rows_json(c, "SELECT at, kind, position_s, detail FROM playback_events WHERE playback_id = ?1 ORDER BY id", &[id.into()])?;
         play["events"] = json!(events);
         Ok(Some(play))
@@ -511,7 +513,7 @@ pub async fn activity_detail(State(app): State<App>, user: AuthUser, Path(id): P
     found.map(Json).ok_or_else(|| ApiError::not_found("Play"))
 }
 
-pub async fn activity_delete(State(app): State<App>, Admin(_): Admin, Path(id): Path<i64>) -> ApiResult {
+pub async fn activity_delete(State(app): State<App>, Manager(_): Manager, Path(id): Path<i64>) -> ApiResult {
     let n = app.db.call(move |c| Ok(c.execute("DELETE FROM playbacks WHERE id = ?1 AND active = 0", [id])?)).await?;
     if n == 0 {
         return Err(ApiError::not_found("Play"));
@@ -629,7 +631,7 @@ fn user_rows(conn: &Connection, scope: &Scope, only: Option<&str>) -> Result<Vec
 pub async fn users(State(app): State<App>, user: AuthUser, Query(q): Query<FilterQuery>) -> ApiResult {
     // The list is about everyone: a user filter from the URL would only blank out the others.
     let q = FilterQuery { user_id: None, ..q };
-    let me = (!user.is_admin).then(|| user.id.clone());
+    let me = (!user.perms.see_everyone).then(|| user.id.clone());
     let rows = scoped(&app, &user, &q, move |c, scope| {
         let everyone = Scope { user_id: None, ..scope.clone() };
         user_rows(c, &everyone, me.as_deref())
@@ -640,13 +642,14 @@ pub async fn users(State(app): State<App>, user: AuthUser, Query(q): Query<Filte
 
 pub async fn user_detail(State(app): State<App>, user: AuthUser, Path(id): Path<String>, Query(q): Query<FilterQuery>) -> ApiResult {
     let id = db::norm_id(&id);
-    if !user.is_admin && user.id != id {
-        return Err(ApiError::forbidden());
+    if !user.perms.see_everyone && user.id != id {
+        return Err(ApiError::not_permitted("see other people's statistics"));
     }
     let q = FilterQuery { user_id: Some(id.clone()), ..q };
-    let as_admin = AuthUser { is_admin: true, ..user.clone() };
-    let is_admin = user.is_admin;
-    let out = scoped(&app, &as_admin, &q, move |c, scope| {
+    // Own page or permitted: let the scope follow the id in the URL. Everything else keeps the caller's permissions.
+    let as_viewer = AuthUser { perms: crate::auth::Perms { see_everyone: true, ..user.perms }, ..user.clone() };
+    let see_network = user.perms.see_network;
+    let out = scoped(&app, &as_viewer, &q, move |c, scope| {
         let list_scope = Scope { user_id: None, ..scope.clone() };
         let Some(u) = user_rows(c, &list_scope, Some(&id))?.into_iter().next() else { return Ok(None) };
         let cond = scope.cond();
@@ -676,7 +679,7 @@ pub async fn user_detail(State(app): State<App>, user: AuthUser, Path(id): Path<
             ),
             &cond.args,
         )?;
-        let ips: Vec<Value> = if is_admin {
+        let ips: Vec<Value> = if see_network {
             let ipc = cond.with_raw("p.remote_ip IS NOT NULL");
             rows_json(
                 c,
@@ -819,7 +822,7 @@ pub async fn item_detail(State(app): State<App>, user: AuthUser, Path(id): Path<
         if item.get("studios").is_none_or(Value::is_null) {
             item.insert("studios".into(), json!([]));
         }
-        if !scope.is_admin {
+        if !scope.perms.see_server {
             item.insert("path".into(), Value::Null);
         }
 
@@ -884,7 +887,7 @@ pub async fn item_detail(State(app): State<App>, user: AuthUser, Path(id): Path<
         // Jellyfin's own flags. For a series: anyone who has finished at least one episode.
         let mut pb_args: Vec<SqlValue> = vec![id.clone().into()];
         let only_me = match &scope.user_id {
-            Some(u) if !scope.is_admin => {
+            Some(u) if !scope.perms.see_everyone => {
                 pb_args.push(u.clone().into());
                 "AND ui.user_id = ?2"
             }
@@ -919,7 +922,7 @@ pub async fn search(State(app): State<App>, user: AuthUser, Query(q): Query<Sear
         return Ok(Json(json!({ "items": [], "users": [] })));
     }
     let limit = q.limit.unwrap_or(12).clamp(1, 50);
-    let is_admin = user.is_admin;
+    let see_everyone = user.perms.see_everyone;
     let out = app
         .db
         .call(move |c| {
@@ -935,7 +938,7 @@ pub async fn search(State(app): State<App>, user: AuthUser, Query(q): Query<Sear
                 ),
                 &[contains.clone().into(), prefix.into()],
             )?;
-            let users = if is_admin {
+            let users = if see_everyone {
                 rows_json(c, "SELECT id, name FROM users WHERE name LIKE ?1 ESCAPE '\\' ORDER BY removed, name COLLATE NOCASE LIMIT 8", &[contains.into()])?
             } else {
                 vec![]
@@ -950,8 +953,10 @@ pub async fn search(State(app): State<App>, user: AuthUser, Query(q): Query<Sear
 
 pub async fn now_playing(State(app): State<App>, user: AuthUser) -> ApiResult {
     let mut sessions = app.live.read().unwrap().clone();
-    if !user.is_admin {
+    if !user.perms.see_everyone {
         sessions.retain(|s| s["user_id"].as_str() == Some(user.id.as_str()));
+    }
+    if !user.perms.see_network {
         for s in &mut sessions {
             s["remote_ip"] = Value::Null;
         }
@@ -960,7 +965,7 @@ pub async fn now_playing(State(app): State<App>, user: AuthUser) -> ApiResult {
 }
 
 pub async fn summary(State(app): State<App>, user: AuthUser) -> ApiResult {
-    let scope_user = (!user.is_admin).then(|| user.id.clone());
+    let scope_user = (!user.perms.see_everyone).then(|| user.id.clone());
     let (plays, last_sync): (i64, Option<i64>) = app
         .db
         .call(move |c| {
@@ -973,7 +978,7 @@ pub async fn summary(State(app): State<App>, user: AuthUser) -> ApiResult {
         })
         .await?;
     let collector = app.collector.read().unwrap().clone();
-    let active = if user.is_admin {
+    let active = if user.perms.see_everyone {
         collector.active_sessions
     } else {
         app.live.read().unwrap().iter().filter(|s| s["user_id"].as_str() == Some(user.id.as_str())).count()
@@ -995,7 +1000,7 @@ pub struct EventsQuery {
     kind: Option<String>,
 }
 
-pub async fn events(State(app): State<App>, Admin(_): Admin, Query(q): Query<EventsQuery>) -> ApiResult {
+pub async fn events(State(app): State<App>, ServerViewer(_): ServerViewer, Query(q): Query<EventsQuery>) -> ApiResult {
     let page = q.page.unwrap_or(1).max(1);
     let per_page = q.per_page.unwrap_or(50).clamp(1, 200);
     let out = app
@@ -1129,7 +1134,7 @@ fn concurrency(conn: &Connection, scope: &Scope, cond: &Cond) -> Result<Value> {
 pub async fn insights(State(app): State<App>, user: AuthUser, Query(q): Query<FilterQuery>) -> ApiResult {
     let out = scoped(&app, &user, &q, |c, scope| {
         let cond = scope.cond();
-        let network = if scope.is_admin {
+        let network = if scope.perms.see_network {
             buckets(c, &cond, "CASE p.is_local WHEN 1 THEN 'Local' WHEN 0 THEN 'Remote' ELSE 'Unknown' END", "", 3)?
         } else {
             vec![]
@@ -1183,7 +1188,7 @@ pub async fn insights(State(app): State<App>, user: AuthUser, Query(q): Query<Fi
             ),
             &live.args,
         )?;
-        let failed_logins = if scope.is_admin {
+        let failed_logins = if scope.perms.see_server {
             let mut args: Vec<SqlValue> = vec![];
             let mut wh = "WHERE (e.type LIKE '%AuthenticationFail%' OR e.name LIKE '%failed%login%' OR e.name LIKE '%Failed login%')".to_string();
             if let Some(s) = scope.since {
@@ -1332,7 +1337,7 @@ pub async fn library_insights(State(app): State<App>, _user: AuthUser, Query(q):
 
 // ---------------------------------------------------------------- v0.2: the Jellyfin server
 
-pub async fn server(State(app): State<App>, Admin(_): Admin) -> ApiResult {
+pub async fn server(State(app): State<App>, ServerViewer(_): ServerViewer) -> ApiResult {
     let out = app
         .db
         .call(|c| {

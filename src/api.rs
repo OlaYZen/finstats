@@ -18,8 +18,9 @@ use serde_json::{Value, json};
 use tokio::io::AsyncWriteExt;
 use tower_http::compression::CompressionLayer;
 
-use crate::auth::{self, Admin, AuthUser};
+use crate::auth::{self, AuthUser, JellyfinAdmin, Manager};
 use crate::state::{ApiError, ApiResult, App, Settings};
+use crate::db::rusqlite::OptionalExtension;
 use crate::{changelog, db, import, recap, stats, sync};
 
 #[derive(RustEmbed)]
@@ -58,6 +59,9 @@ pub fn router(app: App) -> Router {
         .route("/img/item/{id}", get(item_image))
         .route("/img/user/{id}", get(user_image))
         .route("/settings", get(get_settings).put(put_settings))
+        .route("/permissions", get(get_permissions))
+        .route("/permissions/defaults", axum::routing::put(put_default_permissions))
+        .route("/permissions/users/{id}", axum::routing::put(put_user_permissions))
         .route("/tasks", get(get_tasks))
         .route("/tasks/{id}/run", post(run_task))
         // Backups run to hundreds of MB and are streamed to disk, never buffered.
@@ -267,15 +271,19 @@ fn settings_json(app: &App) -> Value {
     v
 }
 
-async fn get_settings(State(app): State<App>, Admin(_): Admin) -> ApiResult {
+async fn get_settings(State(app): State<App>, Manager(_): Manager) -> ApiResult {
     Ok(Json(settings_json(&app)))
 }
 
-async fn put_settings(State(app): State<App>, Admin(_): Admin, Json(patch): Json<Value>) -> ApiResult {
+async fn put_settings(State(app): State<App>, Manager(user): Manager, Json(patch): Json<Value>) -> ApiResult {
     let mut merged = serde_json::to_value(app.settings()).map_err(anyhow::Error::from)?;
     let (Some(target), Some(patch)) = (merged.as_object_mut(), patch.as_object()) else {
         return Err(ApiError::bad_request("Expected a JSON object"));
     };
+    // Who gets in and what everyone may see is an administrator's call: a manager must not be able to promote themselves.
+    if !user.is_admin && ACCESS_KEYS.iter().any(|k| patch.contains_key(*k)) {
+        return Err(ApiError::forbidden());
+    }
     for (k, v) in patch {
         if target.contains_key(k) {
             target.insert(k.clone(), v.clone());
@@ -290,7 +298,7 @@ async fn put_settings(State(app): State<App>, Admin(_): Admin, Json(patch): Json
     Ok(Json(settings_json(&app)))
 }
 
-async fn get_tasks(State(app): State<App>, Admin(_): Admin) -> ApiResult {
+async fn get_tasks(State(app): State<App>, Manager(_): Manager) -> ApiResult {
     let data_dir = app.data_dir.clone();
     let dbinfo = app
         .db
@@ -305,7 +313,7 @@ async fn get_tasks(State(app): State<App>, Admin(_): Admin) -> ApiResult {
     Ok(Json(json!({ "tasks": app.tasks.snapshot(), "collector": collector, "db": dbinfo })))
 }
 
-async fn run_task(State(app): State<App>, Admin(_): Admin, Path(id): Path<String>) -> ApiResult<Response> {
+async fn run_task(State(app): State<App>, Manager(_): Manager, Path(id): Path<String>) -> ApiResult<Response> {
     let id: &'static str = match id.as_str() {
         "sync_users" => "sync_users",
         "sync_libraries" => "sync_libraries",
@@ -320,9 +328,109 @@ async fn run_task(State(app): State<App>, Admin(_): Admin, Path(id): Path<String
     Ok((StatusCode::ACCEPTED, Json(json!({ "ok": true }))).into_response())
 }
 
+// ---------------------------------------------------------------- permissions
+
+const ACCESS_KEYS: [&str; 2] = ["allow_user_login", "default_permissions"];
+
+const PERMISSION_INFO: [(&str, &str, &str); 5] = [
+    ("sign_in", "Sign in", "May use finstats and sees their own statistics and recap."),
+    ("see_everyone", "See everyone's activity", "Other people's statistics and history, the Users page and every live stream."),
+    ("see_network", "See network details", "IP addresses, device ids and whether a play was local or remote."),
+    ("see_server", "See the server", "The Server page, the server log, failed sign-ins and file paths."),
+    ("manage", "Manage finstats", "Settings, tasks, the Jellystat import and deleting plays. Cannot change permissions."),
+];
+
+#[derive(Deserialize)]
+struct PermissionsBody {
+    #[serde(default)]
+    permissions: Vec<String>,
+}
+
+fn clean_permissions(list: Vec<String>) -> Result<Vec<String>, ApiError> {
+    if let Some(bad) = list.iter().find(|p| !auth::GRANTABLE.contains(&p.as_str())) {
+        return Err(ApiError::bad_request(format!("Unknown permission `{bad}`")));
+    }
+    // Stored in a fixed order, without duplicates.
+    Ok(auth::GRANTABLE.iter().filter(|g| list.iter().any(|p| p == *g)).map(|g| g.to_string()).collect())
+}
+
+fn defaults_as_keys(s: &Settings) -> Vec<String> {
+    let mut out: Vec<String> = if s.allow_user_login { vec![auth::SIGN_IN.to_string()] } else { vec![] };
+    out.extend(s.default_permissions.iter().cloned());
+    out
+}
+
+async fn get_permissions(State(app): State<App>, JellyfinAdmin(_): JellyfinAdmin) -> ApiResult {
+    let users = app
+        .db
+        .call(|c| {
+            let mut stmt = c.prepare(
+                "SELECT u.id, u.name, u.is_admin, u.is_disabled, u.removed, (u.image_tag IS NOT NULL), COALESCE(p.permissions, '[]')
+                 FROM users u LEFT JOIN user_permissions p ON p.user_id = u.id
+                 WHERE u.removed = 0 ORDER BY u.is_admin DESC, u.name COLLATE NOCASE",
+            )?;
+            let rows = stmt
+                .query_map([], |r| {
+                    let raw: String = r.get(6)?;
+                    Ok(json!({
+                        "id": r.get::<_, String>(0)?, "name": r.get::<_, String>(1)?, "is_admin": r.get::<_, bool>(2)?,
+                        "is_disabled": r.get::<_, bool>(3)?, "has_image": r.get::<_, bool>(5)?,
+                        "permissions": serde_json::from_str::<Value>(&raw).unwrap_or_else(|_| json!([])),
+                    }))
+                })?
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(rows)
+        })
+        .await?;
+    let available: Vec<Value> = PERMISSION_INFO.iter().map(|(key, label, description)| json!({ "key": key, "label": label, "description": description })).collect();
+    Ok(Json(json!({ "available": available, "defaults": defaults_as_keys(&app.settings()), "users": users })))
+}
+
+async fn put_default_permissions(State(app): State<App>, JellyfinAdmin(_): JellyfinAdmin, Json(body): Json<PermissionsBody>) -> ApiResult {
+    let keys = clean_permissions(body.permissions)?;
+    let mut next = app.settings();
+    next.allow_user_login = keys.iter().any(|k| k == auth::SIGN_IN);
+    next.default_permissions = keys.into_iter().filter(|k| k != auth::SIGN_IN).collect();
+    let raw = serde_json::to_string(&next).map_err(anyhow::Error::from)?;
+    app.db.call(move |c| db::set_setting(c, "settings", &raw)).await?;
+    *app.settings.write().unwrap() = next.clone();
+    Ok(Json(json!({ "defaults": defaults_as_keys(&next) })))
+}
+
+async fn put_user_permissions(State(app): State<App>, JellyfinAdmin(_): JellyfinAdmin, Path(id): Path<String>, Json(body): Json<PermissionsBody>) -> ApiResult {
+    let id = db::norm_id(&id);
+    let keys = clean_permissions(body.permissions)?;
+    let stored = keys.clone();
+    let found = app
+        .db
+        .call(move |c| {
+            let is_admin: Option<bool> = c.query_row("SELECT is_admin FROM users WHERE id = ?1", [&id], |r| r.get(0)).optional()?;
+            let Some(is_admin) = is_admin else { return Ok(None) };
+            if is_admin {
+                return Ok(Some(false));
+            }
+            if stored.is_empty() {
+                c.execute("DELETE FROM user_permissions WHERE user_id = ?1", [&id])?;
+            } else {
+                c.execute(
+                    "INSERT INTO user_permissions(user_id, permissions, updated_at) VALUES (?1, ?2, ?3)
+                     ON CONFLICT(user_id) DO UPDATE SET permissions = excluded.permissions, updated_at = excluded.updated_at",
+                    db::rusqlite::params![id, serde_json::to_string(&stored)?, db::now()],
+                )?;
+            }
+            Ok(Some(true))
+        })
+        .await?;
+    match found {
+        None => Err(ApiError::not_found("User")),
+        Some(false) => Err(ApiError::bad_request("Jellyfin administrators already have every permission")),
+        Some(true) => Ok(Json(json!({ "permissions": keys }))),
+    }
+}
+
 // ---------------------------------------------------------------- Jellystat import
 
-async fn import_jellystat(State(app): State<App>, Admin(_): Admin, req: Request) -> ApiResult<Response> {
+async fn import_jellystat(State(app): State<App>, Manager(_): Manager, req: Request) -> ApiResult<Response> {
     if !app.tasks.try_start("import", "Receiving backup") {
         return Err(ApiError::new(StatusCode::CONFLICT, "An import is already running"));
     }

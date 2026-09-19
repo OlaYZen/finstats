@@ -48,7 +48,10 @@ pub struct JfConfig {
 pub struct Settings {
     /// Re-read the library when Jellyfin's own scan task finishes instead of on a timer.
     pub follow_jellyfin_scan: bool,
+    /// Every Jellyfin user may sign in (they then get `default_permissions`).
     pub allow_user_login: bool,
+    /// Permissions every signed-in non-admin has; per-user grants add to these.
+    pub default_permissions: Vec<String>,
     pub poll_interval_s: i64,
     pub sync_interval_h: i64,
     pub merge_window_s: i64,
@@ -57,7 +60,7 @@ pub struct Settings {
 
 impl Default for Settings {
     fn default() -> Self {
-        Self { follow_jellyfin_scan: true, allow_user_login: false, poll_interval_s: 5, sync_interval_h: 6, merge_window_s: 600, min_play_s: 0 }
+        Self { follow_jellyfin_scan: true, allow_user_login: false, default_permissions: vec![], poll_interval_s: 5, sync_interval_h: 6, merge_window_s: 600, min_play_s: 0 }
     }
 }
 
@@ -73,6 +76,9 @@ impl Settings {
         let check = |name: &str, v: i64, lo: i64, hi: i64| {
             if (lo..=hi).contains(&v) { Ok(()) } else { Err(format!("{name} must be between {lo} and {hi}")) }
         };
+        if let Some(bad) = self.default_permissions.iter().find(|p| !crate::auth::GRANTABLE.contains(&p.as_str())) {
+            return Err(format!("unknown permission `{bad}`"));
+        }
         check("poll_interval_s", self.poll_interval_s, 2, 60)?;
         check("sync_interval_h", self.sync_interval_h, 1, 168)?;
         check("merge_window_s", self.merge_window_s, 0, 86_400)?;
@@ -205,6 +211,9 @@ impl ApiError {
     }
     pub fn forbidden() -> Self {
         ApiError(StatusCode::FORBIDDEN, "Only Jellyfin administrators can do this".into())
+    }
+    pub fn not_permitted(what: &str) -> Self {
+        ApiError(StatusCode::FORBIDDEN, format!("You don't have permission to {what}. A Jellyfin administrator can grant it in Settings."))
     }
 }
 

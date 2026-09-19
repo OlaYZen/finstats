@@ -211,6 +211,14 @@ const MIGRATIONS: &[&str] = &[
     CREATE INDEX idx_items_type_name ON items(type, name COLLATE NOCASE);
     CREATE INDEX idx_items_series_episode ON items(series_id, parent_index_number, index_number);
     "#,
+    // 5 — what each non-admin user has been granted, on top of the defaults in settings
+    r#"
+    CREATE TABLE user_permissions (
+        user_id     TEXT PRIMARY KEY,
+        permissions TEXT NOT NULL,          -- JSON array of permission keys
+        updated_at  INTEGER NOT NULL
+    ) WITHOUT ROWID;
+    "#,
 ];
 
 impl Db {

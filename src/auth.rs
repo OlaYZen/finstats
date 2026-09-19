@@ -26,15 +26,75 @@ const SESSION_TTL_S: i64 = 30 * 86_400;
 const MAX_ATTEMPTS: u32 = 10;
 const ATTEMPT_WINDOW_S: i64 = 300;
 
+/// Permission keys an administrator can grant. `sign_in` lets one user in while sign-in
+/// for everyone is off; the rest widen what a signed-in user may see or do.
+pub const SIGN_IN: &str = "sign_in";
+pub const GRANTABLE: [&str; 5] = [SIGN_IN, "see_everyone", "see_network", "see_server", "manage"];
+
+/// What this request may see and do. Jellyfin administrators always hold everything.
+/// The year recap is not covered: it stays personal whatever is granted.
+#[derive(Clone, Copy, Debug, Default, PartialEq, serde::Serialize)]
+pub struct Perms {
+    /// Other people's activity and statistics, the user list, every live stream.
+    pub see_everyone: bool,
+    /// IP addresses, device ids, local/remote.
+    pub see_network: bool,
+    /// The Server page, the server log, failed sign-ins and file paths.
+    pub see_server: bool,
+    /// Settings, tasks, imports and deleting plays.
+    pub manage: bool,
+}
+
+impl Perms {
+    pub const ALL: Perms = Perms { see_everyone: true, see_network: true, see_server: true, manage: true };
+
+    pub fn from_keys<'a>(keys: impl IntoIterator<Item = &'a str>) -> Self {
+        let mut p = Perms::default();
+        for k in keys {
+            match k {
+                "see_everyone" => p.see_everyone = true,
+                "see_network" => p.see_network = true,
+                "see_server" => p.see_server = true,
+                "manage" => p.manage = true,
+                _ => {}
+            }
+        }
+        p
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct AuthUser {
     pub id: String,
     pub name: String,
+    /// A Jellyfin administrator. Only they can change who is allowed what.
     pub is_admin: bool,
+    pub perms: Perms,
 }
 
-/// Extractor that only lets Jellyfin administrators through.
-pub struct Admin(#[allow(dead_code)] pub AuthUser);
+/// May change settings, run tasks, import and delete plays.
+pub struct Manager(#[allow(dead_code)] pub AuthUser);
+/// May see the server page and the server log.
+pub struct ServerViewer(#[allow(dead_code)] pub AuthUser);
+/// A Jellyfin administrator: the only one who may hand out permissions.
+pub struct JellyfinAdmin(#[allow(dead_code)] pub AuthUser);
+
+/// A non-admin's own grants, as stored. Administrators never have a row.
+pub fn stored_grants(conn: &db::rusqlite::Connection, user_id: &str) -> anyhow::Result<Vec<String>> {
+    let raw: Option<String> = conn.query_row("SELECT permissions FROM user_permissions WHERE user_id = ?1", [user_id], |r| r.get(0)).optional()?;
+    Ok(raw.and_then(|r| serde_json::from_str(&r).ok()).unwrap_or_default())
+}
+
+/// `None` = this user may not sign in at all.
+fn effective(is_admin: bool, grants: &[String], settings: &crate::state::Settings) -> Option<Perms> {
+    if is_admin {
+        return Some(Perms::ALL);
+    }
+    if !settings.allow_user_login && !grants.iter().any(|g| g == SIGN_IN) {
+        return None;
+    }
+    Some(Perms::from_keys(grants.iter().chain(settings.default_permissions.iter()).map(String::as_str)))
+}
 
 fn hash_token(token: &str) -> String {
     hex::encode(Sha256::digest(token.as_bytes()))
@@ -68,26 +128,55 @@ impl FromRequestParts<App> for AuthUser {
         let unauthorized = || ApiError::new(StatusCode::UNAUTHORIZED, "Sign in to continue");
         let token = cookie_token(&parts.headers).ok_or_else(unauthorized)?;
         let hash = hash_token(&token);
-        let user = app
+        // Grants are read on every request, so a change by an administrator applies at once.
+        let (mut user, grants) = app
             .db
             .call(move |c| {
-                Ok(c.query_row(
-                    "SELECT user_id, user_name, is_admin FROM sessions WHERE token_hash = ?1 AND expires_at > ?2",
-                    params![hash, db::now()],
-                    |r| Ok(AuthUser { id: r.get(0)?, name: r.get(1)?, is_admin: r.get::<_, i64>(2)? != 0 }),
-                )
-                .optional()?)
+                let user = c
+                    .query_row(
+                        "SELECT user_id, user_name, is_admin FROM sessions WHERE token_hash = ?1 AND expires_at > ?2",
+                        params![hash, db::now()],
+                        |r| Ok(AuthUser { id: r.get(0)?, name: r.get(1)?, is_admin: r.get::<_, i64>(2)? != 0, perms: Perms::default() }),
+                    )
+                    .optional()?;
+                let grants = match &user {
+                    Some(u) if !u.is_admin => stored_grants(c, &u.id)?,
+                    _ => vec![],
+                };
+                Ok(user.map(|u| (u, grants)))
             })
             .await?
             .ok_or_else(unauthorized)?;
-        if !user.is_admin && !app.settings().allow_user_login {
-            return Err(unauthorized());
-        }
+        user.perms = effective(user.is_admin, &grants, &app.settings()).ok_or_else(unauthorized)?;
         Ok(user)
     }
 }
 
-impl FromRequestParts<App> for Admin {
+impl FromRequestParts<App> for Manager {
+    type Rejection = ApiError;
+
+    async fn from_request_parts(parts: &mut Parts, app: &App) -> Result<Self, Self::Rejection> {
+        let user = AuthUser::from_request_parts(parts, app).await?;
+        if !user.perms.manage {
+            return Err(ApiError::not_permitted("manage finstats"));
+        }
+        Ok(Manager(user))
+    }
+}
+
+impl FromRequestParts<App> for ServerViewer {
+    type Rejection = ApiError;
+
+    async fn from_request_parts(parts: &mut Parts, app: &App) -> Result<Self, Self::Rejection> {
+        let user = AuthUser::from_request_parts(parts, app).await?;
+        if !user.perms.see_server {
+            return Err(ApiError::not_permitted("see the server"));
+        }
+        Ok(ServerViewer(user))
+    }
+}
+
+impl FromRequestParts<App> for JellyfinAdmin {
     type Rejection = ApiError;
 
     async fn from_request_parts(parts: &mut Parts, app: &App) -> Result<Self, Self::Rejection> {
@@ -95,7 +184,7 @@ impl FromRequestParts<App> for Admin {
         if !user.is_admin {
             return Err(ApiError::forbidden());
         }
-        Ok(Admin(user))
+        Ok(JellyfinAdmin(user))
     }
 }
 
@@ -111,7 +200,7 @@ fn is_https(headers: &HeaderMap) -> bool {
     headers.get("x-forwarded-proto").and_then(|v| v.to_str().ok()).is_some_and(|v| v.eq_ignore_ascii_case("https"))
 }
 
-async fn user_json(app: &App, id: &str, name: &str, is_admin: bool) -> Value {
+async fn user_json(app: &App, id: &str, name: &str, is_admin: bool, perms: Perms) -> Value {
     let uid = id.to_string();
     let has_image = app
         .db
@@ -122,7 +211,7 @@ async fn user_json(app: &App, id: &str, name: &str, is_admin: bool) -> Value {
         })
         .await
         .unwrap_or(false);
-    json!({ "id": id, "name": name, "is_admin": is_admin, "has_image": has_image })
+    json!({ "id": id, "name": name, "is_admin": is_admin, "has_image": has_image, "permissions": perms })
 }
 
 async fn start_session(
@@ -132,6 +221,7 @@ async fn start_session(
     user_id: &str,
     user_name: &str,
     is_admin: bool,
+    perms: Perms,
 ) -> ApiResult<Response> {
     let mut raw = [0u8; 32];
     rand::rng().fill_bytes(&mut raw);
@@ -151,7 +241,7 @@ async fn start_session(
             Ok(())
         })
         .await?;
-    let body = Json(json!({ "user": user_json(app, user_id, user_name, is_admin).await }));
+    let body = Json(json!({ "user": user_json(app, user_id, user_name, is_admin, perms).await }));
     let mut resp = body.into_response();
     resp.headers_mut().insert(SET_COOKIE, session_cookie(&token, SESSION_TTL_S, is_https(headers)));
     Ok(resp)
@@ -215,15 +305,17 @@ pub async fn login(
     };
     jf.logout(&auth.access_token).await;
 
-    if !auth.is_admin && !app.settings().allow_user_login {
+    let uid = auth.user_id.clone();
+    let grants = if auth.is_admin { vec![] } else { app.db.call(move |c| stored_grants(c, &uid)).await? };
+    let Some(perms) = effective(auth.is_admin, &grants, &app.settings()) else {
         return Err(ApiError::new(
             StatusCode::FORBIDDEN,
-            "Only Jellyfin administrators can sign in. An administrator can allow other users in Settings.",
+            "You haven't been given access to finstats. A Jellyfin administrator can allow you in Settings.",
         ));
-    }
+    };
     clear_rate_limit(&app, ip);
     tracing::info!("{} signed in from {ip}", auth.user_name);
-    start_session(&app, &headers, ip, &auth.user_id, &auth.user_name, auth.is_admin).await
+    start_session(&app, &headers, ip, &auth.user_id, &auth.user_name, auth.is_admin, perms).await
 }
 
 pub async fn logout(State(app): State<App>, headers: HeaderMap) -> ApiResult<Response> {
@@ -237,7 +329,7 @@ pub async fn logout(State(app): State<App>, headers: HeaderMap) -> ApiResult<Res
 }
 
 pub async fn me(State(app): State<App>, user: AuthUser) -> ApiResult {
-    Ok(Json(json!({ "user": user_json(&app, &user.id, &user.name, user.is_admin).await })))
+    Ok(Json(json!({ "user": user_json(&app, &user.id, &user.name, user.is_admin, user.perms).await })))
 }
 
 // ---------------------------------------------------------------- first-run setup
@@ -340,5 +432,45 @@ pub async fn setup(
     tracing::info!("setup completed by {}", auth.user_name);
     app.wake.notify_waiters();
 
-    start_session(&app, &headers, ip, &auth.user_id, &auth.user_name, true).await
+    start_session(&app, &headers, ip, &auth.user_id, &auth.user_name, true, Perms::ALL).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::state::Settings;
+
+    fn grants(keys: &[&str]) -> Vec<String> {
+        keys.iter().map(|k| k.to_string()).collect()
+    }
+
+    #[test]
+    fn administrators_hold_everything_and_need_no_grant() {
+        assert_eq!(effective(true, &[], &Settings::default()), Some(Perms::ALL));
+    }
+
+    #[test]
+    fn nobody_else_gets_in_unless_allowed() {
+        let closed = Settings::default();
+        assert_eq!(effective(false, &[], &closed), None);
+        // Holding a viewing permission is not an invitation: sign-in is its own grant.
+        assert_eq!(effective(false, &grants(&["see_everyone"]), &closed), None);
+        assert_eq!(effective(false, &grants(&["sign_in"]), &closed), Some(Perms::default()));
+    }
+
+    #[test]
+    fn defaults_and_personal_grants_add_up() {
+        let open = Settings { allow_user_login: true, default_permissions: grants(&["see_everyone"]), ..Settings::default() };
+        assert_eq!(effective(false, &[], &open), Some(Perms { see_everyone: true, ..Perms::default() }));
+        let p = effective(false, &grants(&["see_network", "bogus"]), &open).unwrap();
+        assert_eq!(p, Perms { see_everyone: true, see_network: true, ..Perms::default() });
+        assert!(!p.manage && !p.see_server);
+    }
+
+    #[test]
+    fn unknown_default_permissions_are_rejected() {
+        let s = Settings { default_permissions: grants(&["see_everyone", "root"]), ..Settings::default() };
+        assert!(s.validate().is_err());
+        assert!(Settings { default_permissions: grants(&["manage"]), ..Settings::default() }.validate().is_ok());
+    }
 }
