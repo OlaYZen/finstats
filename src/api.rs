@@ -20,7 +20,7 @@ use tower_http::compression::CompressionLayer;
 
 use crate::auth::{self, Admin, AuthUser};
 use crate::state::{ApiError, ApiResult, App, Settings};
-use crate::{db, import, stats, sync};
+use crate::{db, import, recap, stats, sync};
 
 #[derive(RustEmbed)]
 #[folder = "$CARGO_MANIFEST_DIR/web"]
@@ -43,6 +43,7 @@ pub fn router(app: App) -> Router {
         .route("/stats/insights", get(stats::insights))
         .route("/library/insights", get(stats::library_insights))
         .route("/server", get(stats::server))
+        .route("/recap", get(recap::recap))
         .route("/activity", get(stats::activity))
         .route("/activity/{id}", get(stats::activity_detail))
         .route("/activity/{id}", delete(stats::activity_delete))

@@ -41,13 +41,13 @@ pub fn row_json(row: &Row) -> Map<String, Value> {
     out
 }
 
-fn rows_json(conn: &Connection, sql: &str, args: &[SqlValue]) -> Result<Vec<Map<String, Value>>> {
+pub(crate) fn rows_json(conn: &Connection, sql: &str, args: &[SqlValue]) -> Result<Vec<Map<String, Value>>> {
     let mut stmt = conn.prepare(sql)?;
     let rows = stmt.query_map(params_from_iter(args.iter()), |r| Ok(row_json(r)))?;
     Ok(rows.collect::<Result<_, _>>()?)
 }
 
-fn one_json(conn: &Connection, sql: &str, args: &[SqlValue]) -> Result<Option<Map<String, Value>>> {
+pub(crate) fn one_json(conn: &Connection, sql: &str, args: &[SqlValue]) -> Result<Option<Map<String, Value>>> {
     Ok(conn.query_row(sql, params_from_iter(args.iter()), |r| Ok(row_json(r))).optional()?)
 }
 
