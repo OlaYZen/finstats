@@ -6,6 +6,11 @@ binary and is what the **Patch notes** tab in the app shows.
 Format: `## [version] - date`, an optional one-paragraph summary, then `### Added`,
 `### Changed`, `### Fixed` or `### Removed` with one bullet per change.
 
+## [0.4.4] - 2026-09-19
+
+### Added
+- **Esc steps back.** On an opened library, user or title, pressing Esc returns you to where you came from, with the list exactly as you left it. Anything that is open closes first (play details, search, a dropdown, the mobile menu), and Esc is left alone while you are typing or using a chart with the keyboard.
+
 ## [0.4.3] - 2026-09-19
 
 Pages you have already seen open instantly.
