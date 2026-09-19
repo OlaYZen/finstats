@@ -6,6 +6,11 @@ binary and is what the **Patch notes** tab in the app shows.
 Format: `## [version] - date`, an optional one-paragraph summary, then `### Added`,
 `### Changed`, `### Fixed` or `### Removed` with one bullet per change.
 
+## [0.10.1] - 2026-09-20
+
+### Fixed
+- **Downloading a backup failed in the browser** ("the source file could not be read" in Firefox), with nothing on the page to say why. finstats compresses what it sends, and it was compressing the backup, which is a compressed file already, a second time; that doubly-packed transfer broke off before the end. Backups are now sent as they are, with their size up front, so the browser can also show real progress.
+
 ## [0.10.0] - 2026-09-20
 
 ### Added
