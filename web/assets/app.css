@@ -467,6 +467,8 @@ kbd {
 .np-user a { color: var(--text); }
 .np-badges { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 2px; }
 .np-progress { display: flex; align-items: center; gap: 10px; margin-top: 4px; }
+/* The bar shares its row with the clock, so it flexes instead of claiming 100%. */
+.np-progress .meter { flex: 1 1 0; width: auto; min-width: 0; }
 .np-time { color: var(--text-muted); font-size: 11.5px; white-space: nowrap; }
 .np.is-paused .meter-fill { background: var(--text-faint); }
 .np-details { margin-top: 4px; font-size: 12.5px; }
