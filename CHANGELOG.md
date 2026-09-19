@@ -6,6 +6,17 @@ binary and is what the **Patch notes** tab in the app shows.
 Format: `## [version] - date`, an optional one-paragraph summary, then `### Added`,
 `### Changed`, `### Fixed` or `### Removed` with one bullet per change.
 
+## [0.7.0] - 2026-09-19
+
+Who watches together.
+
+### Added
+- **Group watching.** When different people start the same title at the same time, finstats counts it as watching together. A **Watched together** card on the dashboard shows the groups, the titles they share and their hours together; each profile shows who that person watches with most; shared plays carry a small people mark in Activity, and the play details say who it was watched with. It works on your whole history, imported plays included.
+- A setting for how close together the starts must be (default 60 seconds). Real history shows why not 5: about a third of genuine group sessions start 6 to 60 seconds apart, because someone always presses play a moment late. People also have to keep watching alongside each other for a couple of minutes, so two people opening the same episode by coincidence and one leaving at once is not a group.
+
+### Changed
+- Search now opens with **Ctrl + Space** instead of Ctrl/⌘ + K.
+
 ## [0.6.1] - 2026-09-19
 
 ### Added
