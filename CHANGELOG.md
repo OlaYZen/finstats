@@ -6,6 +6,11 @@ binary and is what the **Patch notes** tab in the app shows.
 Format: `## [version] - date`, an optional one-paragraph summary, then `### Added`,
 `### Changed`, `### Fixed` or `### Removed` with one bullet per change.
 
+## [0.4.2] - 2026-09-19
+
+### Fixed
+- On the Users page the **Admin** tag sat on its own line and made that row taller than the others. Tags now sit beside the name, so every row is the same height.
+
 ## [0.4.1] - 2026-09-19
 
 ### Fixed
