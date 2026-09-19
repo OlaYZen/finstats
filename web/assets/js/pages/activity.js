@@ -25,6 +25,8 @@ export default function activity(ctx) {
     q: q0.get('q') || '',
     item_id: q0.get('item_id') || '',
     series_id: q0.get('series_id') || '',
+    sort: q0.get('sort') || '',
+    dir: q0.get('dir') || '',
     page: Math.max(1, Number(q0.get('page')) || 1),
   };
 
@@ -37,7 +39,7 @@ export default function activity(ctx) {
     render: (data) => {
       summary.textContent = `${num(data.total)} ${data.total === 1 ? 'play' : 'plays'} · ${rangeLong(f.days).toLowerCase()}`;
       return [
-        playsTable(data.rows, { showUser: can('see_everyone'), onOpen: (p) => openPlayModal(p, { onDeleted: () => dv.load() }),
+        playsTable(data.rows, { showUser: can('see_everyone'), sort: { key: f.sort, dir: f.dir, onSort: (key, dir) => { f.sort = key; f.dir = dir; apply(); } }, onOpen: (p) => openPlayModal(p, { onDeleted: () => dv.load() }),
           empty: 'No plays match these filters. Try a longer range or clear the search.' }),
         data.total > PER_PAGE ? pagination({ page: data.page || f.page, perPage: data.per_page || PER_PAGE, total: data.total,
           onPage: (p) => { f.page = p; apply(false); window.scrollTo({ top: 0 }); } }) : null,
@@ -69,7 +71,7 @@ export default function activity(ctx) {
       scopeChip,
     ] });
 
-  ctx.root.append(pageHeader('Activity', 'Every play finstats knows about, newest first'), filters, summary,
+  ctx.root.append(pageHeader('Activity', 'Every play finstats knows about. Newest first, or click a column to sort by it'), filters, summary,
     card({ cls: 'card-flush', body: view }));
   dv.load();
 }

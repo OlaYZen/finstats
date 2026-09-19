@@ -442,6 +442,25 @@ kbd {
 .sbar-seg:only-child { border-radius: 4px; }
 .sbar-seg:hover, .sbar-seg:focus-visible { filter: brightness(1.18); }
 
+/* ---- sortable headers + quick row filter (tables.js) */
+.th-sort { display: inline-flex; align-items: center; gap: 4px; max-width: 100%; margin: -3px -5px; padding: 3px 5px; border: 0; border-radius: var(--radius-sm); background: none;
+  color: inherit; font: inherit; letter-spacing: inherit; text-transform: inherit; white-space: inherit; cursor: pointer; transition: color var(--ease), background var(--ease); }
+.th-sort:hover { color: var(--text); background: var(--hover); }
+th.r .th-sort { flex-direction: row-reverse; }
+.th-sort-icon { flex: none; opacity: .28; transition: opacity var(--ease), transform var(--ease); }
+.th-sort:hover .th-sort-icon, .th-sort:focus-visible .th-sort-icon { opacity: .7; }
+th.is-sorted .th-sort { color: var(--text); }
+th.is-sorted .th-sort-icon { opacity: 1; color: var(--accent-hi); }
+th[aria-sort="descending"] .th-sort-icon { transform: rotate(180deg); }
+.dt { min-width: 0; }
+.dt-tools { display: flex; justify-content: flex-end; padding: 0 0 10px; }
+.card-flush .dt-tools { padding: 10px 12px; border-bottom: 1px solid var(--border-soft); }
+.dt-tools .search-field { width: min(100%, 240px); }
+.dt-none { margin: 0; padding: 18px 16px; color: var(--text-faint); font-size: 13px; text-align: center; }
+
+.buckets thead th { padding: 0 0 4px; font-size: 10.5px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--text-faint); text-align: left; white-space: nowrap; }
+.buckets thead th.r { text-align: right; }
+.episodes thead th { padding-top: 2px; padding-bottom: 6px; }
 .buckets th, .buckets td { padding: 5px 0; vertical-align: middle; }
 .bucket-name { width: 52%; max-width: 0; padding-right: 10px !important; font-weight: 450; font-size: 13px; color: var(--text); text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .bucket-bar { width: auto; }

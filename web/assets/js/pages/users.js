@@ -7,6 +7,7 @@ import { activityCard, heatmapCard, genresCard, groupsCard } from '../widgets.js
 import { bucketList, methodsBar } from '../charts.js';
 import { openPlayModal } from '../playmodal.js';
 import { profileAllTime } from './showprogress.js';
+import { dataTable, plainTable } from '../tables.js';
 
 // ---------------------------------------------------------------- /users
 export function usersPage(ctx) {
@@ -20,7 +21,7 @@ export function usersPage(ctx) {
     render: (data) => {
       const users = (data.users || []).slice().sort((a, b) => (b.watch_s || 0) - (a.watch_s || 0));
       if (!users.length) return emptyState('No users yet', 'Users appear after the first sync with Jellyfin.');
-      return h('div', { class: 'table-scroll' }, h('table', { class: 'table table-hover' },
+      return dataTable(h('table', { class: 'table table-hover' },
         h('thead', null, h('tr', null, h('th', null, 'User'), h('th', { class: 'r' }, 'Plays'), h('th', { class: 'r' }, 'Watch time'),
           h('th', null, 'Last played'), h('th', null, 'Last title'), h('th', null, 'Last client'), h('th', null, 'Last seen on Jellyfin'))),
         h('tbody', null, users.map((u) => h('tr', { class: u.removed || u.is_disabled ? 'is-dim' : '' },
@@ -118,7 +119,7 @@ function jellyfinStrip(j) {
 
 function devicesTable(devices) {
   if (!devices || !devices.length) return emptyState('No devices in this range.');
-  return h('div', { class: 'table-scroll' }, h('table', { class: 'table' },
+  return plainTable(h('table', { class: 'table' },
     h('thead', null, h('tr', null, h('th', null, 'Device'), h('th', null, 'Client'), h('th', null, 'Version'), h('th', { class: 'r' }, 'Plays'), h('th', null, 'Last used'))),
     h('tbody', null, devices.map((d) => h('tr', null,
       h('td', null, d.device_name || '–'), h('td', null, d.client || '–'), h('td', { class: 'mono' }, d.app_version || '–'),
@@ -127,7 +128,7 @@ function devicesTable(devices) {
 
 function ipsTable(ips) {
   if (!ips || !ips.length) return emptyState('No IP addresses recorded in this range.');
-  return h('div', { class: 'table-scroll' }, h('table', { class: 'table' },
+  return plainTable(h('table', { class: 'table' },
     h('thead', null, h('tr', null, h('th', null, 'IP address'), h('th', null, 'Network'), h('th', { class: 'r' }, 'Plays'), h('th', null, 'First seen'), h('th', null, 'Last seen'))),
     h('tbody', null, ips.map((ip) => h('tr', null,
       h('td', { class: 'mono' }, ip.ip), h('td', null, chip(ip.is_local ? 'Local' : 'Remote')),

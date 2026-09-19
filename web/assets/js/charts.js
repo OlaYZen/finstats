@@ -3,6 +3,7 @@
 // and text never wears a series color.
 
 import { h, s, num, bytes, duration, durationExact, dayLabel, dayLabelLong, dayLabelYear, methodLabel, pct } from './dom.js';
+import { sortable, plainTable, chartTable } from './tables.js';
 
 export const TYPES = [
   { key: 'Movie', label: 'Movies', color: '#9085e9' },
@@ -206,7 +207,7 @@ export function columnsChart({ daily, bucket = 'day', metric = 'watch_s' }) {
 export function columnsTable({ daily, bucket = 'day' }) {
   const rows = (daily || []).slice().reverse();
   const cell = (d, key) => ((d.by_type && d.by_type[key]) || [0, 0]);
-  return h('div', { class: 'table-scroll chart-table' },
+  return chartTable(
     h('table', { class: 'table' },
       h('thead', null, h('tr', null,
         h('th', null, bucket === 'week' ? 'Week of' : 'Date'), h('th', { class: 'r' }, 'Plays'), h('th', { class: 'r' }, 'Watch time'),
@@ -291,7 +292,7 @@ export function heatmap({ data, metric = 'plays' }) {
 
 export function heatmapTable({ data }) {
   const plays = (data && data.plays) || [];
-  return h('div', { class: 'table-scroll chart-table' },
+  return chartTable(
     h('table', { class: 'table table-dense' },
       h('thead', null, h('tr', null, h('th', null, 'Plays'), Array.from({ length: 24 }, (_, i) => h('th', { class: 'r' }, String(i).padStart(2, '0'))))),
       h('tbody', null, DAYS.map((d, i) => h('tr', null, h('th', { scope: 'row' }, d),
@@ -340,14 +341,14 @@ export function bucketList(buckets, { labelFn = (x) => x, empty = 'Nothing recor
   const rows = buckets || [];
   if (!rows.length || !rows.some((b) => (b.plays || 0) > 0 || (b.watch_s || 0) > 0)) return h('div', { class: 'chart-empty chart-empty-sm' }, empty);
   const max = Math.max(1, ...rows.map((b) => b.plays || 0));
-  return h('table', { class: 'buckets' },
-    h('thead', { class: 'sr-only' }, h('tr', null, h('th', null, 'Name'), h('th', null, 'Share'), h('th', null, 'Plays'), watch ? h('th', null, 'Watch time') : null)),
+  return sortable(h('table', { class: 'buckets' },
+    h('thead', null, h('tr', null, h('th', null, 'Name'), h('th', { 'data-nosort': '' }, h('span', { class: 'sr-only' }, 'Share')), h('th', { class: 'r' }, 'Plays'), watch ? h('th', { class: 'r' }, 'Watch time') : null)),
     h('tbody', null, rows.map((b) => h('tr', null,
       h('th', { scope: 'row', class: 'bucket-name', title: labelFn(b.name) }, labelFn(b.name)),
       h('td', { class: 'bucket-bar' }, h('span', { class: 'bucket-track' },
         (b.plays || 0) > 0 ? h('span', { class: 'bucket-fill', style: { width: Math.max(1.5, ((b.plays || 0) / max) * 100) + '%', background: SINGLE } }) : null)),
       h('td', { class: 'mono r bucket-plays' }, num(b.plays)),
-      watch ? h('td', { class: 'mono r bucket-watch', title: durationExact(b.watch_s) }, duration(b.watch_s)) : null))));
+      watch ? h('td', { class: 'mono r bucket-watch', title: durationExact(b.watch_s) }, duration(b.watch_s)) : null)))));
 }
 
 /** Library make-up: [{name, count, size_bytes}] — bar by count, value = count, faint = size on disk. */
@@ -356,14 +357,14 @@ export function libBucketList(buckets, { labelFn = (x) => x, empty = 'Nothing to
   if (!rows.length) return h('div', { class: 'chart-empty chart-empty-sm' }, empty);
   const max = Math.max(1, ...rows.map((b) => b.count || 0));
   const anySize = rows.some((b) => (b.size_bytes || 0) > 0);
-  return h('table', { class: 'buckets' },
-    h('thead', { class: 'sr-only' }, h('tr', null, h('th', null, 'Name'), h('th', null, 'Share'), h('th', null, unit), anySize ? h('th', null, 'Size') : null)),
+  return sortable(h('table', { class: 'buckets' },
+    h('thead', null, h('tr', null, h('th', null, 'Name'), h('th', { 'data-nosort': '' }, h('span', { class: 'sr-only' }, 'Share')), h('th', { class: 'r' }, unit), anySize ? h('th', { class: 'r' }, 'Size') : null)),
     h('tbody', null, rows.map((b) => h('tr', null,
       h('th', { scope: 'row', class: 'bucket-name', title: labelFn(b.name) }, labelFn(b.name)),
       h('td', { class: 'bucket-bar' }, h('span', { class: 'bucket-track' },
         (b.count || 0) > 0 ? h('span', { class: 'bucket-fill', style: { width: Math.max(1.5, ((b.count || 0) / max) * 100) + '%', background: SINGLE } }) : null)),
       h('td', { class: 'mono r bucket-plays' }, num(b.count)),
-      anySize ? h('td', { class: 'mono r bucket-watch' }, b.size_bytes ? bytes(b.size_bytes) : '–') : null))));
+      anySize ? h('td', { class: 'mono r bucket-watch' }, b.size_bytes ? bytes(b.size_bytes) : '–') : null)))));
 }
 
 // ---------------------------------------------------------------- single-series columns
@@ -445,7 +446,7 @@ export function simpleColumns({ rows, unit = ['item', 'items'], ariaLabel = 'Col
 }
 
 export function simpleColumnsTable({ rows, head = ['Period', 'Count'] }) {
-  return h('div', { class: 'table-scroll chart-table' }, h('table', { class: 'table' },
+  return chartTable(h('table', { class: 'table' },
     h('thead', null, h('tr', null, h('th', null, head[0]), h('th', { class: 'r' }, head[1]))),
     h('tbody', null, (rows || []).slice().reverse().map((d) => h('tr', null,
       h('td', { class: 'mono' }, d.title || d.label), h('td', { class: 'mono r' }, num(d.value)))))));
@@ -457,8 +458,8 @@ export function clientMethods(rows) {
   const data = (rows || []).filter((r) => r && ((r.direct_play || 0) + (r.direct_stream || 0) + (r.transcode || 0)) > 0);
   if (!data.length) return h('div', { class: 'chart-empty chart-empty-sm' }, 'No plays in this range.');
   const keys = ['direct_play', 'direct_stream', 'transcode'];
-  return h('div', { class: 'table-scroll' }, h('table', { class: 'table table-dense cm-table' },
-    h('thead', null, h('tr', null, h('th', null, 'Client'), h('th', { class: 'cm-barcol' }, h('span', { class: 'sr-only' }, 'Split')),
+  return plainTable(h('table', { class: 'table table-dense cm-table' },
+    h('thead', null, h('tr', null, h('th', null, 'Client'), h('th', { class: 'cm-barcol', 'data-nosort': '' }, h('span', { class: 'sr-only' }, 'Split')),
       METHODS.map((m) => h('th', { class: 'r' }, methodLabel(m.key))))),
     h('tbody', null, data.map((r) => {
       const total = keys.reduce((a, k) => a + (r[k] || 0), 0);

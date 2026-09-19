@@ -5,6 +5,7 @@ import { api } from '../api.js';
 import { readDays, saveDays, can } from '../state.js';
 import { replaceQuery } from '../router.js';
 import { card, filterBar, dataView, sk, poster, avatar, chip, statTile, emptyState } from '../components.js';
+import { plainTable } from '../tables.js';
 
 const TYPE_LABEL = { Movie: 'Movie', Series: 'Series' };
 
@@ -60,7 +61,7 @@ function titleGrid(rows, withTime) {
 }
 
 function watchers(rows) {
-  return h('div', { class: 'table-scroll' }, h('table', { class: 'table' },
+  return plainTable(h('table', { class: 'table' },
     h('thead', null, h('tr', null, h('th', null, 'User'), h('th', { class: 'r' }, 'Plays'), h('th', { class: 'r' }, 'Watch time'), h('th', null, 'Last played'))),
     h('tbody', null, rows.map((w) => h('tr', null,
       h('td', null, h('a', { class: 'user-cell', href: `/users/${w.user_id}` }, avatar(w.user_id, w.user_name, { size: 22 }), h('span', null, w.user_name))),

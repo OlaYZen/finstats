@@ -5,6 +5,7 @@ import { replaceQuery } from '../router.js';
 import { pageHeader, card, chartCard, filterBar, dataView, sk, segmented } from '../components.js';
 import { bucketList, methodsBar, simpleColumns, simpleColumnsTable, clientMethods, methodLegend } from '../charts.js';
 import { num, duration, pct, dayLabel, dayLabelLong, dateTime } from '../dom.js';
+import { chartTable } from '../tables.js';
 
 const upper = (x) => (x && x.length <= 5 ? x.toUpperCase() : x);
 const chLabel = (x) => ({ 1: 'Mono', 2: 'Stereo', 6: '5.1', 8: '7.1' }[x] || (/^\d+$/.test(String(x)) ? `${x} channels` : x));
@@ -92,7 +93,7 @@ function insightCards(ins) {
 function methodsTable(methods) {
   const rows = methods || [];
   const total = rows.reduce((a, m) => a + (m.plays || 0), 0);
-  return h('div', { class: 'table-scroll chart-table' }, h('table', { class: 'table' },
+  return chartTable(h('table', { class: 'table' },
     h('thead', null, h('tr', null, h('th', null, 'Method'), h('th', { class: 'r' }, 'Plays'), h('th', { class: 'r' }, 'Share'), h('th', { class: 'r' }, 'Watch time'))),
     h('tbody', null, rows.map((m) => h('tr', null, h('td', null, humanize(m.name)), h('td', { class: 'mono r' }, num(m.plays)),
       h('td', { class: 'mono r' }, total ? pct(m.plays / total, 1) : '–'), h('td', { class: 'mono r' }, duration(m.watch_s)))))));

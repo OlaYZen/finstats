@@ -2,6 +2,7 @@ import { h, icon, num, bytes, relTime, dateTime, mount, humanize } from '../dom.
 import { api, isAbort, uploadRaw } from '../api.js';
 import { isAdmin } from '../state.js';
 import { pageHeader, card, sk, toggle, setBusy, inlineError, errorState, facts, spinner, avatar } from '../components.js';
+import { dataTable } from '../tables.js';
 
 const TASK_LABEL = {
   sync_users: ['Sync users', 'Names, roles and last-seen times from Jellyfin'],
@@ -142,7 +143,7 @@ export default function settings(ctx) {
         if (inherited) { sw.disabled = true; sw.classList.add('is-inherited'); sw.title = 'Everyone has this, so it can’t be taken away from one person'; }
         return h('td', { class: 'perm-cell' }, sw);
       });
-      return h('tr', null,
+      return h('tr', { 'data-pin': id === null ? '' : null }, // "Everyone" stays on top however the people are sorted
         h('th', { scope: 'row', class: 'perm-who', id: `perm-r-${id || 'all'}` }, label, sub ? h('span', { class: 'perm-sub' }, sub) : null),
         cells, h('td', { class: 'perm-saved' }, note));
     }
@@ -162,10 +163,10 @@ export default function settings(ctx) {
       h('p', { class: 'help perm-intro' }, 'Jellyfin administrators',
         admins.length ? [' (', admins.map((u) => u.name).join(', '), ')'] : null,
         ' always have full access. Everyone else gets what you switch on here. No permission opens other people’s recaps; only administrators can look at those.'),
-      h('div', { class: 'table-scroll' },
+      dataTable(
         h('table', { class: 'perm-table' },
           h('thead', null, h('tr', null, h('th', { scope: 'col' }, 'Who'),
-            perms.map((pm) => h('th', { scope: 'col', id: `perm-h-${pm.key}`, title: pm.description }, pm.label)), h('th', null, h('span', { class: 'sr-only' }, 'Status')))),
+            perms.map((pm) => h('th', { scope: 'col', id: `perm-h-${pm.key}`, title: pm.description }, pm.label)), h('th', { 'data-nosort': '' }, h('span', { class: 'sr-only' }, 'Status')))),
           rowsEl)),
       problem,
       h('dl', { class: 'perm-legend' }, perms.map((pm) => [h('dt', null, pm.label), h('dd', null, pm.description)])));

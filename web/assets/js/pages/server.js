@@ -4,6 +4,7 @@ import { h, icon, num, bytes, duration, relEl, dateTime, debounce, mount } from 
 import { api, isAbort } from '../api.js';
 import { state } from '../state.js';
 import { pageHeader, card, dataView, sk, emptyState, facts, setBusy, inlineError } from '../components.js';
+import { plainTable } from '../tables.js';
 
 const RESULT = {
   Completed: ['sev-good', 'check', 'Completed'],
@@ -126,7 +127,7 @@ export default function serverPage(ctx) {
       count.textContent = q ? `${num(rows.length)} of ${num(all.length)}` : num(all.length);
       if (!all.length) return mount(body, emptyState('No devices known yet.'));
       if (!rows.length) return mount(body, emptyState('No devices match', 'Try a device, app or user name.'));
-      mount(body, h('div', { class: 'table-scroll' }, h('table', { class: 'table' },
+      mount(body, plainTable(h('table', { class: 'table' },
         h('thead', null, h('tr', null, h('th', null, 'Device'), h('th', null, 'App'), h('th', null, 'Last user'), h('th', null, 'Last seen'))),
         h('tbody', null, rows.map((d) => h('tr', null,
           h('td', { class: 'wrap-cell' }, d.name || 'Unknown device'),
@@ -146,7 +147,7 @@ export default function serverPage(ctx) {
   function pluginsCard(plugins) {
     const rows = Array.isArray(plugins) ? plugins : [];
     return card({ title: 'Plugins', cls: 'card-flush', body: !rows.length ? emptyState('No plugins reported.') :
-      h('div', { class: 'table-scroll' }, h('table', { class: 'table' },
+      plainTable(h('table', { class: 'table' },
         h('thead', null, h('tr', null, h('th', null, 'Plugin'), h('th', null, 'Version'), h('th', null, 'Status'))),
         h('tbody', null, rows.map((p) => {
           const ok = !p.status || p.status === 'Active';
@@ -158,7 +159,7 @@ export default function serverPage(ctx) {
   function tasksCard(tasks) {
     const rows = Array.isArray(tasks) ? tasks : [];
     return card({ title: 'Scheduled tasks', sub: 'Jellyfin’s own background jobs', cls: 'card-flush', body: !rows.length ? emptyState('No scheduled tasks reported.') :
-      h('div', { class: 'table-scroll' }, h('table', { class: 'table' },
+      plainTable(h('table', { class: 'table' },
         h('thead', null, h('tr', null, h('th', null, 'Task'), h('th', null, 'State'), h('th', null, 'Last result'), h('th', null, 'Last run'), h('th', { class: 'r' }, 'Took'))),
         h('tbody', null, rows.map((t) => {
           const [cls, ic, label] = RESULT[t.last_result] || ['sev-info', 'info', t.last_result || null];

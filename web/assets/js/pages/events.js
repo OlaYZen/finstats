@@ -2,6 +2,7 @@ import { h, icon, debounce, num, dateTime, relTime } from '../dom.js';
 import { api } from '../api.js';
 import { replaceQuery } from '../router.js';
 import { pageHeader, card, dataView, sk, pagination, emptyState } from '../components.js';
+import { dataTable } from '../tables.js';
 
 const PER_PAGE = 50;
 // Status colors always ship with an icon + label.
@@ -15,7 +16,7 @@ const SEVERITY = {
 
 export default function events(ctx) {
   ctx.title('Server log');
-  const f = { q: ctx.query.get('q') || '', type: ctx.query.get('type') || '', page: Math.max(1, Number(ctx.query.get('page')) || 1) };
+  const f = { q: ctx.query.get('q') || '', type: ctx.query.get('type') || '', sort: ctx.query.get('sort') || '', dir: ctx.query.get('dir') || '', page: Math.max(1, Number(ctx.query.get('page')) || 1) };
   const view = h('div');
   const summary = h('p', { class: 'result-count', 'aria-live': 'polite' });
   const typeSlot = h('span');
@@ -27,7 +28,7 @@ export default function events(ctx) {
   function apply(reset = true) {
     if (reset) f.page = 1;
     paintType();
-    replaceQuery({ q: f.q, type: f.type, page: f.page > 1 ? f.page : '' });
+    replaceQuery({ q: f.q, type: f.type, sort: f.sort, dir: f.dir, page: f.page > 1 ? f.page : '' });
     dv.load();
   }
 
@@ -38,8 +39,8 @@ export default function events(ctx) {
     render: (data) => {
       summary.textContent = `${num(data.total)} ${data.total === 1 ? 'entry' : 'entries'}`;
       if (!data.rows.length) return emptyState(f.q || f.type ? 'No log entries match these filters.' : 'No log entries yet', f.q || f.type ? null : 'Entries arrive with the next “Sync server log” task.');
-      return [h('div', { class: 'table-scroll' }, h('table', { class: 'table events' },
-        h('thead', null, h('tr', null, h('th', null, 'When'), h('th', null, 'Level'), h('th', null, 'Event'), h('th', null, 'User'), h('th', null, 'Type'))),
+      return [dataTable(h('table', { class: 'table events' },
+        h('thead', null, h('tr', null, h('th', { 'data-key': 'when', 'data-first': 'desc' }, 'When'), h('th', { 'data-nosort': '' }, 'Level'), h('th', { 'data-key': 'event' }, 'Event'), h('th', { 'data-key': 'user' }, 'User'), h('th', { 'data-key': 'type' }, 'Type'))),
         h('tbody', null, data.rows.map((e) => {
           const sev = SEVERITY[String(e.severity || '').toLowerCase()] || SEVERITY.info;
           return h('tr', null,
@@ -48,7 +49,7 @@ export default function events(ctx) {
             h('td', null, h('div', { class: 'event-name' }, e.name), e.overview ? h('div', { class: 'event-overview' }, e.overview) : null),
             h('td', null, e.user_id ? h('a', { href: `/users/${e.user_id}` }, e.user_name || 'User') : h('span', { class: 'muted' }, '–')),
             h('td', null, e.type ? h('button', { type: 'button', class: 'chip chip-btn mono', title: 'Show only this type', onClick: () => { f.type = e.type; apply(); } }, e.type) : null));
-        })))),
+        }))), { server: { key: f.sort, dir: f.dir, onSort: (key, dir) => { f.sort = key; f.dir = dir; apply(); } } }),
         data.total > PER_PAGE ? pagination({ page: data.page || f.page, perPage: data.per_page || PER_PAGE, total: data.total, onPage: (p) => { f.page = p; apply(false); window.scrollTo({ top: 0 }); } }) : null];
     },
   });
