@@ -6,6 +6,13 @@ binary and is what the **Patch notes** tab in the app shows.
 Format: `## [version] - date`, an optional one-paragraph summary, then `### Added`,
 `### Changed`, `### Fixed` or `### Removed` with one bullet per change.
 
+## [0.9.0] - 2026-09-20
+
+### Added
+- **Every table can be sorted.** Click a column header to sort by it, click again to turn it around, and a third time to get the original order back: users A–Z or Z–A, progress 0–100% or 100–0%, watch time, sizes, dates, anything. It understands what the cells mean, so "3d 2h" sorts as time and "1.4 GB" as size, and empty cells always go last. This covers the user list, watchers, episodes, devices, plugins, scheduled tasks, the table view of every chart, the permission matrix, and the bar lists (codecs, resolutions, clients and the rest), which now have a slim header of their own.
+- **Activity and the Server log sort across all their pages**, not just the rows on screen, and the chosen order is kept in the address so it survives a reload or a shared link.
+- **A quick filter on long tables.** Tables with ten rows or more get a small filter field above them; type a few words to narrow the rows down.
+
 ## [0.8.2] - 2026-09-20
 
 ### Changed
