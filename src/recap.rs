@@ -111,6 +111,9 @@ fn build(c: &Connection, scope_user: Option<String>, min_play_s: i64, server_nam
             "SELECT COUNT(*) AS plays, COALESCE(SUM(p.duration_s), 0) AS watch_s, COUNT(DISTINCT p.item_id) AS distinct_items,
                     COALESCE(SUM(p.item_type = 'Movie'), 0) AS movies, COALESCE(SUM(p.item_type = 'Episode'), 0) AS episodes,
                     COALESCE(SUM(p.item_type = 'Audio'), 0) AS tracks,
+                    COALESCE(SUM(CASE WHEN p.item_type = 'Movie' THEN p.duration_s END), 0) AS movie_watch_s,
+                    COALESCE(SUM(CASE WHEN p.item_type = 'Episode' THEN p.duration_s END), 0) AS episode_watch_s,
+                    COALESCE(SUM(CASE WHEN p.item_type = 'Audio' THEN p.duration_s END), 0) AS track_watch_s,
                     COUNT(DISTINCT CASE WHEN p.item_type = 'Episode' THEN COALESCE(p.series_id, p.series_name) END) AS series_count,
                     COUNT(DISTINCT date(p.started_at, 'unixepoch', 'localtime')) AS active_days,
                     COUNT(DISTINCT date(p.started_at, 'unixepoch', 'localtime') || p.user_id) AS user_days
@@ -126,7 +129,8 @@ fn build(c: &Connection, scope_user: Option<String>, min_play_s: i64, server_nam
         "years": years, "year": year_json, "from": from, "to": to,
         "scope": { "user_id": scope_user, "user_name": user_name, "server_name": server_name },
         "empty": empty, "totals": totals, "rank": null,
-        "top_series": [], "top_movies": [], "top_tracks": [], "top_genres": [],
+        "top_series": [], "top_movies": [], "top_tracks": [], "top_genres": [], "genres": null,
+        "people": { "actors": [], "directors": [] }, "rewatch": null, "days": [],
         "months": [], "hours": [], "weekdays": [], "persona": null, "records": {},
         "discovery": { "new_series": 0, "one_and_done": [], "finished_movies": 0, "finished_episodes": 0 },
         "clients": [],
@@ -144,6 +148,27 @@ fn build(c: &Connection, scope_user: Option<String>, min_play_s: i64, server_nam
         &format!(
             "SELECT g.value AS name, COUNT(*) AS plays, COALESCE(SUM(p.duration_s), 0) AS watch_s
              FROM playbacks p JOIN items gi ON gi.id = {TITLE_ID}, json_each(gi.genres) g {} GROUP BY 1 ORDER BY watch_s DESC LIMIT 6",
+            w.wh
+        ),
+        &w.args,
+    )?);
+    out["genres"] = json!(one_json(
+        c,
+        &format!(
+            "SELECT (SELECT COUNT(DISTINCT g.value) FROM playbacks p JOIN items gi ON gi.id = {TITLE_ID}, json_each(gi.genres) g {wh}) AS count,
+                    COUNT(*) AS plays, COALESCE(SUM(p.duration_s), 0) AS watch_s
+             FROM playbacks p JOIN items gi ON gi.id = {TITLE_ID} {wh} AND gi.genres IS NOT NULL",
+            wh = w.wh
+        ),
+        &[w.args.clone(), w.args.clone()].concat(),
+    )?);
+    out["people"] = json!({ "actors": people(c, &w, "Actor")?, "directors": people(c, &w, "Director")? });
+    out["rewatch"] = rewatch(c, &w)?;
+    out["days"] = json!(rows_json(
+        c,
+        &format!(
+            "SELECT date(p.started_at, 'unixepoch', 'localtime') AS date, COUNT(*) AS plays, COALESCE(SUM(p.duration_s), 0) AS watch_s
+             FROM playbacks p {} GROUP BY 1 ORDER BY 1",
             w.wh
         ),
         &w.args,
@@ -213,6 +238,43 @@ fn top_titles(c: &Connection, w: &Window, item_type: &str) -> Result<Vec<Map<Str
         ),
         &args,
     )
+}
+
+/// The people seen (or, for directors, watched) the most: watch time across every title they are in.
+fn people(c: &Connection, w: &Window, kind: &str) -> Result<Vec<Map<String, Value>>> {
+    let mut args = w.args.clone();
+    args.push(kind.to_string().into());
+    rows_json(
+        c,
+        &format!(
+            "SELECT ip.person_id AS id, MAX(ip.name) AS name, MAX(ip.has_image) AS has_image, COUNT(*) AS plays,
+                    COALESCE(SUM(p.duration_s), 0) AS watch_s, COUNT(DISTINCT ip.item_id) AS titles,
+                    (SELECT COALESCE(i.name, 'Unknown title') FROM items i WHERE i.id = (
+                        SELECT ip2.item_id FROM playbacks p JOIN item_people ip2 ON ip2.item_id = {TITLE_ID} {wh}
+                           AND ip2.person_id = ip.person_id AND ip2.kind = ip.kind GROUP BY ip2.item_id ORDER BY SUM(p.duration_s) DESC LIMIT 1)) AS top_title
+             FROM playbacks p JOIN item_people ip ON ip.item_id = {TITLE_ID} {wh} AND ip.kind = ? GROUP BY ip.person_id ORDER BY watch_s DESC LIMIT 5",
+            wh = w.wh
+        ),
+        &[w.args.clone(), args].concat(),
+    )
+}
+
+/// A rewatch is a film or episode coming back on a later day. Picking a play up again the same day is not one.
+fn rewatch(c: &Connection, w: &Window) -> Result<Value> {
+    let (sittings, items): (i64, i64) = c.query_row(
+        &format!(
+            "SELECT COUNT(*), COUNT(DISTINCT item_id) FROM (
+                SELECT p.item_id AS item_id FROM playbacks p {} GROUP BY p.item_id, date(p.started_at, 'unixepoch', 'localtime'))",
+            w.with("p.item_type IN ('Movie', 'Episode') AND p.duration_s >= 300")
+        ),
+        params_from_iter(w.args.iter()),
+        |r| Ok((r.get(0)?, r.get(1)?)),
+    )?;
+    if sittings == 0 {
+        return Ok(Value::Null);
+    }
+    let again = sittings - items;
+    Ok(json!({ "sittings": sittings, "rewatches": again, "share": (again as f64 / sittings as f64 * 1000.0).round() / 1000.0 }))
 }
 
 fn months(c: &Connection, w: &Window) -> Result<Vec<Value>> {
