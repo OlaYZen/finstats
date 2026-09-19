@@ -6,6 +6,18 @@ binary and is what the **Patch notes** tab in the app shows.
 Format: `## [version] - date`, an optional one-paragraph summary, then `### Added`,
 `### Changed`, `### Fixed` or `### Removed` with one bullet per change.
 
+## [0.10.0] - 2026-09-20
+
+### Added
+- **Backups.** finstats now writes a backup of itself every week and keeps the newest five: every play with its pause-and-skip timeline, seen marks, permissions, home addresses, the server log and your settings, in one small file (a few hundred KB for thousands of plays). **Settings → Backups** lists them with a **Download** button each, makes one on demand, and lets you change how often and how many. They live in the `backups` folder of your data directory. A backup never contains your Jellyfin API key or anyone's sign-in session, but it is a complete viewing history with IP addresses, so keep it somewhere private.
+- **Move to a new finstats.** Set up the new instance, open **Settings → Backups** and choose the file, or pick one from the list and press **Restore**. Restoring merges rather than overwrites: plays that are already there are skipped, so it is safe to do twice or into an instance that has been running for a while. Untick "Also restore settings and permissions" to bring back the history only. Backups work across versions in both directions. From a terminal: `finstats backup` and `finstats restore <file>`.
+
+### Changed
+- **finstats now checks every second while someone is watching, and every 5 seconds while nobody is** (it used to be every 5 seconds throughout). Pauses, skips and track changes are recorded to the second, and the idle beat keeps the load on Jellyfin low. Both are under **Settings → Collection**. If you had changed the old single interval, set your preference again: it has been replaced by these two.
+
+### Fixed
+- An IP address in a play's details broke across two lines in the middle of the address. It stays whole now; the Local/Remote mark moves underneath when there is no room.
+
 ## [0.9.1] - 2026-09-20
 
 ### Fixed
