@@ -6,6 +6,11 @@ binary and is what the **Patch notes** tab in the app shows.
 Format: `## [version] - date`, an optional one-paragraph summary, then `### Added`,
 `### Changed`, `### Fixed` or `### Removed` with one bullet per change.
 
+## [0.7.3] - 2026-09-19
+
+### Fixed
+- The Now playing clock no longer hesitates every few seconds. The 5-second refresh was also repainting the clock, so whenever the server was a fraction of a second ahead the number moved early, between two ticks, and then appeared to stand still for a second. Now only the once-a-second tick moves it, by exactly one second each time; measured, every change lands 999 to 1001 ms after the last. The refresh still corrects it after a pause, a skip or real drift, and even that correction now lands on the tick.
+
 ## [0.7.2] - 2026-09-19
 
 ### Added
