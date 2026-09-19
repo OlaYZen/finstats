@@ -82,11 +82,12 @@ export default function dashboard(ctx) {
     onDays: (v) => { days = v; saveDays(v); sync(); dv.load(); },
     onUser: (v) => { userId = v; sync(); dv.load(); } });
 
-  ctx.root.append(
+  // Native append() prints a missing node as the text "null", so absent pieces are filtered out.
+  ctx.root.append(...[
     pageHeader('Dashboard', state.status && state.status.server_name ? `Playback on ${state.status.server_name}` : 'Playback on your Jellyfin server'),
     recapBanner(),
     h('section', { class: 'np-section', 'aria-label': 'Now playing' }, h('h2', { class: 'section-title' }, 'Now playing', npCount), npBody),
-    filters, view);
+    filters, view].filter(Boolean));
 
   loadNow();
   ctx.every(loadNow, 5000, { visibleOnly: true });
