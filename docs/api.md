@@ -293,3 +293,57 @@ New task ids in `/api/tasks`: `sync_server` (server info, plugins, tasks, device
 - `GET /api/users/{id}` gains `"genres": [Bucket]` and `"jellyfin": {"played_movies": 0, "played_episodes": 0, "favorites": 0} | null` (Jellyfin's own flags; covers history from before finstats).
 - `GET /api/items/{id}` → `item` gains `"studios": ["…"]`, `"external": [{"label": "IMDb", "url": "https://…"}]`, `"bit_depth"`, `"framerate"`; top level gains
   `"played_by": [{"user_id","user_name","last_played_at": 0|null,"is_favorite": false}]` (Jellyfin's played flags; admins see everyone, others only themselves).
+
+---
+
+# v0.3 — Recap (the year in review)
+
+`GET /api/recap?year=2026&user_id=` — `year` is a calendar year (server TZ) or `last12` (the last 12 full months
+plus the current one). Default: the newest year that has plays. Admins may pass `user_id` (absent = whole server);
+non-admins always get their own recap. Everything is computed for that scope and period only.
+
+```jsonc
+{
+  "years": [2026, 2025],                 // years that have plays in this scope, newest first
+  "year": 2026 | "last12", "from": 1790000000, "to": 1790000000,   // [from, to)
+  "scope": {"user_id": "…"|null, "user_name": "…"|null, "server_name": "…"},
+  "empty": false,                        // true → nothing was played in this period; all lists empty
+
+  "totals": {"plays", "watch_s", "distinct_items", "movies", "episodes", "tracks",   // plays per type
+             "series_count", "active_days"},
+  "rank": {"position": 2, "of": 8, "share": 0.31} | null,  // by watch time among users that played anything; null for the server recap
+
+  "top_series": [RecapTitle],  "top_movies": [RecapTitle],  "top_tracks": [RecapTitle],   // up to 5 each, by watch time
+  "top_genres": [Bucket],                // up to 6, by watch time, no "Other"
+  // RecapTitle = {"id","name","sub","image_item_id","plays","watch_s","episodes": 12 /* distinct episodes, series only, else null */, "item_exists": true}
+
+  "months": [ {"month": "2026-01", "watch_s", "plays",
+               "top": {"id","name","image_item_id","watch_s"} | null} ],   // every month of the period, oldest first; top = most watched series-or-movie
+  "hours": [24 × watch_s], "weekdays": [7 × watch_s /* 0 = Monday */],
+
+  "persona": {"key": "night_owl" | "early_bird" | "weekend_warrior" | "binge_watcher" | "movie_buff" | "music_lover" | "creature_of_habit",
+              "title": "Night owl", "line": "43% of the watching happened after 22:00"},
+
+  "records": {                           // any entry may be null
+    "biggest_day":    {"date": "2026-03-14", "watch_s", "plays"},
+    "biggest_binge":  {"date", "series_id", "series_name", "image_item_id", "episodes", "watch_s"},
+    "longest_streak": {"days": 9, "from": "2026-02-01", "to": "2026-02-09"},
+    "longest_play":   {"item_id", "name", "image_item_id", "duration_s", "date"},
+    "most_rewatched": {"id", "name", "type", "image_item_id", "plays"},      // a movie or episode played on ≥ 2 different days
+    "first_play":     {"item_id", "name", "image_item_id", "at": 1790000000},
+    "oldest_title":   {"id", "name", "year": 1957, "image_item_id"}
+  },
+
+  "discovery": {"new_series": 14,                                 // shows whose first ever play falls in the period
+                "one_and_done": [{"id","name","image_item_id"}],  // up to 5 shows with exactly one episode started, ever
+                "finished_movies": 31, "finished_episodes": 402}, // ≥ 90% complete
+
+  "clients": [Bucket],                   // top 3
+
+  "server": null | {                     // only for the server recap (admin, no user_id)
+    "top_users": [ {"id","name","has_image","plays","watch_s"} ],   // up to 5
+    "peak_concurrent": 4, "data_bytes": 0, "transcode_share": 0.46,   // share of plays
+    "items_added": 1200, "bytes_added": 0
+  }
+}
+```
