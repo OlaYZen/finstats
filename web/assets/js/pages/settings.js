@@ -2,7 +2,7 @@ import { h, icon, num, bytes, relTime, dateTime, mount, humanize } from '../dom.
 import { api, isAbort, uploadRaw } from '../api.js';
 import { isAdmin } from '../state.js';
 import { pageHeader, card, sk, toggle, setBusy, inlineError, errorState, facts, spinner, avatar } from '../components.js';
-import { dataTable } from '../tables.js';
+import { dataTable, plainTable } from '../tables.js';
 
 const TASK_LABEL = {
   sync_users: ['Sync users', 'Names, roles and last-seen times from Jellyfin'],
@@ -11,7 +11,19 @@ const TASK_LABEL = {
   sync_server: ['Server details', 'Version, storage, plugins, scheduled tasks and devices'],
   sync_userdata: ['Watched & favourites', 'Per-user played flags and favourites from Jellyfin'],
   import: ['Jellystat import', 'Runs when you upload a backup below'],
+  backup: ['Backup', 'Writes a finstats backup. Runs by itself on the schedule under Backups'],
+  restore: ['Restore', 'Runs when you restore a finstats backup under Backups'],
 };
+/** "in 6 days" — relTime only looks backwards. */
+function untilText(ts) {
+  const s = ts - Date.now() / 1000;
+  if (s <= 90) return 'within a minute or two';
+  if (s < 3600) return `in ${Math.round(s / 60)} minutes`;
+  if (s < 86400 * 1.5) return `in ${Math.round(s / 3600)} hours`;
+  return `in ${Math.round(s / 86400)} days`;
+}
+
+const OWN_CARD = new Set(['import', 'backup', 'restore']); // started from their own section, not with “Run now”
 
 // The upload lives outside the page so it keeps going if you navigate away.
 const upload = { active: false, progress: 0, loaded: 0, total: 0, fileName: '', error: null, doneAt: 0, handle: null };
@@ -42,6 +54,7 @@ export default function settings(ctx) {
   const tasksSlot = h('div', null, sk.rows(3));
   const importSlot = h('div');
   const dbSlot = h('div', null, sk.rows(1));
+  const backupsSlot = h('div', { class: 'net-stack' }, sk.rows(2));
 
   ctx.root.append(pageHeader('Settings', 'Connection, access, collection and data'),
     h('div', { class: 'stack settings' },
@@ -50,6 +63,7 @@ export default function settings(ctx) {
       card({ title: 'Collection', sub: 'How finstats gathers data from Jellyfin', body: collectSlot }),
       card({ title: 'Home network', sub: 'Which plays count as local and which as remote', body: networkSlot }),
       card({ title: 'Tasks', body: tasksSlot }),
+      isAdmin() ? card({ title: 'Backups', sub: 'Your history, settings and permissions in one file, to keep safe or to move to another finstats', body: backupsSlot, id: 'backups' }) : null,
       card({ title: 'Import from Jellystat', sub: 'Bring your playback history with you', body: importSlot, id: 'import' }),
       card({ title: 'Database', body: dbSlot })));
 
@@ -58,7 +72,7 @@ export default function settings(ctx) {
   async function loadSettings() {
     try {
       settingsData = await api.get('/settings', null, { signal: ctx.signal });
-      renderAccess(); renderCollect(); renderNetwork(); renderConn();
+      renderAccess(); renderCollect(); renderNetwork(); renderConn(); loadBackups();
     } catch (e) {
       if (isAbort(e) || e.status === 401) return;
       mount(accessSlot, errorState(e, loadSettings)); mount(collectSlot, ''); mount(networkSlot, ''); mount(connSlot, '');
@@ -176,7 +190,8 @@ export default function settings(ctx) {
   }
 
   const FIELDS = [
-    { key: 'poll_interval_s', label: 'Check for playback every', unit: 'seconds', min: 2, max: 60, help: 'How often finstats asks Jellyfin what’s playing. 2–60.' },
+    { key: 'active_interval_s', label: 'While someone is watching, check every', unit: 'seconds', min: 1, max: 60, help: 'How closely a running play is followed: pauses, skips and track changes are recorded to this precision. 1–60.' },
+    { key: 'idle_interval_s', label: 'While nothing is playing, check every', unit: 'seconds', min: 1, max: 60, help: 'How soon a new play is noticed. The time before that is not counted, so keep it short. 1–60.' },
     { key: 'sync_interval_h', label: 'Otherwise, re-read the library every', unit: 'hours', min: 1, max: 168, help: 'Only used when finstats is not following Jellyfin’s scan, or the server doesn’t report one. 1–168.' },
     { key: 'merge_window_s', label: 'Treat a restart as the same play within', unit: 'seconds', min: 0, max: 86400, help: 'If the same user resumes the same title on the same device within this window, it counts as one play. 0 turns merging off.' },
     { key: 'group_window_s', label: 'Count it as watching together within', unit: 'seconds', min: 5, max: 600, help: 'Different people who start the same title this close together, and keep watching for a couple of minutes, are counted as a group. Real groups rarely start within 5 seconds: polling and late joiners spread them over up to a minute. 5–600.' },
@@ -230,6 +245,131 @@ export default function settings(ctx) {
     });
     mount(collectSlot, toggleRow({ key: 'follow_jellyfin_scan', label: 'Follow Jellyfin’s library scan',
       help: 'finstats never starts a scan on Jellyfin. With this on, it re-reads your library only after Jellyfin’s own “Scan Media Library” task has finished, so Jellyfin’s schedule is the only schedule.' }), form);
+  }
+
+  // ------------------------------------------------------------ backups (Jellyfin administrators)
+  let backupsData = null;
+  let backupPending = null;            // {name, action: 'restore' | 'delete'}: waiting for the second click
+  let backupErr = null;
+  let restoreSettings = true;
+  const restoreUpload = { active: false, progress: 0, name: '' };
+  const wasRunning = { backup: false, restore: false };
+
+  async function loadBackups() {
+    if (!isAdmin()) return;
+    try { backupsData = await api.get('/backups', null, { signal: ctx.signal }); renderBackups(); }
+    catch (e) { if (isAbort(e) || e.status === 401) return; mount(backupsSlot, errorState(e, loadBackups)); }
+  }
+
+  /** The list changes when a backup finishes, and nearly everything changes when a restore does. */
+  function watchBackupTasks(tasks) {
+    if (!isAdmin()) return;
+    for (const id of ['backup', 'restore']) {
+      const t = tasks.find((x) => x.id === id);
+      const running = !!t && t.state === 'running';
+      if (wasRunning[id] && !running) { loadBackups(); if (id === 'restore') loadSettings(); }
+      wasRunning[id] = running;
+    }
+    renderBackups();
+  }
+
+  let backupsSig = '';
+  function renderBackups() {
+    if (!isAdmin() || !backupsData || !settingsData) return;
+    const tasks = (tasksData && tasksData.tasks) || [];
+    const bk = tasks.find((t) => t.id === 'backup'), rs = tasks.find((t) => t.id === 'restore');
+    const busy = (bk && bk.state === 'running') || (rs && rs.state === 'running') || restoreUpload.active;
+    const sig = JSON.stringify([backupsData, bk, rs, backupPending, backupErr, restoreSettings, restoreUpload, settingsData.backup_every_d, settingsData.backup_keep]);
+    if (sig === backupsSig) return;
+    backupsSig = sig;
+
+    const act = async (fn) => { backupErr = null; try { await fn(); } catch (e) { backupErr = e.message; } backupPending = null; setPollInterval(1000); await loadTasks(); await loadBackups(); backupsSig = ''; renderBackups(); };
+    const rows = backupsData.backups || [];
+    const table = rows.length ? plainTable(h('table', { class: 'table backups' },
+      h('thead', null, h('tr', null, h('th', null, 'Made'), h('th', { class: 'r' }, 'Size'), h('th', { 'data-nosort': '' }, h('span', { class: 'sr-only' }, 'Actions')))),
+      h('tbody', null, rows.map((b) => {
+        const pending = backupPending && backupPending.name === b.name ? backupPending.action : null;
+        const ask = (action) => () => { backupPending = { name: b.name, action }; backupsSig = ''; renderBackups(); };
+        const cancel = h('button', { type: 'button', class: 'btn btn-sm btn-ghost', onClick: () => { backupPending = null; backupsSig = ''; renderBackups(); } }, 'Cancel');
+        const actions = pending === 'delete'
+          ? [h('span', { class: 'muted' }, 'Delete this backup?'), h('button', { type: 'button', class: 'btn btn-sm btn-danger', onClick: () => act(() => api.del(`/backups/${b.name}`)) }, 'Delete'), cancel]
+          : pending === 'restore'
+            ? [h('span', { class: 'muted' }, restoreSettings ? 'Merge its history in and replace settings and permissions?' : 'Merge its history in?'),
+              h('button', { type: 'button', class: 'btn btn-sm btn-primary', onClick: () => act(() => api.post(`/backups/${b.name}/restore?settings=${restoreSettings}`)) }, 'Restore'), cancel]
+            : [h('a', { class: 'btn btn-sm', href: `/api/backups/${b.name}`, download: b.name }, icon('upload', 12, 'flip-v'), 'Download'),
+              h('button', { type: 'button', class: 'btn btn-sm btn-ghost', disabled: busy, onClick: ask('restore') }, 'Restore'),
+              h('button', { type: 'button', class: 'icon-btn', 'aria-label': `Delete the backup from ${dateTime(b.created_at)}`, title: 'Delete', disabled: busy, onClick: ask('delete') }, icon('trash', 14))];
+        return h('tr', null,
+          h('td', null, h('span', { class: 'when-cell' }, h('time', { dateTime: new Date(b.created_at * 1000).toISOString(), title: b.name }, dateTime(b.created_at)), h('span', { class: 'cell-sub mono' }, relTime(b.created_at)))),
+          h('td', { class: 'mono r' }, bytes(b.size_bytes)),
+          h('td', null, h('div', { class: 'backup-actions' }, actions)));
+      }))))
+      : h('p', { class: 'help' }, settingsData.backup_every_d > 0 ? 'No backups yet. The first one is written by itself once there is something to back up, or make one now.' : 'No backups yet, and automatic backups are off.');
+
+    const progress = (t, label) => t && t.state === 'running' ? h('div', { class: 'task-progress' },
+      h('div', { class: ['meter meter-wide', t.progress == null && 'is-indeterminate'], role: 'progressbar', 'aria-label': label, 'aria-valuemin': 0, 'aria-valuemax': 100, 'aria-valuenow': t.progress == null ? null : Math.round(t.progress * 100) },
+        h('span', { class: 'meter-fill', style: { width: (t.progress == null ? 30 : t.progress * 100) + '%' } })),
+      h('span', { class: 'mono task-msg' }, t.message || 'Working…')) : null;
+    const restored = rs && rs.state === 'ok' && rs.result ? h('p', { class: 'sev sev-good' }, icon('check', 13),
+      `Restored ${num(rs.result.plays_imported)} plays, ${num(rs.result.plays_skipped)} were already here${rs.result.settings_restored ? '; settings and permissions restored' : ''}.`) : null;
+    const failed = rs && rs.state === 'error' && rs.error ? inlineError('restore-err', `Restore failed: ${rs.error} Nothing was changed.`) : null;
+
+    const makeNow = h('button', { type: 'button', class: 'btn', disabled: busy, onClick: () => act(() => api.post('/backups')) }, icon('plus', 13), 'Back up now');
+    const file = h('input', { type: 'file', class: 'sr-only', id: 'restore-file', accept: '.gz,.jsonl,application/gzip', tabindex: -1 });
+    file.addEventListener('change', () => {
+      const f = file.files && file.files[0];
+      if (!f) return;
+      Object.assign(restoreUpload, { active: true, progress: 0, name: f.name }); backupErr = null; backupsSig = ''; renderBackups();
+      uploadRaw(`/backups/restore?settings=${restoreSettings}`, f, (p) => { restoreUpload.progress = p; backupsSig = ''; renderBackups(); }).promise
+        .catch((e) => { backupErr = e.status === 413 ? 'The server rejected the file as too large. Behind a reverse proxy, raise its upload limit and try again.' : e.message; })
+        .finally(() => { restoreUpload.active = false; setPollInterval(1000); loadTasks(); backupsSig = ''; renderBackups(); });
+    });
+    const keepSettings = h('label', { class: 'check' }, h('input', { type: 'checkbox', checked: restoreSettings, onChange: (e) => { restoreSettings = e.target.checked; backupsSig = ''; renderBackups(); } }),
+      h('span', null, 'Also restore settings and permissions'));
+
+    mount(backupsSlot,
+      h('div', { class: 'backup-head' },
+        h('p', { class: 'help' }, settingsData.backup_every_d > 0
+          ? [`A backup is written every ${settingsData.backup_every_d === 1 ? 'day' : num(settingsData.backup_every_d) + ' days'} and the newest ${num(settingsData.backup_keep)} are kept`,
+            backupsData.next_at ? [', next ', h('span', { title: dateTime(backupsData.next_at) }, untilText(backupsData.next_at)), '.'] : '.']
+          : 'Automatic backups are off.', ' They live in the ', h('span', { class: 'mono' }, 'backups'), ' folder of your data directory.'),
+        makeNow),
+      progress(bk, 'Backup progress'), bk && bk.state === 'error' && bk.error ? inlineError('backup-err', `Backup failed: ${bk.error}`) : null,
+      table,
+      backupErr ? inlineError('backups-err', backupErr) : null,
+      h('div', { class: 'field' },
+        h('div', { class: 'setting-label' }, 'Restore from a file'),
+        h('p', { class: 'help' }, 'Moving to a new finstats? Set it up, then restore a downloaded backup here. Restoring merges: plays that are already there are skipped, so it is safe to do twice. A backup holds everyone’s viewing history and IP addresses, but never your Jellyfin API key.'),
+        restoreUpload.active
+          ? h('div', { class: 'task-progress' }, h('div', { class: 'meter meter-wide', role: 'progressbar', 'aria-label': 'Upload progress', 'aria-valuemin': 0, 'aria-valuemax': 100, 'aria-valuenow': Math.round(restoreUpload.progress * 100) },
+            h('span', { class: 'meter-fill', style: { width: restoreUpload.progress * 100 + '%' } })), h('span', { class: 'mono task-msg' }, `Uploading ${restoreUpload.name} · ${Math.round(restoreUpload.progress * 100)}%`))
+          : h('div', { class: 'backup-restore' }, file, h('label', { class: ['btn', busy && 'is-disabled'], htmlFor: busy ? null : 'restore-file' }, icon('upload', 13), 'Choose a backup file…'), keepSettings),
+        progress(rs, 'Restore progress'), restored, failed),
+      scheduleForm());
+  }
+
+  function scheduleForm() {
+    const every = h('input', { class: 'input input-num mono', type: 'text', inputMode: 'numeric', id: 'f-backup-every', value: String(settingsData.backup_every_d), autocomplete: 'off' });
+    const keep = h('input', { class: 'input input-num mono', type: 'text', inputMode: 'numeric', id: 'f-backup-keep', value: String(settingsData.backup_keep), autocomplete: 'off' });
+    const err = h('div'), note = h('span', { class: 'saved-note', 'aria-live': 'polite' });
+    const save = h('button', { type: 'submit', class: 'btn' }, 'Save schedule');
+    const form = h('form', { class: 'form-grid', noValidate: true },
+      h('div', { class: 'field' }, h('label', { class: 'setting-label', htmlFor: 'f-backup-every' }, 'Back up every'), h('div', { class: 'field-input' }, every, h('span', { class: 'unit' }, 'days')),
+        h('p', { class: 'help' }, '7 is a weekly backup. 0 turns automatic backups off. 0–365.')),
+      h('div', { class: 'field' }, h('label', { class: 'setting-label', htmlFor: 'f-backup-keep' }, 'Keep the newest'), h('div', { class: 'field-input' }, keep, h('span', { class: 'unit' }, 'backups')),
+        h('p', { class: 'help' }, 'Older ones are removed when a new one is written. 1–100.')),
+      h('div', { class: 'form-actions' }, save, note), err);
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault(); mount(err, '');
+      const a = Number(every.value.trim()), k = Number(keep.value.trim());
+      if (!/^\d+$/.test(every.value.trim()) || a > 365) { mount(err, inlineError('bk-e', 'Days must be a whole number from 0 to 365.')); every.focus(); return; }
+      if (!/^\d+$/.test(keep.value.trim()) || k < 1 || k > 100) { mount(err, inlineError('bk-e', 'Keep must be a whole number from 1 to 100.')); keep.focus(); return; }
+      setBusy(save, true, 'Saving…');
+      try { settingsData = await api.put('/settings', { backup_every_d: a, backup_keep: k }); await loadBackups(); backupsSig = ''; renderBackups(); }
+      catch (e2) { mount(err, inlineError('bk-e', `Couldn’t save: ${e2.message}`)); }
+      finally { setBusy(save, false); }
+    });
+    return form;
   }
 
   // ------------------------------------------------------------ home network
@@ -292,7 +432,7 @@ export default function settings(ctx) {
     const imp = tasks.find((t) => t.id === 'import');
     if (imp && imp.state === 'running') sawImportRunning = true;
     setPollInterval(imp && imp.state === 'running' || upload.doneAt && Date.now() - upload.doneAt < 15000 ? 1000 : anyRunning ? 2000 : 10000);
-    renderTasks(tasks); renderConn(); renderDb(); renderImport();
+    renderTasks(tasks); renderConn(); renderDb(); renderImport(); watchBackupTasks(tasks);
   }
 
   let tasksSig = '';
@@ -308,7 +448,7 @@ export default function settings(ctx) {
         : t.state === 'error' ? h('span', { class: 'sev sev-critical' }, icon('alert', 13), 'Failed', t.finished_at ? h('span', { class: 'muted mono' }, ' ' + relTime(t.finished_at)) : null)
         : h('span', { class: 'muted' }, 'Hasn’t run yet');
       let btn = null;
-      if (t.id !== 'import') {
+      if (!OWN_CARD.has(t.id)) {
         btn = h('button', { type: 'button', class: 'btn btn-sm' }, icon('play', 12), 'Run now');
         if (running) { btn.disabled = true; btn.replaceChildren(spinner(12), h('span', null, 'Running…')); }
         btn.addEventListener('click', async () => {
