@@ -171,6 +171,12 @@ Each screen is held to the UX patterns from <https://uxgoodpatterns.com>. A gene
 tree for reference; it is someone else's work, is git-ignored and must never be committed. The look is Obsidian's dark theme via the tokens at the top of
 `app.css`; categorical chart colours follow the entity (Movie/Episode/Audio/Other), never rank.
 
+## Local QA suite
+
+`qa/` (git-ignored, so it may not exist in a fresh clone) holds a local release gate: `qa/run.sh` runs static checks, an API suite
+and a real-browser suite against a throwaway instance built from generated data. Run it before every release and add a check for
+every bug fixed. It is a local tool and must never be committed; the same goes for `ux-rules.md`.
+
 ## Releases and patch notes
 
 `CHANGELOG.md` is the single source for the in-app **Patch notes** tab (`changelog.rs` parses it). A test fails if
