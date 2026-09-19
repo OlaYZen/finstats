@@ -1,7 +1,7 @@
 // Reusable UI pieces. All of them return DOM nodes.
 
 import { h, icon, num, compact, duration, durationExact, durEl, relEl, initials, episodeCode, methodLabel, pct, mount } from './dom.js';
-import { api, imgItem, imgUser, isAbort } from './api.js';
+import { api, imgItem, imgUser, isAbort, recordRequests, viewCacheGet, viewCacheSet } from './api.js';
 import { RANGES, userList, isAdmin } from './state.js';
 
 // ---------------------------------------------------------------- layout bits
@@ -89,28 +89,60 @@ export const sk = {
 export function dataView({ container, skeleton, fetch, render, signal }) {
   let loaded = false;
   let seq = 0;
+  let shownJson = null; // what is on screen, to skip re-rendering identical data
   async function load() {
     const my = ++seq;
-    const started = performance.now();
-    if (!loaded) mount(container, skeleton());
-    else container.classList.add('is-stale');
+    // Calling fetch() fires the page's GET requests synchronously; their URLs identify this view.
+    const { result, key } = recordRequests(fetch);
+    let skeletonAt = 0;
+    let skeletonTimer = null;
+    if (!loaded) {
+      const remembered = viewCacheGet(key);
+      if (remembered !== undefined) {
+        // Been here before: show what we had at once, refresh quietly behind it.
+        loaded = true;
+        shownJson = JSON.stringify(remembered);
+        mount(container, render(remembered));
+      } else {
+        // A skeleton that flashes for a few milliseconds is worse than none: only show it when
+        // loading is actually slow, and once shown keep it long enough to read as deliberate.
+        skeletonTimer = setTimeout(() => { if (my === seq && !loaded) { skeletonAt = performance.now(); mount(container, skeleton()); } }, 150);
+      }
+    } else {
+      // A filter changed. If this exact view was seen before, switch to it at once.
+      const remembered = viewCacheGet(key);
+      const json = remembered === undefined ? null : JSON.stringify(remembered);
+      if (json !== null && json !== shownJson) {
+        shownJson = json;
+        mount(container, render(remembered));
+      } else if (json === null) {
+        container.classList.add('is-stale');
+      }
+    }
     container.setAttribute('aria-busy', 'true');
     try {
-      const data = await fetch();
-      if (!loaded) {
-        const wait = 300 - (performance.now() - started);
+      const data = await result;
+      clearTimeout(skeletonTimer);
+      if (skeletonAt) {
+        const wait = 300 - (performance.now() - skeletonAt);
         if (wait > 0) await new Promise((r) => setTimeout(r, wait));
       }
       if (my !== seq || (signal && signal.aborted)) return;
-      loaded = true;
+      viewCacheSet(key, data);
+      const json = JSON.stringify(data);
       container.classList.remove('is-stale');
-      container.classList.add('fade-in');
+      if (loaded && json === shownJson) return; // nothing changed; leave the page (and its scroll, hover, focus) alone
+      if (!loaded) container.classList.add('fade-in');
+      loaded = true;
+      shownJson = json;
       mount(container, render(data));
     } catch (e) {
+      clearTimeout(skeletonTimer);
       if (isAbort(e) || my !== seq) return;
       if (e.status === 401) return;
       container.classList.remove('is-stale');
       loaded = false;
+      shownJson = null;
       mount(container, errorState(e, load));
     } finally {
       if (my === seq) container.removeAttribute('aria-busy');

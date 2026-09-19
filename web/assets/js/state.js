@@ -1,7 +1,7 @@
 // App-wide state: server status, signed-in user, and the global filters.
 
 import { store } from './dom.js';
-import { api } from './api.js';
+import { api, clearViewCache } from './api.js';
 
 export const state = {
   status: null, // {configured, version, server_name?}
@@ -41,7 +41,7 @@ export async function userList(signal) {
   usersAt = Date.now();
   return usersCache;
 }
-export function resetCaches() { usersCache = null; }
+export function resetCaches() { usersCache = null; clearViewCache(); }
 
 // ---- "new version" hint: a dot on the Patch notes tab until the notes have been opened
 const SEEN_KEY = 'finstats.seenVersion';

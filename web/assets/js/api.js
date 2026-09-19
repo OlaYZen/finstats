@@ -20,7 +20,30 @@ export function qs(params) {
   return str ? '?' + str : '';
 }
 
+// ---- view cache (stale-while-revalidate)
+// A view is identified by the GET requests it makes. dataView() records those while it calls a
+// page's fetch(), so the same page with the same filters finds its last result again and can
+// paint it at once while fresh data loads. Memory only; cleared whenever the signed-in user changes.
+let recording = null;
+const viewCache = new Map();
+const VIEW_CACHE_MAX = 80;
+export function recordRequests(fn) {
+  const urls = [];
+  recording = urls;
+  try { return { result: fn(), key: urls.join('\n') }; } finally { recording = null; }
+}
+export const viewCacheGet = (key) => (key ? viewCache.get(key) : undefined);
+export function viewCacheSet(key, data) {
+  if (!key) return;
+  viewCache.delete(key); // re-insert: Map order doubles as least-recently-used order
+  viewCache.set(key, data);
+  if (viewCache.size > VIEW_CACHE_MAX) viewCache.delete(viewCache.keys().next().value);
+}
+export const clearViewCache = () => viewCache.clear();
+
 async function request(method, path, { body, signal, params, quiet401 = false } = {}) {
+  if (method === 'GET' && recording) recording.push(path + qs(params));
+  else if (method !== 'GET') viewCache.clear(); // something was changed; what we remember may be wrong
   const init = { method, signal, credentials: 'same-origin', headers: { Accept: 'application/json' } };
   if (body !== undefined) {
     init.headers['Content-Type'] = 'application/json';
