@@ -219,9 +219,11 @@ pub async fn run(app: App) {
             }
         }
 
-        let base = settings.poll_interval_s.clamp(2, 60) as u64;
-        // Polling stays at full rate even when idle: the delay before a new play is noticed is
-        // watch time lost. Only an unreachable Jellyfin backs off (up to a minute).
+        // Close watching while something plays (pauses, seeks and track switches are caught as they
+        // happen), a slower beat while nothing does. The idle beat is also how late a new play can be
+        // noticed, which is watch time lost, so it stays short. Only an unreachable Jellyfin backs off
+        // (up to a minute).
+        let base = if tracked.is_empty() { settings.idle_interval_s } else { settings.active_interval_s }.clamp(1, 60) as u64;
         let wait = if failures > 0 { (base * failures.min(12) as u64).min(60) } else { base };
         tokio::select! {
             _ = app.wake.notified() => {}

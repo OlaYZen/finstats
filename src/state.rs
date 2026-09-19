@@ -52,7 +52,10 @@ pub struct Settings {
     pub allow_user_login: bool,
     /// Permissions every signed-in non-admin has; per-user grants add to these.
     pub default_permissions: Vec<String>,
-    pub poll_interval_s: i64,
+    /// How often to ask Jellyfin for sessions while somebody is watching…
+    pub active_interval_s: i64,
+    /// …and while nobody is. A new play is noticed at most this late.
+    pub idle_interval_s: i64,
     pub sync_interval_h: i64,
     pub merge_window_s: i64,
     pub min_play_s: i64,
@@ -62,11 +65,15 @@ pub struct Settings {
     pub public_ip_lookup: bool,
     /// More addresses that count as home, added by hand.
     pub home_addresses: Vec<String>,
+    /// Write a backup this often, in days. 0 turns automatic backups off.
+    pub backup_every_d: i64,
+    /// How many backups to keep; the oldest go first.
+    pub backup_keep: i64,
 }
 
 impl Default for Settings {
     fn default() -> Self {
-        Self { follow_jellyfin_scan: true, allow_user_login: false, default_permissions: vec![], poll_interval_s: 5, sync_interval_h: 6, merge_window_s: 600, min_play_s: 0, group_window_s: 60, public_ip_lookup: true, home_addresses: vec![] }
+        Self { follow_jellyfin_scan: true, allow_user_login: false, default_permissions: vec![], active_interval_s: 1, idle_interval_s: 5, sync_interval_h: 6, merge_window_s: 600, min_play_s: 0, group_window_s: 60, public_ip_lookup: true, home_addresses: vec![], backup_every_d: 7, backup_keep: 5 }
     }
 }
 
@@ -91,7 +98,10 @@ impl Settings {
         if self.home_addresses.len() > 50 {
             return Err("at most 50 home addresses".into());
         }
-        check("poll_interval_s", self.poll_interval_s, 2, 60)?;
+        check("backup_every_d", self.backup_every_d, 0, 365)?;
+        check("backup_keep", self.backup_keep, 1, 100)?;
+        check("active_interval_s", self.active_interval_s, 1, 60)?;
+        check("idle_interval_s", self.idle_interval_s, 1, 60)?;
         check("sync_interval_h", self.sync_interval_h, 1, 168)?;
         check("merge_window_s", self.merge_window_s, 0, 86_400)?;
         check("group_window_s", self.group_window_s, 5, 600)?;
@@ -143,7 +153,7 @@ pub struct TaskState {
 #[derive(Clone)]
 pub struct Tasks(Arc<Mutex<BTreeMap<&'static str, TaskState>>>);
 
-pub const TASK_IDS: [&str; 6] = ["sync_users", "sync_libraries", "sync_events", "sync_server", "sync_userdata", "import"];
+pub const TASK_IDS: [&str; 8] = ["sync_users", "sync_libraries", "sync_events", "sync_server", "sync_userdata", "import", "backup", "restore"];
 
 impl Tasks {
     pub fn new() -> Self {
