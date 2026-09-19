@@ -484,3 +484,57 @@ export function sparkline(values, { w = 104, hgt = 30 } = {}) {
     s('polyline', { points: pts, fill: 'none', stroke: '#6a5fb0', 'stroke-width': 1.5, 'stroke-linejoin': 'round', 'stroke-linecap': 'round' }),
     s('circle', { cx: x(v.length - 1), cy: y(v[v.length - 1]), r: 3.5, fill: '#a68af9', stroke: '#262626', 'stroke-width': 2 }));
 }
+
+// ---------------------------------------------------------------- radar
+/**
+ * A radar of up to twelve buckets, one spoke each, clockwise from the top in the order given.
+ * It shows the *shape* of someone's taste at a glance; the list view stays one click away for
+ * reading the actual values, and every point also answers to hover and the arrow keys.
+ */
+export function radarChart(buckets, { metric = 'watch_s', ariaLabel = 'Radar chart', empty = 'Nothing recorded in this range.' } = {}) {
+  const data = (buckets || []).filter((b) => b && b.name !== 'Other' && Number(b[metric]) > 0).slice(0, 12);
+  if (data.length < 3) return h('div', { class: 'chart-empty chart-empty-sm' }, data.length ? 'A radar needs at least three genres. The list shows what there is.' : empty);
+  const n = data.length;
+  const W = 520, H = 360, cx = W / 2, cy = H / 2 + 4, R = 118;
+  const max = Math.max(...data.map((d) => Number(d[metric])));
+  const at = (i, r) => { const a = -Math.PI / 2 + (i * 2 * Math.PI) / n; return [cx + Math.cos(a) * r, cy + Math.sin(a) * r]; };
+  const ring = (k) => data.map((_, i) => at(i, R * k).map((v) => v.toFixed(1)).join(',')).join(' ');
+  // Square-root scale: with a linear one a single dominant genre flattens everything else into the centre.
+  const rOf = (d) => R * Math.max(0.06, Math.sqrt(Number(d[metric]) / max));
+  const pts = data.map((d, i) => at(i, rOf(d)));
+  const fmt = (d) => (metric === 'watch_s' ? duration(d.watch_s) : `${num(d.plays)} ${d.plays === 1 ? 'play' : 'plays'}`);
+
+  const svg = s('svg', { viewBox: `0 0 ${W} ${H}`, class: 'radar-svg', role: 'img', 'aria-hidden': 'true' },
+    [0.25, 0.5, 0.75, 1].map((k) => s('polygon', { points: ring(k), class: 'radar-ring' })),
+    data.map((_, i) => { const [x, y] = at(i, R); return s('line', { x1: cx, y1: cy, x2: x.toFixed(1), y2: y.toFixed(1), class: 'radar-spoke' }); }),
+    s('polygon', { points: pts.map((p) => p.map((v) => v.toFixed(1)).join(',')).join(' '), class: 'radar-area' }),
+    data.map((d, i) => {
+      const [lx, ly] = at(i, R + 16);
+      const anchor = Math.abs(lx - cx) < 8 ? 'middle' : lx > cx ? 'start' : 'end';
+      const t = s('text', { x: lx.toFixed(1), y: (ly + (ly < cy - R * 0.6 ? -2 : ly > cy + R * 0.6 ? 10 : 4)).toFixed(1), 'text-anchor': anchor, class: 'radar-label' });
+      t.textContent = d.name.length > 18 ? d.name.slice(0, 17) + '…' : d.name;
+      return t;
+    }));
+  const dots = pts.map(([x, y], i) => { const c = s('circle', { cx: x.toFixed(1), cy: y.toFixed(1), r: 4.5, class: 'radar-dot' }); svg.append(c); return c; });
+  // generous invisible targets: a 9 px dot is a pinpoint
+  const hits = pts.map(([x, y], i) => { const c = s('circle', { cx: x.toFixed(1), cy: y.toFixed(1), r: 14, class: 'radar-hit' }); svg.append(c); return c; });
+
+  const wrap = h('div', { class: 'chart radar', tabindex: 0, role: 'group', 'aria-label': `${ariaLabel}. Use left and right arrow keys to read values.` }, svg);
+  let active = -1;
+  function setActive(i) {
+    if (active >= 0) dots[active].classList.remove('is-active');
+    active = i;
+    if (i < 0) { hideTip(); return; }
+    dots[i].classList.add('is-active');
+    const total = data.reduce((a, d) => a + Number(d[metric]), 0) || 1;
+    showTip(dots[i].getBoundingClientRect(), tipRows(data[i].name, [{ color: SINGLE, value: fmt(data[i]), label: pct(Number(data[i][metric]) / total) + ' of these' }]));
+  }
+  hits.forEach((hEl, i) => { hEl.addEventListener('pointerenter', () => setActive(i)); hEl.addEventListener('pointerleave', () => setActive(-1)); });
+  wrap.addEventListener('keydown', (e) => {
+    if (e.key === 'ArrowRight' || e.key === 'ArrowDown') { e.preventDefault(); setActive((active + 1) % n); }
+    else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') { e.preventDefault(); setActive((active - 1 + n) % n); }
+    else if (e.key === 'Escape') setActive(-1);
+  });
+  wrap.addEventListener('blur', () => setActive(-1));
+  return wrap;
+}

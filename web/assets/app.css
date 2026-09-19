@@ -1065,3 +1065,14 @@ button.ep[aria-disabled="true"]:hover { filter: none; outline: 0; }
 @media (max-width: 560px) { .cl-series-meta { margin-left: 0; flex-basis: 100%; } .cl-series-about { flex-basis: 100%; white-space: normal; } }
 /* the release inside already says so */
 .cl-series[open] > .cl-series-head .cl-running { display: none; }
+
+/* ------------------------------------------------------------ radar */
+.radar { display: flex; justify-content: center; }
+.radar-svg { width: 100%; max-width: 560px; height: auto; overflow: visible; }
+.radar-ring { fill: none; stroke: #414141; stroke-width: 1; }
+.radar-spoke { stroke: #383838; stroke-width: 1; }
+.radar-area { fill: color-mix(in srgb, var(--series-1) 26%, transparent); stroke: var(--series-1); stroke-width: 2; stroke-linejoin: round; }
+.radar-dot { fill: var(--series-1); stroke: var(--bg-2); stroke-width: 2; transition: r var(--ease); }
+.radar-dot.is-active { r: 6.5; fill: var(--accent-hi); }
+.radar-hit { fill: transparent; cursor: default; }
+.radar-label { fill: var(--text-muted); font-size: 12.5px; font-family: var(--sans, inherit); }
