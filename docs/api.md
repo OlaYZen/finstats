@@ -542,3 +542,19 @@ An unknown `sort` is ignored (default order), never an error.
 
 Every other table is sorted in the browser (`web/assets/js/tables.js`); those endpoints are unchanged.
 
+---
+
+# v0.9.1 — Home network
+
+`is_local` on plays and on a user's address list now means "a private address **or** a known home address". Home
+addresses are this network's public IP (looked up, every one ever seen) plus any added by hand; changing either
+re-decides `is_local` for the whole history.
+
+`GET/PUT /api/settings` gain `"public_ip_lookup": true` and `"home_addresses": ["203.0.113.7"]` (IP addresses only, at
+most 50; anything else is a `400`). The response also carries, read-only:
+
+```jsonc
+"known_home_addresses": [{"ip": "203.0.113.7", "source": "lookup"|"manual", "first_seen": 0, "last_seen": 0}],
+"public_ip_services": ["https://checkip.amazonaws.com", "…"]      // who is asked, in order
+```
+

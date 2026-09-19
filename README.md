@@ -35,7 +35,8 @@ directly or transcodes, and why. A status bar keeps the essentials in sight on e
 
 - **How busy does it get?** Peak concurrent streams over time, and how many of them transcode.
 - **Which apps cause transcoding?** Every client, split by direct play, remux and transcode, with the reasons Jellyfin reports.
-- **How much leaves the house?** Local versus remote plays and an estimate of data streamed.
+- **How much leaves the house?** Local versus remote plays and an estimate of data streamed. finstats knows your
+  household's public address, so a phone on the Wi-Fi that goes through your public name still counts as home.
 - **Do people finish what they start?** See how far viewers get before they stop.
 - **Want it in a different order?** Every table sorts by any column with a click, and long ones can be filtered as you type.
 - **What is my library made of?** Resolutions, codecs, HDR, size per decade, what was added when —
@@ -91,8 +92,11 @@ whatever permissions they hold, and there is no recap of the whole server.
   their own statistics and recap and nothing else. From there you grant more, per person or for
   everyone: other people's activity, network details like IP addresses, the server pages, or
   managing finstats itself. No permission opens other people's recaps.
-- **Nothing leaves your network.** No telemetry, no external services, no fonts or scripts loaded
-  from the internet. Posters are fetched from your own Jellyfin.
+- **Nothing about you leaves your network.** No telemetry, no accounts, no fonts or scripts loaded
+  from the internet. Posters are fetched from your own Jellyfin. The one outside request finstats
+  makes is a plain "what is my IP" lookup, so that people watching at home through your public
+  address are not counted as remote. It carries no information about you or your server, and one
+  switch in Settings turns it off.
 - **Read-only.** finstats never changes anything on your Jellyfin server and never starts a library scan.
 
 ## Get started
@@ -166,6 +170,7 @@ Everything works out of the box. If you want to tune it, **Settings** in the app
 | **Follow Jellyfin's library scan** | On by default. finstats refreshes its copy of your library right after Jellyfin's own scheduled scan — no second schedule to manage. |
 | **Check for playback every** | How often finstats looks for streams. Default 5 seconds. |
 | **Treat a restart as the same play** | A stream that stops and resumes within 10 minutes counts as one viewing. |
+| **Home network** | Which plays count as local. Private addresses always do; with *Recognise my own public address* on (the default), so does your household's public IP, looked up every 15 minutes and remembered as it changes. You can add more addresses by hand. |
 | **Count it as watching together within** | How close together different people must start the same title to count as a group. Default 60 seconds. |
 | **Ignore plays shorter than** | Leave accidental clicks out of the statistics. |
 
@@ -179,6 +184,7 @@ Everything works out of the box. If you want to tune it, **Settings** in the app
 | `FINSTATS_DATA_DIR` | `/data` | Where the database and poster cache live. |
 | `FINSTATS_TRUST_PROXY` | off | Set to `1` behind a reverse proxy so sign-in rate limiting sees real client addresses. |
 | `JELLYFIN_URL` + `JELLYFIN_API_KEY` | – | Skip the setup wizard. Set both or neither. |
+| `FINSTATS_PUBLIC_IP_URL` | – | Your own "what is my IP" service (any URL answering with the caller's address as plain text), used instead of the built-in ones. |
 | `RUST_LOG` | `finstats=info` | Log detail, e.g. `finstats=debug`. |
 
 </details>

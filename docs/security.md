@@ -39,4 +39,10 @@ but finishing it requires a Jellyfin administrator's credentials.
 proxied from your own Jellyfin, and a strict Content-Security-Policy is sent with every response.
 Requests that change anything are refused when their `Origin` does not match.
 
-**No telemetry.** finstats makes no network connections other than to your Jellyfin server.
+**No telemetry, and one outside request you can switch off.** finstats talks to your Jellyfin server and, by
+default, to a public "what is my IP" service (`checkip.amazonaws.com`, falling back to Cloudflare's `cdn-cgi/trace`, by name and by `1.1.1.1`,
+then `api.ipify.org` and `icanhazip.com`; several because ad-blocking DNS often blocks such services) every 15 minutes. It needs the answer to tell plays from your own household's public address apart
+from remote ones. The request is a bare `GET` with `User-Agent: finstats` and `Accept: text/plain`: no version, no
+identifiers, nothing about your server or users. What the service necessarily learns is that *something* at your
+address asked. Turn off **Settings → Home network → Recognise my own public address** and finstats makes no
+connections other than to Jellyfin; `FINSTATS_PUBLIC_IP_URL` points the lookup at a service of your own instead.

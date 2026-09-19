@@ -29,7 +29,7 @@ docker build -t finstats:latest .
   would rewrite every file. Match the surrounding style by hand.
 - Debug builds read `web/` from disk at runtime (rust-embed), so UI edits only need a browser refresh.
   Release builds embed it — rebuild to see UI changes. `CHANGELOG.md` is `include_str!`'d, so it always needs a rebuild.
-- Env: `FINSTATS_DATA_DIR`, `FINSTATS_BIND`, `FINSTATS_TRUST_PROXY`, `JELLYFIN_URL` + `JELLYFIN_API_KEY` (skip the wizard), `TZ`, `RUST_LOG`.
+- Env: `FINSTATS_DATA_DIR`, `FINSTATS_BIND`, `FINSTATS_TRUST_PROXY`, `FINSTATS_PUBLIC_IP_URL`, `JELLYFIN_URL` + `JELLYFIN_API_KEY` (skip the wizard), `TZ`, `RUST_LOG`.
 
 ## Architecture
 
@@ -122,6 +122,12 @@ the specific permission (`scope.perms.see_network` for IPs, `see_server` for pat
 never by `is_admin`. The recap ignores permissions: own for everyone, any one user for Jellyfin administrators. The UI mirrors this with
 `can('perm')` from `state.js`; it is cosmetic — every rule is enforced server-side. `api.rs` adds an Origin check on writes and a strict CSP
 (`style-src 'self'` — the UI must not use inline `<style>`/`style=""`; `el.style.x` via JS is fine).
+
+**Local vs remote (`network.rs`).** `is_local` = private range (`db::is_local_ip`) or a row in `home_addresses`: this network's own
+public IP, looked up with the light syncs from a plain-text service (the only non-Jellyfin request finstats makes; setting
+`public_ip_lookup`, override `FINSTATS_PUBLIC_IP_URL`), plus the manual `home_addresses` setting. Always go through
+`network::classify(conn, ip)`; after the set changes call `network::reclassify`, which re-decides the whole history. The lookup
+must stay anonymous (no version, no ids in the request) and the docs' privacy claims must stay true to it.
 
 **HTTP contract.** `docs/api.md` is the contract the UI is written against; change it together with the endpoint.
 
