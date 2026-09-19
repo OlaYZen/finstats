@@ -1,3 +1,4 @@
+<p align="center"><img src="web/assets/logo.svg" width="88" height="88" alt=""></p>
 <h1 align="center">finstats</h1>
 
 <p align="center">
