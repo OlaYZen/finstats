@@ -87,6 +87,7 @@ export function openPlayModal(play, { onDeleted } = {}) {
       ['Client', [p.client, p.app_version].filter(Boolean).join(' ') || '–'],
       ['Device', p.device_name],
       p.device_id ? ['Device ID', h('span', { class: 'copy-row' }, h('span', { class: 'mono trunc' }, p.device_id), copyButton(p.device_id, 'Copy device ID'))] : null,
+      p.watched_with && p.watched_with.length ? ['Watched with', h('span', null, p.watched_with.map((w, i) => [i ? ', ' : '', h('a', { href: `/users/${w.user_id}` }, w.user_name)]))] : null,
       can('see_network') ? ['IP address', p.remote_ip ? h('span', { class: 'copy-row' }, h('span', { class: 'mono' }, p.remote_ip), copyButton(p.remote_ip, 'Copy IP address'), networkChip(p.is_local)) : '–'] : null,
     ]);
 

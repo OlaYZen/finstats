@@ -1,9 +1,9 @@
 import { h, icon, num, durEl, relEl, compact, duration, durationExact } from '../dom.js';
-import { api } from '../api.js';
+import { api, soft } from '../api.js';
 import { readDays, saveDays, can, isAdmin, state } from '../state.js';
 import { replaceQuery } from '../router.js';
 import { pageHeader, card, filterBar, dataView, sk, avatar, emptyState, topList, chip, playsTable, statTile } from '../components.js';
-import { activityCard, heatmapCard, genresCard } from '../widgets.js';
+import { activityCard, heatmapCard, genresCard, groupsCard } from '../widgets.js';
 import { bucketList, methodsBar } from '../charts.js';
 import { openPlayModal } from '../playmodal.js';
 import { profileAllTime } from './showprogress.js';
@@ -54,13 +54,14 @@ export function userPage(ctx) {
     skeleton: () => [sk.tiles(4), sk.cardBlock(260), h('div', { class: 'grid-2' }, sk.cardRows(4), sk.cardRows(4))],
     fetch: async () => {
       const o = { signal: ctx.signal };
-      const [detail, recent] = await Promise.all([
+      const [detail, recent, groups] = await Promise.all([
         api.get(`/users/${id}`, { days }, o),
         api.get('/activity', { days, user_id: id, page: 1, per_page: 10 }, o),
+        soft(api.get('/stats/groups', { days, user_id: id }, o)),
       ]);
-      return { detail, recent };
+      return { detail, recent, groups };
     },
-    render: ({ detail: d, recent }) => {
+    render: ({ detail: d, recent, groups }) => {
       const u = d.user;
       ctx.title(u.name);
       headerSlot.replaceChildren(h('header', { class: 'page-header entity-header' },
@@ -86,6 +87,7 @@ export function userPage(ctx) {
           card({ title: 'Play methods', sub: 'Share of plays', body: methodsBar(d.methods) }),
           card({ title: 'Clients', sub: 'By plays', body: bucketList(d.clients) })),
         Array.isArray(d.genres) ? genresCard(d.genres) : null,
+        groupsCard(groups, { forUser: id }),
         card({ title: 'Devices', cls: 'card-flush', body: devicesTable(d.devices) }),
         can('see_network') ? card({ title: 'IP addresses', sub: 'Where this user has played from', cls: 'card-flush', body: ipsTable(d.ips) }) : null,
         card({ title: 'Recent plays', cls: 'card-flush',

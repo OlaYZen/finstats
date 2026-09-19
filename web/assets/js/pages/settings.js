@@ -175,6 +175,7 @@ export default function settings(ctx) {
     { key: 'poll_interval_s', label: 'Check for playback every', unit: 'seconds', min: 2, max: 60, help: 'How often finstats asks Jellyfin what’s playing. 2–60.' },
     { key: 'sync_interval_h', label: 'Otherwise, re-read the library every', unit: 'hours', min: 1, max: 168, help: 'Only used when finstats is not following Jellyfin’s scan, or the server doesn’t report one. 1–168.' },
     { key: 'merge_window_s', label: 'Treat a restart as the same play within', unit: 'seconds', min: 0, max: 86400, help: 'If the same user resumes the same title on the same device within this window, it counts as one play. 0 turns merging off.' },
+    { key: 'group_window_s', label: 'Count it as watching together within', unit: 'seconds', min: 5, max: 600, help: 'Different people who start the same title this close together, and keep watching for a couple of minutes, are counted as a group. Real groups rarely start within 5 seconds: polling and late joiners spread them over up to a minute. 5–600.' },
     { key: 'min_play_s', label: 'Ignore plays shorter than', unit: 'seconds', min: 0, max: 3600, help: 'Short plays stay in the database but are left out of stats. 0 counts everything.' },
   ];
 

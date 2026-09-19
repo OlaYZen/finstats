@@ -128,6 +128,31 @@ export function genresCard(genres, { sub = 'By watch time' } = {}) {
   return card({ title: 'Genres', sub, body: bucketList(genres, { empty: 'No genre information for these plays yet.' }) });
 }
 
+/** Who watches together. `g` is /api/stats/groups; hidden entirely when nobody has. */
+export function groupsCard(g, { title = 'Watched together', forUser = null } = {}) {
+  if (!g || !g.totals || !g.totals.sessions) return null;
+  const t = g.totals;
+  const faces = (members) => h('span', { class: 'faces' }, members.filter((m) => m.user_id !== forUser).map((m) => avatar(m.user_id, m.user_name, { size: 22, hasImage: m.has_image })));
+  const names = (members) => members.filter((m) => m.user_id !== forUser).map((m) => m.user_name).join(forUser ? ', ' : ' + ');
+  return card({ title, sub: 'People who pressed play on the same thing at the same time',
+    body: [
+      h('div', { class: 'group-facts' },
+        h('div', null, h('span', { class: 'group-num' }, duration(t.together_s)), h('span', { class: 'group-label' }, 'time together')),
+        h('div', null, h('span', { class: 'group-num' }, num(t.sessions)), h('span', { class: 'group-label' }, t.sessions === 1 ? 'session' : 'sessions')),
+        forUser ? null : h('div', null, h('span', { class: 'group-num' }, num(t.people)), h('span', { class: 'group-label' }, 'people'))),
+      h('div', { class: 'grid-2 group-lists' },
+        h('div', null, h('h3', { class: 'group-head' }, forUser ? 'Most often with' : 'Groups'),
+          h('ol', { class: 'toplist' }, (g.companions || []).slice(0, 5).map((c, i) => h('li', { class: 'toplist-row' },
+            h('span', { class: 'toplist-rank mono' }, String(i + 1)), faces(c.members),
+            h('div', { class: 'toplist-main' }, h('span', { class: 'toplist-name' }, names(c.members)), h('div', { class: 'toplist-sub' }, `${num(c.sessions)} ${c.sessions === 1 ? 'session' : 'sessions'}`)),
+            h('div', { class: 'toplist-nums' }, h('span', { class: 'mono toplist-watch', title: durationExact(c.together_s) }, duration(c.together_s))))))),
+        h('div', null, h('h3', { class: 'group-head' }, 'Watched together most'),
+          h('ol', { class: 'toplist' }, (g.titles || []).slice(0, 5).map((x, i) => h('li', { class: 'toplist-row' },
+            h('span', { class: 'toplist-rank mono' }, String(i + 1)), poster(x.image_item_id, x.name, { w: 120, cls: 'poster-sm' }),
+            h('div', { class: 'toplist-main' }, h('a', { class: 'toplist-name', href: `/items/${x.id}` }, x.name), h('div', { class: 'toplist-sub' }, `${num(x.sessions)} ${x.sessions === 1 ? 'session' : 'sessions'}`)),
+            h('div', { class: 'toplist-nums' }, h('span', { class: 'mono toplist-watch', title: durationExact(x.together_s) }, duration(x.together_s))))))))] });
+}
+
 /** Admin-only; hidden entirely when there is nothing to show. */
 export function failedLoginsCard(rows) {
   if (!can('see_server') || !Array.isArray(rows) || !rows.length) return null;

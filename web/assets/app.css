@@ -1026,3 +1026,13 @@ button.ep[aria-disabled="true"]:hover { filter: none; outline: 0; }
 .season-foot { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; padding-top: 2px; }
 .season-foot .help { margin: 0; }
 .show-more { margin-top: 6px; }
+
+/* ------------------------------------------------------------ watched together */
+.group-mark { display: inline-flex; align-self: center; margin-left: 2px; color: var(--accent-hi); flex: none; }
+.group-facts { display: flex; flex-wrap: wrap; gap: 8px 36px; margin-bottom: 16px; }
+.group-facts > div { display: flex; flex-direction: column; }
+.group-num { font-size: 22px; font-weight: 650; letter-spacing: -0.01em; color: #f0f0f0; }
+.group-label { color: var(--text-faint); font-size: 12px; }
+.group-head { margin: 0 0 4px; font-size: 11.5px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--text-muted); }
+.faces { display: inline-flex; flex: none; }
+.faces > * + * { margin-left: -7px; box-shadow: 0 0 0 2px var(--bg-2); border-radius: 50%; }
