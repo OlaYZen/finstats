@@ -475,6 +475,9 @@ kbd {
 .np-progress .meter { flex: 1 1 0; width: auto; min-width: 0; }
 .np-time { color: var(--text-muted); font-size: 11.5px; white-space: nowrap; }
 .np.is-paused .meter-fill { background: var(--text-faint); }
+/* The bar is nudged once a second; gliding over that second makes it read as continuous. */
+.np .np-progress .meter-fill { transition: width 1s linear; }
+@media (prefers-reduced-motion: reduce) { .np .np-progress .meter-fill { transition: none; } }
 .np-details { margin-top: 4px; font-size: 12.5px; }
 .np-details summary, .season summary { display: flex; align-items: center; gap: 5px; cursor: pointer; color: var(--text-muted); list-style: none; border-radius: var(--radius-sm); }
 .np-details summary::-webkit-details-marker, .season summary::-webkit-details-marker { display: none; }

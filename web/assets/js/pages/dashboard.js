@@ -3,7 +3,7 @@ import { api, isAbort, soft } from '../api.js';
 import { state, readDays, saveDays, can } from '../state.js';
 import { replaceQuery } from '../router.js';
 import { pageHeader, card, filterBar, dataView, sk, topList, playsTable, emptyState } from '../components.js';
-import { activityCard, heatmapCard, overviewTiles, nowPlayingList, insightTiles, genresCard, failedLoginsCard } from '../widgets.js';
+import { activityCard, heatmapCard, overviewTiles, nowPlayingView, insightTiles, genresCard, failedLoginsCard } from '../widgets.js';
 import { openPlayModal } from '../playmodal.js';
 import { recapBanner } from './recap.js';
 import { groupsCard } from '../widgets.js';
@@ -19,13 +19,16 @@ export default function dashboard(ctx) {
   const npBody = h('div', { class: 'np-wrap' }, h('div', { class: 'np-grid' }, h('div', { class: 'np sk-np' }, h('span', { class: 'sk sk-poster' }),
     h('div', { class: 'sk-row-lines' }, sk.line('50%', 14), sk.line('35%'), sk.line('80%', 8)))));
   let npFirst = true;
+  const npLive = nowPlayingView(); // ticks every second between the polls
+  ctx.onCleanup(() => npLive.destroy());
   async function loadNow() {
     try {
       const data = await api.get('/now-playing', null, { signal: ctx.signal });
       const sessions = data.sessions || [];
       npCount.hidden = !sessions.length;
       npCount.textContent = String(sessions.length);
-      mount(npBody, nowPlayingList(sessions));
+      if (npFirst) mount(npBody, npLive.el);
+      npLive.update(sessions);
       npFirst = false;
     } catch (e) {
       if (isAbort(e) || e.status === 401) return;

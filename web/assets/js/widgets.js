@@ -68,7 +68,7 @@ export function nowPlayingCard(sn) {
     details.addEventListener('toggle', () => { if (details.open) openTranscode.add(sn.key); else openTranscode.delete(sn.key); });
   }
 
-  return h('article', { class: ['np', sn.is_paused && 'is-paused'] },
+  return h('article', { class: ['np', sn.is_paused && 'is-paused'], 'data-np-key': sn.key },
     poster(sn.image_item_id, title, { w: 300, cls: 'poster-np' }),
     h('div', { class: 'np-main' },
       h('div', { class: 'np-title' }, h('a', { href: `/items/${sn.series_id || sn.item_id}` }, title)),
@@ -86,6 +86,70 @@ export function nowPlayingCard(sn) {
           h('span', { class: 'meter-fill', style: { width: (prog || 0) * 100 + '%' } })),
         h('span', { class: 'mono np-time' }, sn.runtime_s ? `${clock(sn.position_s)} / ${clock(sn.runtime_s)}` : clock(sn.position_s))),
       details));
+}
+
+/**
+ * The live "Now playing" block. The server is asked every few seconds; in between, the clock and
+ * the bar of every playing session advance locally once a second so they move like a player does.
+ *
+ * Clients report their position to Jellyfin only every ten seconds or so, which means a poll often
+ * returns a position that is a little *behind* what we are already showing. Snapping to it would
+ * make the clock stutter backwards, so the local clock is kept unless the server disagrees in a way
+ * that means something: it is ahead, the viewer paused, or the gap is too big to be reporting lag
+ * (a skip).
+ */
+const REPORT_LAG_S = 15;
+export function nowPlayingView() {
+  const root = h('div', { class: 'np-live' });
+  let live = new Map(); // key -> { s, pos, at, shape, clockEl, fillEl, barEl }
+  // Everything about a session except the numbers that change every second: if this is the same,
+  // the card on screen is still right and only its clock needs attention.
+  const shapeOf = (s) => JSON.stringify({ ...s, position_s: 0, watched_s: 0, transcode: s.transcode ? { ...s.transcode, progress: 0 } : null });
+  const posNow = (l, now) => {
+    const p = l.s.is_paused ? l.pos : l.pos + (now - l.at) / 1000;
+    return l.s.runtime_s ? Math.min(p, l.s.runtime_s) : p;
+  };
+  function paint(l, now) {
+    const pos = Math.floor(posNow(l, now));
+    if (l.clockEl) l.clockEl.textContent = l.s.runtime_s ? `${clock(pos)} / ${clock(l.s.runtime_s)}` : clock(pos);
+    if (l.fillEl && l.s.runtime_s) {
+      const pr = Math.max(0, Math.min(1, pos / l.s.runtime_s));
+      l.fillEl.style.width = pr * 100 + '%';
+      if (l.barEl) l.barEl.setAttribute('aria-valuenow', String(Math.round(pr * 100)));
+    }
+  }
+  const timer = setInterval(() => { const now = performance.now(); for (const l of live.values()) if (!l.s.is_paused) paint(l, now); }, 1000);
+
+  function update(sessions) {
+    const now = performance.now();
+    const next = new Map();
+    let sameCards = sessions.length === live.size;
+    for (const s of sessions) {
+      const old = live.get(s.key);
+      const shape = shapeOf(s);
+      const server = s.position_s ?? 0;
+      let pos = server;
+      if (old && old.shape === shape && !s.is_paused) {
+        const ours = posNow(old, now);
+        if (server <= ours && ours - server <= REPORT_LAG_S) pos = ours; // the server is merely behind on reports
+      }
+      if (!old || old.shape !== shape) sameCards = false;
+      next.set(s.key, { s, pos, at: now, shape, clockEl: old && old.clockEl, fillEl: old && old.fillEl, barEl: old && old.barEl });
+    }
+    if (!sameCards) {
+      // Someone started, stopped, paused or changed quality: draw the cards again.
+      mount(root, nowPlayingList(sessions));
+      for (const l of next.values()) {
+        const card = root.querySelector(`[data-np-key="${CSS.escape(l.s.key)}"]`);
+        l.clockEl = card && card.querySelector('.np-time');
+        l.barEl = card && card.querySelector('.np-progress .meter');
+        l.fillEl = card && card.querySelector('.np-progress .meter-fill');
+      }
+    }
+    live = next;
+    for (const l of live.values()) paint(l, now);
+  }
+  return { el: root, update, destroy: () => clearInterval(timer) };
 }
 
 export function nowPlayingList(sessions) {
