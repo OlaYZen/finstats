@@ -943,3 +943,22 @@ a.chip-link:hover { border-color: var(--accent); color: var(--text); text-decora
 .recap-banner:hover { border-color: var(--accent-hi); background: rgba(138, 92, 245, .2); }
 .recap-banner .icon { flex: none; color: var(--accent-hi); }
 .recap-banner span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* ------------------------------------------------------------ patch notes */
+.nav-dot { width: 7px; height: 7px; margin-left: auto; border-radius: 50%; background: var(--accent-hi); flex: none; }
+.cl-list { display: flex; flex-direction: column; gap: 14px; max-width: 860px; }
+.cl-release { padding: 18px 20px 16px; background: var(--bg-2); border: 1px solid var(--border-soft); border-radius: var(--radius); min-width: 0; }
+.cl-release.is-current { border-color: color-mix(in srgb, var(--accent) 55%, var(--border-soft)); }
+.cl-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 12px; }
+.cl-version { margin: 0; font-size: 17px; font-weight: 650; letter-spacing: -0.01em; color: #f0f0f0; }
+.cl-running { align-self: center; color: var(--text); background: var(--accent-wash); border-color: transparent; }
+.cl-date { margin-left: auto; color: var(--text-faint); font-size: 12.5px; }
+.cl-summary { margin: 8px 0 0; color: var(--text-muted); font-size: 14px; max-width: 70ch; }
+.cl-group { margin-top: 14px; }
+.cl-kind { display: inline-flex; align-items: center; gap: 5px; margin: 0 0 6px; font-size: 11.5px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; color: var(--text-muted); }
+.cl-kind .icon { color: var(--accent-hi); }
+.cl-items { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 6px; color: var(--text); font-size: 13.5px; line-height: 1.55; max-width: 78ch; overflow-wrap: anywhere; }
+.cl-items li::marker { color: var(--text-faint); }
+.cl-items strong { color: #f0f0f0; font-weight: 600; }
+.cl-code { padding: 1px 5px; border-radius: 4px; background: var(--bg-sunken); border: 1px solid var(--border-soft); font-size: 12px; }
+@media (max-width: 560px) { .cl-date { margin-left: 0; flex-basis: 100%; } }

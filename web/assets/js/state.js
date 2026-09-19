@@ -42,3 +42,23 @@ export async function userList(signal) {
   return usersCache;
 }
 export function resetCaches() { usersCache = null; }
+
+// ---- "new version" hint: a dot on the Patch notes tab until the notes have been opened
+const SEEN_KEY = 'finstats.seenVersion';
+const versionSubs = new Set();
+export function hasUnseenVersion() {
+  const v = state.status && state.status.version;
+  if (!v) return false;
+  try { return localStorage.getItem(SEEN_KEY) !== v; } catch { return false; }
+}
+export function markVersionSeen(v) {
+  try { if (v) localStorage.setItem(SEEN_KEY, v); } catch { /* private mode: the dot just stays */ }
+  versionSubs.forEach((fn) => fn());
+}
+/** The server was updated while this tab stayed open. */
+export function noteRunningVersion(v) {
+  if (!v || !state.status || state.status.version === v) return;
+  state.status.version = v;
+  versionSubs.forEach((fn) => fn());
+}
+export function onVersionSeen(fn) { versionSubs.add(fn); return () => versionSubs.delete(fn); }

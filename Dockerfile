@@ -12,6 +12,8 @@ RUN mkdir -p src web && echo 'fn main() {}' > src/main.rs \
 
 COPY src ./src
 COPY web ./web
+# Compiled into the binary: the in-app patch notes.
+COPY CHANGELOG.md ./
 RUN cargo build --release --locked
 
 FROM alpine:3.22

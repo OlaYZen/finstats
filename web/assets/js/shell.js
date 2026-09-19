@@ -3,7 +3,7 @@
 
 import { h, icon, num, relTime, dateTime, mount } from './dom.js';
 import { api, isAbort } from './api.js';
-import { state, isAdmin, resetCaches } from './state.js';
+import { state, isAdmin, resetCaches, hasUnseenVersion, onVersionSeen, noteRunningVersion } from './state.js';
 import { navigate, onRouteChange } from './router.js';
 import { avatar } from './components.js';
 import { openPalette } from './palette.js';
@@ -25,6 +25,7 @@ function navItems() {
     isAdmin() ? { href: '/server', label: 'Server', icon: 'server' } : null,
     isAdmin() ? { href: '/events', label: 'Server log', icon: 'log' } : null,
     isAdmin() ? { href: '/settings', label: 'Settings', icon: 'settings' } : null,
+    { href: '/changelog', label: 'Patch notes', icon: 'tag', dot: hasUnseenVersion },
   ].filter(Boolean);
 }
 
@@ -45,6 +46,14 @@ function buildShell() {
   const items = navItems();
   const navLinks = items.map((n) => {
     const a = h('a', { class: 'nav-row', href: n.href }, icon(n.icon, 15), h('span', null, n.label));
+    if (n.dot) {
+      // "Something new here" — announced in text too, never by the dot alone.
+      const dot = h('span', { class: 'nav-dot' }, h('span', { class: 'sr-only' }, 'New version'));
+      const paint = () => { dot.hidden = !n.dot(); };
+      paint();
+      onVersionSeen(paint);
+      a.append(dot);
+    }
     a._item = n;
     return a;
   });
@@ -84,7 +93,7 @@ function buildShell() {
   const sbStream = h('a', { href: '/', class: 'sb-item sb-link' }, sbDot, h('span', null, 'connecting…'));
   const sbPlays = h('span', { class: 'sb-item' });
   const sbSync = h('span', { class: 'sb-item' });
-  const sbVer = h('span', { class: 'sb-item sb-right' }, state.status && state.status.version ? 'v' + state.status.version : '');
+  const sbVer = h('a', { class: 'sb-item sb-right sb-link', href: '/changelog', title: 'Patch notes' }, state.status && state.status.version ? 'v' + state.status.version : '');
   const statusbar = h('footer', { class: 'statusbar', role: 'status', 'aria-label': 'Collector status' }, sbStream, sbPlays, sbSync, sbVer);
 
   let sbTimer = null, sbAbort = null, dead = false;
@@ -102,7 +111,7 @@ function buildShell() {
         sbPlays.textContent = `${num(sum.plays_total)} plays`;
         sbSync.textContent = sum.last_sync_at ? `synced ${relTime(sum.last_sync_at)}` : 'not synced yet';
         sbSync.title = sum.last_sync_at ? 'Last library sync: ' + dateTime(sum.last_sync_at) : '';
-        if (sum.version) sbVer.textContent = 'v' + sum.version;
+        if (sum.version) { sbVer.textContent = 'v' + sum.version; noteRunningVersion(sum.version); }
       } catch (e) {
         if (!isAbort(e) && e.status !== 401) {
           sbDot.className = 'sb-dot bad';

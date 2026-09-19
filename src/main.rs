@@ -1,5 +1,6 @@
 mod api;
 mod auth;
+mod changelog;
 mod collector;
 mod db;
 mod import;

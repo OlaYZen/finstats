@@ -17,6 +17,7 @@ import recapPage from './pages/recap.js';
 import events from './pages/events.js';
 import serverPage from './pages/server.js';
 import settings from './pages/settings.js';
+import changelogPage from './pages/changelog.js';
 import { setupPage, loginPage } from './pages/auth.js';
 
 route('/setup', setupPage, { bare: true });
@@ -33,6 +34,7 @@ route('/playback', playback);
 route('/server', serverPage, { admin: true });
 route('/events', events, { admin: true });
 route('/settings', settings, { admin: true });
+route('/changelog', changelogPage);
 route('*', (ctx) => {
   ctx.title('Not found');
   ctx.root.append(pageHeader('Page not found'), emptyState('There’s nothing at this address.', 'It may have been a link to something that was removed.',
