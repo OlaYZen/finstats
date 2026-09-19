@@ -6,6 +6,11 @@ binary and is what the **Patch notes** tab in the app shows.
 Format: `## [version] - date`, an optional one-paragraph summary, then `### Added`,
 `### Changed`, `### Fixed` or `### Removed` with one bullet per change.
 
+## [0.7.9] - 2026-09-19
+
+### Changed
+- The Genres card opens as the **list** again, with the radar as the second option on the switch. If you had already picked a view, that choice is kept.
+
 ## [0.7.8] - 2026-09-19
 
 ### Added
