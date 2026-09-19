@@ -196,14 +196,13 @@ function recordCard({ label, value, context, image, name }) {
 }
 
 // ---------------------------------------------------------------- chapters
-/** The period picker: the years as plain words, the chosen one lit. */
+/** The period picker: the same segmented control as every other range switch in the app. */
 function yearTabs(d, current, onPick) {
   let years = (d.years || []).map(String);
   if (/^\d{4}$/.test(current) && !years.includes(current)) years.push(current);
   years = [...new Set(years)].sort();
-  const tab = (value, label) => h('li', null, h('button', { type: 'button', class: 'rc-year mono', 'aria-current': value === current ? 'true' : null,
-    onClick: () => { if (value !== current) onPick(value); } }, label));
-  return h('nav', { class: 'rc-years', 'aria-label': 'Period' }, h('ol', null, years.map((y) => tab(y, y)), tab('last12', 'Last 12 months')));
+  return h('div', { class: 'rc-years' }, segmented({ label: 'Period', value: current,
+    options: [...years.map((y) => ({ value: y, label: y })), { value: 'last12', label: 'Last 12 months' }], onChange: onPick }));
 }
 
 /** The period cut into Monday-to-Sunday weeks: [{from, to, sec}]. */

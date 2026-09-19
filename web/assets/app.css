@@ -841,11 +841,7 @@ a.chip-link:hover { border-color: var(--accent); color: var(--text); text-decora
 .rc-stats dt { order: 2; color: var(--text-faint); font-size: 11px; font-weight: 600; letter-spacing: .13em; text-transform: uppercase; }
 
 /* ---- opening: the year "replayed" — headline and the posters that filled it, over a waveform of its weeks */
-.rc-years { min-width: 0; overflow-x: auto; }
-.rc-years ol { list-style: none; display: flex; gap: 4px; width: max-content; margin: 0; padding: 0; }
-.rc-year { padding: 5px 10px; border: 0; border-radius: var(--radius-sm); background: none; color: var(--text-faint); font: inherit; font-family: var(--mono); font-size: 13px; cursor: pointer; transition: color var(--ease), background var(--ease); }
-.rc-year:hover { color: var(--text); background: var(--hover); }
-.rc-year[aria-current="true"] { color: #f4f2fc; background: var(--accent-wash); box-shadow: inset 0 -2px 0 var(--accent-hi); cursor: default; }
+.rc-years { display: flex; min-width: 0; max-width: 100%; }
 .rc-empty-picker { display: flex; }
 
 .rc-hero { position: relative; }
