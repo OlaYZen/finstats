@@ -393,3 +393,35 @@ What each one gates, server-side:
 `PUT /api/permissions/defaults` `{"permissions": [...]}` → `{"defaults": [...]}`
 `PUT /api/permissions/users/{id}` `{"permissions": [...]}` → `{"permissions": [...]}`; `400` for an unknown key or an
 administrator (they already have everything), `404` for an unknown user. Effective = defaults ∪ own grants.
+
+---
+
+# v0.6 — Profiles: show progress, manual marks, streaks
+
+`GET /api/users/{id}/shows` — own id, or anyone's with `see_everyone` (`403` otherwise). All time; no filters.
+```jsonc
+{
+  "editable": true,                       // true only on your own profile
+  "streaks": {"longest": {"days": 29, "from": "2026-04-17", "to": "2026-05-15"} | null,
+              "current": {"days": 3, "since": "2026-09-17" | null, "includes_today": true},   // still alive if it reached yesterday
+              "active_days": 189},
+  "shows": [ {"id", "name", "year", "removed", "image_item_id", "last_played_at": 0|null,
+              "total": 26, "seen": 25, "started": 0,
+              "seasons": [ {"season_number": 1, "total": 12, "seen": 12,
+                            "episodes": [ {"id", "episode_number": 1|null, "name",
+                                           "state": "seen" | "started" | "none",
+                                           "source": "played" | "jellyfin" | "manual" | null} ]} ]} ]
+}
+```
+Only episodes that exist as files count: Jellyfin's virtual items (missing or unaired episodes) and specials
+(season 0) are left out, so an announced season does not drag a finished show below 100%. For a series that has
+left the library its removed episodes are used instead. An episode is `seen` when a recorded play reached 80%
+(`played`), Jellyfin has it marked as played (`jellyfin`), or the user marked it (`manual`), in that order of
+precedence; `started` = played, but not that far. Shows with nothing seen or started are omitted.
+The same `streaks` object is also part of `GET /api/users/{id}`.
+
+`POST /api/me/seen` `{"item_ids": ["…"], "seen": true|false}` → `{"changed": 12}` — marks episodes as seen for the
+caller only (1–5000 ids; non-episodes are ignored). Marks live in finstats alone: nothing is written to Jellyfin,
+and `seen: false` only removes manual marks, never a recorded play.
+
+`Play` rows were already carrying `position_s` and `runtime_s`; the Activity table now shows them as the stop position.

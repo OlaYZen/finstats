@@ -79,6 +79,11 @@ field is usually just adding a column to a SELECT. Local-time bucketing relies o
 process `TZ` (the Docker image ships tzdata for this). Do not use `#[serde(flatten)]` in `Query` structs —
 serde_urlencoded then hands numbers over as strings and every numeric filter 400s.
 
+**Profiles (`profile.rs`).** Show progress counts only episodes that exist as files (`path`/`size_bytes` set; the sync
+asks Jellyfin to exclude virtual items, and season 0 is skipped). "Seen" merges three sources in order: a recorded
+play ≥ 80%, Jellyfin's played flag (`user_items`), a manual mark (`manual_seen`, written via `POST /api/me/seen` for
+the caller only — finstats never writes to Jellyfin). Streaks are all-time and share `recap::longest_run`.
+
 **Recap (`recap.rs`)** is strictly personal (even admins only get their own), excludes Live TV item types, and
 defaults to the year that is "ready": the current year in December, otherwise the previous one.
 

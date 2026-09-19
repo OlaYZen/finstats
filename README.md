@@ -54,6 +54,13 @@ video and audio format, bitrate, time watched versus time paused.
 Renamed a file? Jellyfin treats it as a new item and orphans its history. finstats notices and
 re-attaches the old plays to the new entry.
 
+### Where you are in every show
+Your profile shows each series as a bar with one segment per episode: seen, started, or not yet.
+Only episodes that are actually on your server count, so an announced season does not spoil a
+finished show. Watched something while nothing was recording? Jellyfin's own played marks fill the
+gap, and you can mark episodes, seasons or whole shows as seen yourself. Alongside it: your longest
+and current day streak.
+
 <br clear="right">
 
 ### Your year in review
