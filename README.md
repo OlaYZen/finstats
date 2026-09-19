@@ -51,6 +51,9 @@ where playback picked up and where it stopped.
 Alongside the usual details — device, app version, IP address and whether it was on your network,
 video and audio format, bitrate, time watched versus time paused.
 
+Every film and show lists its cast and crew, and every actor and director has a page of their own:
+what they are in on your server, and how much of it has been watched.
+
 Renamed a file? Jellyfin treats it as a new item and orphans its history. finstats notices and
 re-attaches the old plays to the new entry.
 

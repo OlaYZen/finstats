@@ -107,6 +107,8 @@ permission), the user in `user_id`. There is deliberately no whole-server editio
 defaults to the year that is "ready": the current year in December, otherwise the previous one.
 Its "most watched people" read `item_people`: actors (first 12 billed) and directors of films and shows only, filled by a
 second, small `/Items` pass per library in `sync_libraries` (`Fields=People`) — never add `People` to the main item read.
+The same table feeds the Cast & crew row on `/items/:id` and the person pages (`/people/:id`, `stats::person_detail`), which are
+scoped like any other stats query.
 
 **Auth (`auth.rs`).** Login forwards credentials to Jellyfin's `AuthenticateByName`, immediately logs that Jellyfin
 session out, and mints an own opaque session token (stored hashed, HttpOnly SameSite=Lax cookie).

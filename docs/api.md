@@ -496,9 +496,33 @@ longer ones; music also matches on its artist). Results are ranked, best first. 
 ```
 
 - **People** come from the films and shows themselves (an episode counts towards its show's cast). Only actors — the
-  first 12 billed per title — and directors are kept. A person's portrait is `GET /api/images/items/{person id}`.
+  first 12 billed per title — and directors are kept. A person's portrait is `GET /api/img/item/{person id}`.
   They are read with the library, in a second, smaller request per library (`IncludeItemTypes=Movie,Series`,
   `Fields=People`); until the first library read after upgrading, both lists are empty.
 - A **sitting** is one film or episode on one local day (plays of at least 5 minutes). A **rewatch** is a sitting with
   something that already had one in the period: `rewatches = sittings − distinct titles`, `share = rewatches / sittings`.
   Picking a play up again on the same day is not a rewatch.
+
+---
+
+# v0.8.1 — People
+
+`GET /api/items/{id}` gains `"people": [{"id","name","kind": "Actor"|"Director","role": "…"|null,"has_image": true}]` —
+directors first, then the cast in billing order. An episode or season answers with its show's. Empty until the
+library has been read by 0.8.0 or newer.
+
+`GET /api/people/{id}` (common filters) — one actor or director. `404` for an id nobody in the library carries.
+
+```jsonc
+{
+  "person": {"id": "…", "name": "…", "has_image": true, "is_actor": true, "is_director": false, "titles": 13},
+  "totals": {"plays": 0, "watch_s": 0, "users": 0, "titles_watched": 0, "last_played_at": 0|null},
+  "titles": [{"id","name","type": "Movie"|"Series","year","removed": false,"kinds": "Actor"|"Director"|"Actor,Director",
+              "role": "…"|null,"plays": 0,"watch_s": 0,"last_played_at": 0|null}],   // every title they are in; most watched first
+  "watchers": [{"user_id","user_name","plays","watch_s","last_played_at"}]
+}
+```
+
+Everything counted is within the caller's scope, exactly like `/api/items/{id}`: without `see_everyone` the totals,
+per-title figures and `watchers` cover the caller's own plays only. A play of an episode counts towards its show's
+people; a play counts once even when the person both acts in and directs the title.
