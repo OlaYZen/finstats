@@ -6,6 +6,12 @@ binary and is what the **Patch notes** tab in the app shows.
 Format: `## [version] - date`, an optional one-paragraph summary, then `### Added`,
 `### Changed`, `### Fixed` or `### Removed` with one bullet per change.
 
+## [0.7.5] - 2026-09-19
+
+### Changed
+- **Search is forgiving.** It used to need the exact phrase; now it matches word by word, in any order, with anything in between: "alya hides" finds *Alya Sometimes Hides Her Feelings in Russian*. Case, accents and punctuation don't matter ("pokemon" finds *Pokémon*, "spider man" finds *Spider-Man*), a leading "The" is ignored, and a slip of the finger is forgiven ("mentalsit" finds *The Mentalist*). Words of three letters or fewer still have to be typed right, so short queries don't turn into guesses. Better matches rank first, and music is also found by its artist.
+- The search boxes on Activity and the Server log match word by word as well, across all their columns: "alya opera" finds plays of that show in Opera.
+
 ## [0.7.4] - 2026-09-19
 
 ### Changed
