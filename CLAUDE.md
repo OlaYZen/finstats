@@ -48,6 +48,11 @@ there, not from the crate, to stay on the version `r2d2_sqlite` uses.
 **Migrations** are the `MIGRATIONS` array in `db.rs`, applied by index against `PRAGMA user_version`. Released
 migrations are immutable — deployed databases have already run them. Add a new entry; never edit or reorder one.
 
+**Library reads must ask for real items.** `items_page` passes `CollapseBoxSetItems=false` (otherwise servers with
+"group movies into collections" return the BoxSet *instead of* its films, which then get flagged removed) and
+`ExcludeLocationTypes=Virtual` (missing/unaired placeholders). Anything a read does not return is marked `removed`,
+so a query that silently hides items is a data-loss bug, not a cosmetic one.
+
 **Jellyfin client (`jellyfin.rs`).** Every request asks for `Accept: application/json; profile="PascalCase"` because
 10.x servers answer PascalCase and newer ones camelCase by default. All JSON access in the codebase assumes
 PascalCase keys. Jellyfin ids are normalised with `db::norm_id` (no dashes, lowercase) everywhere.
