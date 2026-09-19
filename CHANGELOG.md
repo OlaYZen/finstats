@@ -6,6 +6,20 @@ binary and is what the **Patch notes** tab in the app shows.
 Format: `## [version] - date`, an optional one-paragraph summary, then `### Added`,
 `### Changed`, `### Fixed` or `### Removed` with one bullet per change.
 
+## [0.6.0] - 2026-09-19
+
+Your profile, and where you are in every show.
+
+### Added
+- **Show progress on profiles.** Every series you have touched as a bar with one segment per episode: seen, started or not yet. Open a show to see it season by season. Sorted by how close you are to finishing, with separate views for finished shows and everything.
+- **Mark as seen.** On your own profile, click an episode, or mark a whole season or show, for what you watched while nothing was recording. Jellyfin's own played marks are used as well, so most gaps fill themselves. Marks stay in finstats and never change anything in Jellyfin; a recorded play can't be unmarked, your own marks can.
+- **Day streaks** on profiles: your longest run of days in a row with a play, your current streak, and how many days you have watched something.
+- **My profile** in the sidebar.
+- Activity shows **where playback stopped** (for example `44:15 / 45:00`) under the progress bar, and the actual **date and time** under "3h ago". Plays imported from Jellystat have no stop position, because Jellystat never recorded one.
+
+### Changed
+- Episodes that are missing or have not aired yet are no longer treated as part of your library. Jellyfin lists them as placeholders without a file; they used to count towards episode totals.
+
 ## [0.5.1] - 2026-09-19
 
 ### Added
