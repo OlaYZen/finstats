@@ -164,6 +164,41 @@ const MIGRATIONS: &[&str] = &[
     );
     CREATE INDEX idx_events_date ON server_events(date);
     "#,
+    // 2 — what happens *during* a play, Jellyfin's own played flags, richer item details
+    r#"
+    ALTER TABLE playbacks ADD COLUMN pause_count INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE playbacks ADD COLUMN seek_count INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE playbacks ADD COLUMN start_position_s INTEGER;
+    ALTER TABLE playbacks ADD COLUMN is_local INTEGER;          -- NULL = unknown
+
+    CREATE TABLE playback_events (
+        id          INTEGER PRIMARY KEY,
+        playback_id INTEGER NOT NULL REFERENCES playbacks(id) ON DELETE CASCADE,
+        at          INTEGER NOT NULL,
+        kind        TEXT NOT NULL,   -- start | pause | resume | seek | audio | subtitle | transcode | stop
+        position_s  INTEGER,
+        detail      TEXT
+    );
+    CREATE INDEX idx_pbe_playback ON playback_events(playback_id, id);
+
+    CREATE TABLE user_items (
+        user_id        TEXT NOT NULL,
+        item_id        TEXT NOT NULL,
+        played         INTEGER NOT NULL DEFAULT 0,
+        is_favorite    INTEGER NOT NULL DEFAULT 0,
+        play_count     INTEGER NOT NULL DEFAULT 0,
+        last_played_at INTEGER,
+        PRIMARY KEY (user_id, item_id)
+    ) WITHOUT ROWID;
+    CREATE INDEX idx_user_items_item ON user_items(item_id);
+
+    ALTER TABLE items ADD COLUMN provider_ids TEXT;   -- JSON object
+    ALTER TABLE items ADD COLUMN studios TEXT;        -- JSON array of names
+    ALTER TABLE items ADD COLUMN bit_depth INTEGER;
+    ALTER TABLE items ADD COLUMN framerate REAL;
+
+    ALTER TABLE devices ADD COLUMN last_user_name TEXT;
+    "#,
 ];
 
 impl Db {
@@ -235,6 +270,36 @@ pub fn set_setting(conn: &Connection, key: &str, value: &str) -> Result<()> {
         params![key, value],
     )?;
     Ok(())
+}
+
+/// LAN, loopback, link-local, CGNAT (Tailscale & friends) and IPv6 ULA count as local.
+pub fn is_local_ip(ip: &str) -> Option<bool> {
+    use std::net::IpAddr;
+    let v4_local = |v4: std::net::Ipv4Addr| {
+        v4.is_private() || v4.is_loopback() || v4.is_link_local() || (v4.octets()[0] == 100 && (v4.octets()[1] & 0xC0) == 64)
+    };
+    match ip.trim().parse::<IpAddr>().ok()? {
+        IpAddr::V4(v4) => Some(v4_local(v4)),
+        IpAddr::V6(v6) => Some(match v6.to_ipv4_mapped() {
+            Some(v4) => v4_local(v4),
+            None => v6.is_loopback() || (v6.segments()[0] & 0xfe00) == 0xfc00 || (v6.segments()[0] & 0xffc0) == 0xfe80,
+        }),
+    }
+}
+
+/// Fill `is_local` for rows that predate the column or were imported without it.
+pub fn backfill_is_local(conn: &Connection) -> Result<usize> {
+    let ips: Vec<String> = conn
+        .prepare("SELECT DISTINCT remote_ip FROM playbacks WHERE is_local IS NULL AND remote_ip IS NOT NULL")?
+        .query_map([], |r| r.get(0))?
+        .collect::<Result<_, _>>()?;
+    let mut n = 0;
+    for ip in ips {
+        if let Some(local) = is_local_ip(&ip) {
+            n += conn.execute("UPDATE playbacks SET is_local = ?1 WHERE remote_ip = ?2 AND is_local IS NULL", params![local, ip])?;
+        }
+    }
+    Ok(n)
 }
 
 pub fn now() -> i64 {

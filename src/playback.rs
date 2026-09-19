@@ -36,6 +36,10 @@ pub struct PlayRecord {
     pub container: Option<String>,
     pub streams: Streams,
     pub transcode: Option<Value>,
+    pub pause_count: i64,
+    pub seek_count: i64,
+    /// Where playback picked up; > 0 means the viewer resumed something.
+    pub start_position_s: Option<i64>,
 }
 
 const COLUMNS: &str = "source, source_id, active, user_id, user_name, item_id, item_name, item_type,
@@ -43,7 +47,8 @@ const COLUMNS: &str = "source, source_id, active, user_id, user_name, item_id, i
     started_at, ended_at, duration_s, paused_s, position_s, runtime_s,
     client, device_name, device_id, app_version, remote_ip, play_method, container, bitrate,
     video_codec, width, height, video_range, bit_depth,
-    audio_codec, audio_channels, audio_language, subtitle_codec, subtitle_language, transcode";
+    audio_codec, audio_channels, audio_language, subtitle_codec, subtitle_language, transcode,
+    pause_count, seek_count, start_position_s, is_local";
 
 const VALUES: &str = ":source, :source_id, :active, :user_id, :user_name, :item_id, :item_name, :item_type,
     :series_id, :series_name, :season_id, :season_number, :episode_number,
@@ -51,7 +56,8 @@ const VALUES: &str = ":source, :source_id, :active, :user_id, :user_name, :item_
     :started_at, :ended_at, :duration_s, :paused_s, :position_s, :runtime_s,
     :client, :device_name, :device_id, :app_version, :remote_ip, :play_method, :container, :bitrate,
     :video_codec, :width, :height, :video_range, :bit_depth,
-    :audio_codec, :audio_channels, :audio_language, :subtitle_codec, :subtitle_language, :transcode";
+    :audio_codec, :audio_channels, :audio_language, :subtitle_codec, :subtitle_language, :transcode,
+    :pause_count, :seek_count, :start_position_s, :is_local";
 
 impl PlayRecord {
     /// Inserts the row. Returns `None` when `source_id` already exists (duplicate import).
@@ -98,6 +104,10 @@ impl PlayRecord {
             ":subtitle_codec": self.streams.subtitle_codec,
             ":subtitle_language": self.streams.subtitle_language,
             ":transcode": transcode,
+            ":pause_count": self.pause_count,
+            ":seek_count": self.seek_count,
+            ":start_position_s": self.start_position_s,
+            ":is_local": self.remote_ip.as_deref().and_then(crate::db::is_local_ip),
         })?;
         Ok((n > 0).then(|| conn.last_insert_rowid()))
     }
@@ -107,7 +117,8 @@ impl PlayRecord {
         let transcode = self.transcode.as_ref().map(|t| t.to_string());
         conn.prepare_cached(
             "UPDATE playbacks SET active = :active, ended_at = :ended_at, duration_s = :duration_s, paused_s = :paused_s,
-                 position_s = :position_s, play_method = :play_method, remote_ip = :remote_ip,
+                 position_s = :position_s, play_method = :play_method, remote_ip = :remote_ip, is_local = :is_local,
+                 pause_count = :pause_count, seek_count = :seek_count,
                  audio_codec = :audio_codec, audio_channels = :audio_channels, audio_language = :audio_language,
                  subtitle_codec = :subtitle_codec, subtitle_language = :subtitle_language,
                  transcode = COALESCE(:transcode, transcode)
@@ -122,6 +133,9 @@ impl PlayRecord {
             ":position_s": self.position_s,
             ":play_method": self.play_method,
             ":remote_ip": self.remote_ip,
+            ":is_local": self.remote_ip.as_deref().and_then(crate::db::is_local_ip),
+            ":pause_count": self.pause_count,
+            ":seek_count": self.seek_count,
             ":audio_codec": self.streams.audio_codec,
             ":audio_channels": self.streams.audio_channels,
             ":audio_language": self.streams.audio_language,
@@ -131,4 +145,21 @@ impl PlayRecord {
         })?;
         Ok(())
     }
+}
+
+/// One thing that happened during a play (pause, skip, track switch…).
+#[derive(Debug, Clone)]
+pub struct PlayEvent {
+    pub at: i64,
+    pub kind: &'static str,
+    pub position_s: Option<i64>,
+    pub detail: Option<String>,
+}
+
+pub fn insert_events(conn: &Connection, playback_id: i64, events: &[PlayEvent]) -> Result<()> {
+    let mut stmt = conn.prepare_cached("INSERT INTO playback_events(playback_id, at, kind, position_s, detail) VALUES (?1, ?2, ?3, ?4, ?5)")?;
+    for e in events {
+        stmt.execute(crate::db::rusqlite::params![playback_id, e.at, e.kind, e.position_s, e.detail])?;
+    }
+    Ok(())
 }

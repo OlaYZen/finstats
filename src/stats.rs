@@ -1,8 +1,6 @@
 //! Read-only statistics endpoints. Everything here goes through [`Scope`], which is where
 //! the time window, user/library filters and the "non-admins only see themselves" rule live.
 
-use std::net::IpAddr;
-
 use anyhow::Result;
 use axum::Json;
 use axum::extract::{Path, Query, State};
@@ -17,7 +15,7 @@ use crate::db::{self, SqlValue};
 use crate::media;
 use crate::state::{ApiError, ApiResult, App};
 
-const BOOL_COLS: [&str; 7] = ["active", "is_admin", "is_disabled", "removed", "has_image", "item_exists", "has_backdrop"];
+const BOOL_COLS: [&str; 9] = ["active", "is_admin", "is_disabled", "removed", "has_image", "item_exists", "has_backdrop", "is_local", "is_favorite"];
 const JSON_COLS: [&str; 2] = ["genres", "transcode"];
 
 // ---------------------------------------------------------------- plumbing
@@ -393,7 +391,8 @@ const PLAY_SELECT: &str = "SELECT p.id, p.source, p.active, p.user_id, COALESCE(
     COALESCE(p.runtime_s, i.runtime_s) AS runtime_s,
     p.client, p.device_name, p.device_id, p.app_version, p.remote_ip, p.play_method, p.container, p.bitrate,
     p.video_codec, p.width, p.height, p.video_range, p.bit_depth,
-    p.audio_codec, p.audio_channels, p.audio_language, p.subtitle_codec, p.subtitle_language, p.transcode
+    p.audio_codec, p.audio_channels, p.audio_language, p.subtitle_codec, p.subtitle_language, p.transcode,
+    p.pause_count, p.seek_count, p.start_position_s, p.is_local
   FROM playbacks p
   LEFT JOIN items i ON i.id = p.item_id
   LEFT JOIN users u ON u.id = p.user_id";
@@ -425,8 +424,10 @@ fn decorate_play(mut m: Map<String, Value>, is_admin: bool, detail: bool) -> Val
     if !is_admin {
         m.insert("remote_ip".into(), Value::Null);
         m.insert("device_id".into(), Value::Null);
+        m.insert("is_local".into(), Value::Null);
     }
     if !detail {
+        m.remove("start_position_s");
         for k in DETAIL_ONLY {
             m.remove(k);
         }
@@ -500,7 +501,11 @@ pub async fn activity_detail(State(app): State<App>, user: AuthUser, Path(id): P
         if let Some(u) = &scope.user_id {
             cond.add("p.user_id = ?", u.clone());
         }
-        Ok(one_json(c, &format!("{PLAY_SELECT} {}", cond.sql()), &cond.args)?.map(|m| decorate_play(m, scope.is_admin, true)))
+        let Some(play) = one_json(c, &format!("{PLAY_SELECT} {}", cond.sql()), &cond.args)? else { return Ok(None) };
+        let mut play = decorate_play(play, scope.is_admin, true);
+        let events = rows_json(c, "SELECT at, kind, position_s, detail FROM playback_events WHERE playback_id = ?1 ORDER BY id", &[id.into()])?;
+        play["events"] = json!(events);
+        Ok(Some(play))
     })
     .await?;
     found.map(Json).ok_or_else(|| ApiError::not_found("Play"))
@@ -633,19 +638,6 @@ pub async fn users(State(app): State<App>, user: AuthUser, Query(q): Query<Filte
     Ok(Json(json!({ "users": rows })))
 }
 
-fn is_local_ip(ip: &str) -> bool {
-    match ip.parse::<IpAddr>() {
-        Ok(IpAddr::V4(v4)) => v4.is_private() || v4.is_loopback() || v4.is_link_local() || (v4.octets()[0] == 100 && (v4.octets()[1] & 0xC0) == 64),
-        Ok(IpAddr::V6(v6)) => {
-            if let Some(v4) = v6.to_ipv4_mapped() {
-                return v4.is_private() || v4.is_loopback() || v4.is_link_local();
-            }
-            v6.is_loopback() || (v6.segments()[0] & 0xfe00) == 0xfc00 || (v6.segments()[0] & 0xffc0) == 0xfe80
-        }
-        Err(_) => false,
-    }
-}
-
 pub async fn user_detail(State(app): State<App>, user: AuthUser, Path(id): Path<String>, Query(q): Query<FilterQuery>) -> ApiResult {
     let id = db::norm_id(&id);
     if !user.is_admin && user.id != id {
@@ -697,7 +689,7 @@ pub async fn user_detail(State(app): State<App>, user: AuthUser, Path(id): Path<
             )?
             .into_iter()
             .map(|mut m| {
-                let local = m.get("ip").and_then(Value::as_str).is_some_and(is_local_ip);
+                let local = m.get("ip").and_then(Value::as_str).and_then(db::is_local_ip).unwrap_or(false);
                 m.insert("is_local".into(), json!(local));
                 Value::Object(m)
             })

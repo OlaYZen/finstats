@@ -12,13 +12,15 @@ use serde_json::{Value, json};
 
 use crate::db::{self, norm_id, rusqlite::OptionalExtension, rusqlite::params};
 use crate::media::{self, Streams, ticks_to_s};
-use crate::playback::PlayRecord;
+use crate::playback::{PlayEvent, PlayRecord, insert_events};
 use crate::state::App;
 
 const PERSIST_EVERY: Duration = Duration::from_secs(30);
 const DEVICE_REFRESH: Duration = Duration::from_secs(300);
 /// Plays shorter than this are accidental clicks; they are dropped when they end.
 const MIN_KEEP_S: i64 = 2;
+/// A position that lands further than this from where steady playback would be is a skip.
+const SEEK_TOLERANCE_S: f64 = 20.0;
 
 struct Tracked {
     row_id: i64,
@@ -75,6 +77,9 @@ fn record_from_session(s: &Value, now: i64) -> Option<PlayRecord> {
         container: opt_str(&item["Container"]).map(|c| c.split(',').next().unwrap_or_default().to_string()),
         streams: Streams::extract(&item["MediaStreams"], play_state),
         transcode,
+        pause_count: 0,
+        seek_count: 0,
+        start_position_s: ticks_to_s(&play_state["PositionTicks"]),
     })
 }
 
@@ -108,6 +113,56 @@ fn live_json(key: &str, t: &Tracked) -> Value {
         "container": r.container, "bitrate": st.bitrate,
         "transcode": transcode,
     })
+}
+
+fn clock(total: i64) -> String {
+    let (h, m, s) = (total / 3600, (total % 3600) / 60, total % 60);
+    if h > 0 { format!("{h}:{m:02}:{s:02}") } else { format!("{m}:{s:02}") }
+}
+
+fn audio_of(r: &PlayRecord) -> Option<String> {
+    media::audio_label(r.streams.audio_codec.as_deref(), r.streams.audio_channels, r.streams.audio_language.as_deref())
+}
+
+fn subtitle_of(r: &PlayRecord) -> Option<String> {
+    media::subtitle_label(r.streams.subtitle_codec.as_deref(), r.streams.subtitle_language.as_deref())
+}
+
+fn transcode_detail(r: &PlayRecord) -> String {
+    let reasons: Vec<&str> = r.transcode.as_ref().and_then(|t| t["reasons"].as_array()).map(|a| a.iter().filter_map(Value::as_str).collect()).unwrap_or_default();
+    if reasons.is_empty() { r.play_method.clone() } else { format!("{}: {}", r.play_method, reasons.join(", ")) }
+}
+
+/// What changed between two sightings of the same play. `dt` is the time between them.
+fn diff_events(old: &PlayRecord, new: &mut PlayRecord, was_paused: bool, is_paused: bool, dt: f64, now: i64) -> Vec<PlayEvent> {
+    let mut out = vec![];
+    let ev = |kind, position_s, detail| PlayEvent { at: now, kind, position_s, detail };
+
+    if let (Some(from), Some(to)) = (old.position_s, new.position_s) {
+        let expected = from as f64 + if was_paused { 0.0 } else { dt };
+        if (to as f64 - expected).abs() > SEEK_TOLERANCE_S + dt * 0.5 {
+            new.seek_count += 1;
+            out.push(ev("seek", Some(to), Some(format!("{} → {}", clock(expected.round() as i64), clock(to)))));
+        }
+    }
+    if was_paused != is_paused {
+        if is_paused {
+            new.pause_count += 1;
+        }
+        out.push(ev(if is_paused { "pause" } else { "resume" }, new.position_s, None));
+    }
+    let (a_old, a_new) = (audio_of(old), audio_of(new));
+    if a_new.is_some() && a_old != a_new {
+        out.push(ev("audio", new.position_s, a_new));
+    }
+    let (s_old, s_new) = (subtitle_of(old), subtitle_of(new));
+    if s_old != s_new {
+        out.push(ev("subtitle", new.position_s, Some(s_new.unwrap_or_else(|| "Off".into()))));
+    }
+    if old.play_method != new.play_method || (new.transcode.is_some() && transcode_detail(old) != transcode_detail(new)) {
+        out.push(ev("transcode", new.position_s, Some(transcode_detail(new))));
+    }
+    out
 }
 
 pub async fn run(app: App) {
@@ -212,48 +267,70 @@ async fn tick(
             t.is_paused = is_paused;
             t.transcode_progress = transcode_progress;
 
-            // Keep identity and start time; take everything that can change mid-play.
+            // Keep identity, start and counters; take everything that can change mid-play.
             rec.started_at = t.rec.started_at;
-            if t.rec.play_method == "Transcode" {
-                rec.play_method = "Transcode".into();
-            }
+            rec.start_position_s = t.rec.start_position_s;
+            rec.pause_count = t.rec.pause_count;
+            rec.seek_count = t.rec.seek_count;
             if rec.transcode.is_none() {
-                rec.transcode = t.rec.transcode.take();
+                rec.transcode = t.rec.transcode.clone();
             }
             rec.duration_s = t.watched.round() as i64;
             rec.paused_s = t.paused.round() as i64;
+            let was_paused = is_paused != pause_flipped;
+            let events = diff_events(&t.rec, &mut rec, was_paused, is_paused, dt, now);
+            // Once a play has needed transcoding it stays a transcode in the statistics.
+            if t.rec.play_method == "Transcode" {
+                rec.play_method = "Transcode".into();
+            }
             t.rec = rec;
 
-            if pause_flipped || t.last_persist.elapsed() >= PERSIST_EVERY {
+            if !events.is_empty() || t.last_persist.elapsed() >= PERSIST_EVERY {
                 t.last_persist = tick_at;
                 let (row_id, rec) = (t.row_id, t.rec.clone());
-                app.db.call(move |c| rec.update_progress(c, row_id)).await?;
+                app.db
+                    .call(move |c| {
+                        rec.update_progress(c, row_id)?;
+                        insert_events(c, row_id, &events)
+                    })
+                    .await?;
             }
         } else {
             let probe = rec.clone();
-            let (row_id, started_at, watched, paused) = app
+            let (row_id, started_at, watched, paused, counters) = app
                 .db
                 .call(move |c| {
                     // Same person, same item, same device, moments later: that's one viewing.
                     let resumed = c
                         .query_row(
-                            "SELECT id, started_at, duration_s, paused_s FROM playbacks
+                            "SELECT id, started_at, duration_s, paused_s, pause_count, seek_count, start_position_s FROM playbacks
                              WHERE source = 'live' AND active = 0 AND user_id = ?1 AND item_id = ?2
                                AND device_id IS ?3 AND ended_at >= ?4
                              ORDER BY ended_at DESC LIMIT 1",
                             params![probe.user_id, probe.item_id, probe.device_id, now - merge_window_s],
-                            |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?, r.get::<_, i64>(2)?, r.get::<_, i64>(3)?)),
+                            |r| {
+                                Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?, r.get::<_, i64>(2)?, r.get::<_, i64>(3)?,
+                                    (r.get::<_, i64>(4)?, r.get::<_, i64>(5)?, r.get::<_, Option<i64>>(6)?)))
+                            },
                         )
                         .optional()?;
-                    if let Some((id, started, dur, paused)) = resumed.filter(|_| merge_window_s > 0) {
+                    let start = |detail: Option<&str>| PlayEvent { at: now, kind: "start", position_s: probe.position_s, detail: detail.map(str::to_string) };
+                    if let Some((id, started, dur, paused, counters)) = resumed.filter(|_| merge_window_s > 0) {
                         c.execute("UPDATE playbacks SET active = 1 WHERE id = ?1", [id])?;
-                        return Ok((id, started, dur as f64, paused as f64));
+                        insert_events(c, id, &[start(Some("Continued after a short break"))])?;
+                        return Ok((id, started, dur as f64, paused as f64, Some(counters)));
                     }
                     let id = probe.insert(c)?.expect("live rows have no source_id and cannot collide");
-                    Ok((id, probe.started_at, 0.0, 0.0))
+                    insert_events(c, id, &[start(None)])?;
+                    Ok((id, probe.started_at, 0.0, 0.0, None))
                 })
                 .await?;
             rec.started_at = started_at;
+            if let Some((pauses, seeks, start_position)) = counters {
+                rec.pause_count = pauses;
+                rec.seek_count = seeks;
+                rec.start_position_s = start_position;
+            }
             tracing::info!("{} started {} on {}", rec.user_name, rec.item_name, rec.device_name.as_deref().unwrap_or("unknown device"));
             tracked.insert(
                 key,
@@ -277,6 +354,7 @@ async fn tick(
                     c.execute("DELETE FROM playbacks WHERE id = ?1", [row_id])?;
                 } else {
                     rec.update_progress(c, row_id)?;
+                    insert_events(c, row_id, &[PlayEvent { at: rec.ended_at, kind: "stop", position_s: rec.position_s, detail: None }])?;
                 }
                 Ok(())
             })
@@ -305,4 +383,33 @@ async fn tick(
     live.sort_by_key(|v| v["started_at"].as_i64().unwrap_or(0));
     *app.live.write().unwrap() = live;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn rec(position: i64) -> PlayRecord {
+        PlayRecord { position_s: Some(position), play_method: "DirectPlay".into(), ..Default::default() }
+    }
+
+    #[test]
+    fn steady_playback_is_not_a_seek() {
+        let mut new = rec(105);
+        assert!(diff_events(&rec(100), &mut new, false, false, 5.0, 0).is_empty());
+        assert_eq!(new.seek_count, 0);
+    }
+
+    #[test]
+    fn jumps_pauses_and_track_switches_are_events() {
+        let mut new = rec(900);
+        new.streams.subtitle_language = Some("eng".into());
+        let kinds: Vec<_> = diff_events(&rec(100), &mut new, false, true, 5.0, 0).into_iter().map(|e| e.kind).collect();
+        assert_eq!(kinds, ["seek", "pause", "subtitle"]);
+        assert_eq!((new.seek_count, new.pause_count), (1, 1));
+
+        // Sitting on pause does not drift into a "seek".
+        let mut still = rec(900);
+        assert!(diff_events(&rec(900), &mut still, true, true, 60.0, 0).is_empty());
+    }
 }

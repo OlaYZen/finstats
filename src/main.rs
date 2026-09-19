@@ -107,6 +107,7 @@ async fn serve(db: db::Db, data_dir: PathBuf) -> Result<()> {
                 _ => None,
             };
             c.execute("DELETE FROM sessions WHERE expires_at <= ?1", [db::now()])?;
+            db::backfill_is_local(c)?;
             Ok((stored, Settings::load(c)?, device_id))
         })
         .await?;

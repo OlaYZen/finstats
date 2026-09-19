@@ -358,6 +358,9 @@ fn import_play(conn: &Connection, d: &Value, res: &mut ImportResult) -> Result<(
         container: opt_str(&d["OriginalContainer"]).map(|c| c.split(',').next().unwrap_or_default().to_string()),
         streams,
         transcode,
+        pause_count: 0,
+        seek_count: 0,
+        start_position_s: None,
     };
     match rec.insert(conn)? {
         Some(_) => res.plays_imported += 1,
@@ -382,5 +385,6 @@ fn finalize(conn: &Connection) -> Result<()> {
            AND EXISTS (SELECT 1 FROM items WHERE items.id = playbacks.item_id AND items.type <> playbacks.item_type);",
     )?;
     backfill_playbacks(conn)?;
+    crate::db::backfill_is_local(conn)?;
     Ok(())
 }
