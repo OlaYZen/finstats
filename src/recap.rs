@@ -38,6 +38,7 @@ impl Window {
 }
 
 const TITLE_ID: &str = "COALESCE(p.series_id, p.item_id)";
+const NOT_LIVE_TV: &str = "p.item_type NOT IN ('TvChannel', 'LiveTvChannel', 'Program', 'LiveTvProgram')";
 
 pub async fn recap(State(app): State<App>, user: AuthUser, Query(q): Query<RecapQuery>) -> ApiResult {
     // A recap is personal: everyone, administrators included, only ever gets their own.
@@ -50,7 +51,8 @@ pub async fn recap(State(app): State<App>, user: AuthUser, Query(q): Query<Recap
 }
 
 fn build(c: &Connection, scope_user: Option<String>, min_play_s: i64, server_name: &str, requested: &str) -> Result<Value> {
-    let mut scope_wh = "WHERE 1 = 1".to_string();
+    // Live TV is left out of the recap altogether: a channel left on all evening says nothing about taste.
+    let mut scope_wh = format!("WHERE {NOT_LIVE_TV}");
     let mut scope_args: Vec<SqlValue> = vec![];
     if let Some(u) = &scope_user {
         scope_wh.push_str(" AND p.user_id = ?");
@@ -169,8 +171,10 @@ fn rank(c: &Connection, w: &Window, user: Option<&str>, min_play_s: i64) -> Resu
     let Some(user) = user else { return Ok(Value::Null) };
     let rows = rows_json(
         c,
-        "SELECT p.user_id, SUM(p.duration_s) AS watch_s FROM playbacks p
-         WHERE p.started_at >= ?1 AND p.started_at < ?2 AND p.duration_s >= ?3 GROUP BY p.user_id ORDER BY watch_s DESC",
+        &format!(
+            "SELECT p.user_id, SUM(p.duration_s) AS watch_s FROM playbacks p
+         WHERE p.started_at >= ?1 AND p.started_at < ?2 AND p.duration_s >= ?3 AND {NOT_LIVE_TV} GROUP BY p.user_id ORDER BY watch_s DESC"
+        ),
         &[w.from.into(), w.to.into(), min_play_s.into()],
     )?;
     let total: i64 = rows.iter().filter_map(|r| r["watch_s"].as_i64()).sum();

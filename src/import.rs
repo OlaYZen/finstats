@@ -325,8 +325,16 @@ fn import_play(conn: &Connection, d: &Value, res: &mut ImportResult) -> Result<(
         conn.prepare_cached("SELECT type FROM items WHERE id = ?1")?
             .query_row([&item_id], |r| r.get::<_, String>(0))
             .optional()?
-            // Item no longer in the library: tell film from music by whether it had a picture.
-            .unwrap_or_else(|| if streams.has_video() { "Movie" } else { "Audio" }.to_string())
+            // Not in the library and Jellystat records no type, so go by what the stream looked like:
+            // a picture without a file container is a Live TV channel, with one it was a film.
+            .unwrap_or_else(|| {
+                match (streams.has_video(), opt_str(&d["OriginalContainer"]).is_some()) {
+                    (true, false) => "TvChannel",
+                    (true, true) => "Movie",
+                    (false, _) => "Audio",
+                }
+                .to_string()
+            })
     };
 
     let rec = PlayRecord {

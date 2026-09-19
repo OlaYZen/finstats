@@ -199,6 +199,13 @@ const MIGRATIONS: &[&str] = &[
 
     ALTER TABLE devices ADD COLUMN last_user_name TEXT;
     "#,
+    // 3 — Jellystat has no item type, so imported Live TV channels were guessed to be films.
+    //     A channel is not in the library and has neither a container nor a runtime.
+    r#"
+    UPDATE playbacks SET item_type = 'TvChannel'
+    WHERE source = 'jellystat' AND item_type = 'Movie' AND container IS NULL AND runtime_s IS NULL
+      AND NOT EXISTS (SELECT 1 FROM items i WHERE i.id = playbacks.item_id);
+    "#,
 ];
 
 impl Db {
