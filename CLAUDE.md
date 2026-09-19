@@ -140,6 +140,12 @@ second per beat). A poll never repaints it; it only corrects the position when t
 ahead or > 15 s behind — clients report to Jellyfin roughly every 10 s), and even then by setting it one short so the
 change lands on the next beat. Painting from the poll is what made the clock stutter.
 
+Tables go through `tables.js`: `dataTable()` / `plainTable()` / `chartTable()` wrap a built `<table>` in its scroll box and make every
+header a sort button (`sortable()` for tables without a scroll box, like the bar lists). Sorting reads cell meaning (durations, sizes, %,
+`<time>`, switches; `data-sort` overrides, `data-nosort` opts a header out, `data-pin` keeps a row on top). Paginated lists must not be
+sorted in the browser: they pass `server: {key, dir, onSort}` with `data-key` headers, and the endpoint whitelists `sort` via
+`stats::order_by`. A new table that skips this helper is a bug.
+
 Pages load through `dataView()` (`components.js`), which is stale-while-revalidate: it records the GET URLs a page's
 `fetch()` issues (they must be fired synchronously when `fetch()` is called), uses them as the cache key, paints a
 remembered result at once, refreshes behind it and only re-renders when the JSON differs. Skeletons appear only after

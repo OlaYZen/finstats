@@ -37,6 +37,7 @@ directly or transcodes, and why. A status bar keeps the essentials in sight on e
 - **Which apps cause transcoding?** Every client, split by direct play, remux and transcode, with the reasons Jellyfin reports.
 - **How much leaves the house?** Local versus remote plays and an estimate of data streamed.
 - **Do people finish what they start?** See how far viewers get before they stop.
+- **Want it in a different order?** Every table sorts by any column with a click, and long ones can be filtered as you type.
 - **What is my library made of?** Resolutions, codecs, HDR, size per decade, what was added when —
   and the big one: **titles nobody has ever watched**, sorted by how much space they take.
 

@@ -526,3 +526,19 @@ library has been read by 0.8.0 or newer.
 Everything counted is within the caller's scope, exactly like `/api/items/{id}`: without `see_everyone` the totals,
 per-title figures and `watchers` cover the caller's own plays only. A play of an episode counts towards its show's
 people; a play counts once even when the person both acts in and directs the title.
+
+---
+
+# v0.9 — Sorting the paginated lists
+
+`GET /api/activity` and `GET /api/events` take `sort` and `dir` (`asc` | `desc`, default `desc`). Rows without a value
+for the sorted column come last in either direction, and the default order is always the tiebreaker, so pages stay stable.
+An unknown `sort` is ignored (default order), never an error.
+
+| Endpoint | `sort` values | Default order |
+|---|---|---|
+| `/api/activity` | `when`, `user`, `title` (show name for episodes), `watched`, `progress` (the same rule as `completion`), `client`, `method`, `ip` (ignored without `see_network`) | newest first |
+| `/api/events` | `when`, `event`, `type`, `user` | newest first |
+
+Every other table is sorted in the browser (`web/assets/js/tables.js`); those endpoints are unchanged.
+
