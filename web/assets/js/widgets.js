@@ -1,8 +1,8 @@
 // Larger blocks shared by several pages.
 
-import { h, icon, num, compact, duration, durationExact, clock, bitrate, humanize, episodeCode, store, mount } from './dom.js';
-import { columnsChart, columnsTable, heatmap, heatmapTable, sparkline } from './charts.js';
-import { chartCard, segmented, statTile, poster, avatar, methodBadge, facts } from './components.js';
+import { h, icon, num, compact, bytes, duration, durationExact, clock, bitrate, humanize, episodeCode, store, mount, relTime, dateTime, dayLabelLong } from './dom.js';
+import { columnsChart, columnsTable, heatmap, heatmapTable, sparkline, bucketList, libBucketList, simpleColumns, simpleColumnsTable } from './charts.js';
+import { card, chartCard, segmented, statTile, poster, avatar, methodBadge, facts } from './components.js';
 import { isAdmin, rangeLong } from './state.js';
 
 const METRICS = [{ value: 'watch_s', label: 'Watch time' }, { value: 'plays', label: 'Plays' }];
@@ -94,4 +94,111 @@ export function nowPlayingList(sessions) {
   const keys = new Set(sessions.map((x) => x.key));
   for (const k of openTranscode) if (!keys.has(k)) openTranscode.delete(k);
   return h('div', { class: 'np-grid' }, sessions.map(nowPlayingCard));
+}
+
+// ---------------------------------------------------------------- insights (GET /api/stats/insights)
+const upper = (x) => (x && String(x).length <= 6 ? String(x).toUpperCase() : x);
+
+/** The quieter second row of dashboard tiles. Returns null when there is nothing to say. */
+export function insightTiles(ins) {
+  if (!ins) return null;
+  const c = ins.concurrency || {};
+  const net = Array.isArray(ins.network) ? ins.network : [];
+  const netTotal = net.reduce((a, b) => a + (b.plays || 0), 0);
+  const remote = (net.find((b) => b.name === 'Remote') || {}).plays || 0;
+  const tiles = [
+    c.peak != null ? h('div', { class: 'tile tile-quiet' },
+      h('div', { class: 'tile-label' }, 'Peak concurrent streams'),
+      h('div', { class: 'tile-value' }, num(c.peak)),
+      h('div', { class: 'tile-foot' }, h('span', { class: 'tile-vs' },
+        c.peak_transcodes > 0 ? `${num(c.peak_transcodes)} transcoding at once` : c.peak_at ? h('span', { title: dateTime(c.peak_at) }, relTime(c.peak_at)) : ' '))) : null,
+    ins.data_bytes != null ? h('div', { class: 'tile tile-quiet' },
+      h('div', { class: 'tile-label' }, 'Data streamed'),
+      h('div', { class: 'tile-value', title: num(ins.data_bytes) + ' bytes' }, bytes(ins.data_bytes)),
+      h('div', { class: 'tile-foot' }, h('span', { class: 'tile-vs' }, 'estimated from stream bitrates'))) : null,
+    isAdmin() && netTotal > 0 ? h('div', { class: 'tile tile-quiet' },
+      h('div', { class: 'tile-label' }, 'Remote plays'),
+      h('div', { class: 'tile-value' }, Math.round((remote / netTotal) * 100) + '%'),
+      h('div', { class: 'tile-foot' }, h('span', { class: 'tile-vs' }, `${num(remote)} of ${num(netTotal)} plays`))) : null,
+  ].filter(Boolean);
+  return tiles.length ? h('div', { class: 'tiles tiles-quiet' }, tiles) : null;
+}
+
+export function genresCard(genres, { sub = 'By watch time' } = {}) {
+  return card({ title: 'Genres', sub, body: bucketList(genres, { empty: 'No genre information for these plays yet.' }) });
+}
+
+/** Admin-only; hidden entirely when there is nothing to show. */
+export function failedLoginsCard(rows) {
+  if (!isAdmin() || !Array.isArray(rows) || !rows.length) return null;
+  return card({ title: 'Failed sign-ins', sub: 'Most recent attempts on your Jellyfin server',
+    actions: h('a', { class: 'btn btn-ghost btn-sm', href: '/events' }, 'Server log', icon('chevronRight', 14)),
+    body: h('ul', { class: 'mini-list' }, rows.map((r) => h('li', { class: 'mini-row' },
+      h('span', { class: 'sev sev-warning' }, icon('alert', 13)),
+      h('span', { class: 'mini-main' }, r.overview || 'Failed sign-in', r.user_name ? h('span', { class: 'muted' }, ' · ' + r.user_name) : null),
+      h('time', { class: 'mono muted mini-when', title: dateTime(r.date) }, relTime(r.date))))) });
+}
+
+// ---------------------------------------------------------------- library make-up (GET /api/library/insights)
+const monthf = new Intl.DateTimeFormat(undefined, { month: 'short', year: '2-digit' });
+const monthLong = new Intl.DateTimeFormat(undefined, { month: 'long', year: 'numeric' });
+function monthDate(str) { const [y, m] = String(str).split('-').map(Number); return new Date(y || 1970, (m || 1) - 1, 1); }
+
+function libItemRows(items, { empty, showAdded = false }) {
+  if (!items || !items.length) return h('div', { class: 'chart-empty chart-empty-sm' }, empty);
+  return h('ol', { class: 'toplist' }, items.map((it, i) => h('li', { class: 'toplist-row' },
+    h('span', { class: 'toplist-rank mono' }, String(i + 1)),
+    poster(it.image_item_id || it.id, it.name, { w: 120, cls: 'poster-sm' }),
+    h('div', { class: 'toplist-main' }, it.id ? h('a', { href: `/items/${it.id}`, class: 'toplist-name' }, it.name) : h('span', { class: 'toplist-name' }, it.name),
+      h('div', { class: 'toplist-sub' }, [it.year, it.type === 'Series' ? 'Series' : null, showAdded && it.date_created ? 'added ' + relTime(it.date_created) : null].filter(Boolean).join(' · ') || ' ')),
+    h('div', { class: 'toplist-nums' }, h('span', { class: 'mono toplist-watch' }, it.size_bytes ? bytes(it.size_bytes) : '–')))));
+}
+
+/**
+ * "What your library is made of". Not scoped by the time range — it describes the files,
+ * so it renders under its own heading, away from the range-filtered cards.
+ */
+export function libraryInsights(d, { scoped = false } = {}) {
+  if (!d) return null;
+  const t = d.totals || {};
+  if (!(t.files > 0) && !(d.resolutions || []).length && !(d.largest || []).length) {
+    return h('section', { class: 'subsection' }, h('h2', { class: 'subsection-title' }, scoped ? 'What this library is made of' : 'What your library is made of'),
+      h('p', { class: 'np-empty' }, 'File details appear after the next library sync.'));
+  }
+  const b = (title, sub, rows, labelFn, unit) => card({ title, sub, body: libBucketList(rows, { labelFn, unit }) });
+  const decades = (d.decades || []).map((x) => ({ label: x.name, title: x.name, value: x.count }));
+  const added = (d.added || []).map((x) => ({ label: monthf.format(monthDate(x.month)), title: monthLong.format(monthDate(x.month)), value: x.count }));
+  const un = d.unwatched || null;
+  const counts = [['Movies', t.movies], ['Series', t.series], ['Episodes', t.episodes], ['Tracks', t.tracks]].filter(([, v]) => v > 0);
+  return h('section', { class: 'subsection stack' },
+    h('div', null, h('h2', { class: 'subsection-title' }, scoped ? 'What this library is made of' : 'What your library is made of'),
+      h('p', { class: 'subsection-sub' }, 'About the files themselves — the time range above doesn’t apply here.')),
+    h('div', { class: 'tiles tiles-3' },
+      h('div', { class: 'tile' }, h('div', { class: 'tile-label' }, 'Files'), h('div', { class: 'tile-value' }, compact(t.files)),
+        h('div', { class: 'tile-foot' }, h('span', { class: 'tile-vs' }, counts.map(([k, v]) => `${num(v)} ${k.toLowerCase()}`).join(' · ') || ' '))),
+      h('div', { class: 'tile' }, h('div', { class: 'tile-label' }, 'Total size'), h('div', { class: 'tile-value' }, bytes(t.size_bytes)),
+        h('div', { class: 'tile-foot' }, h('span', { class: 'tile-vs' }, t.files > 0 && t.size_bytes > 0 ? `${bytes(t.size_bytes / t.files)} per file on average` : ' '))),
+      h('div', { class: 'tile' }, h('div', { class: 'tile-label' }, 'Total runtime'), h('div', { class: 'tile-value', title: durationExact(t.runtime_s) }, duration(t.runtime_s)),
+        h('div', { class: 'tile-foot' }, h('span', { class: 'tile-vs' }, 'to play everything once')))),
+    h('div', { class: 'grid-3' },
+      b('Resolutions', 'Video files', d.resolutions),
+      b('Video codecs', 'Video files', d.video_codecs, upper),
+      b('Dynamic range', 'Video files', d.video_ranges)),
+    h('div', { class: 'grid-3' },
+      b('Containers', 'All files', d.containers, upper),
+      b('Audio codecs', 'First audio track', d.audio_codecs, upper),
+      b('Genres', 'Movies and series', d.genres, undefined, 'Titles')),
+    h('div', { class: 'grid-2' },
+      chartCard({ title: 'By decade', sub: 'Titles by release year',
+        chart: () => simpleColumns({ rows: decades, unit: ['title', 'titles'], ariaLabel: 'Titles per decade' }),
+        table: () => simpleColumnsTable({ rows: decades, head: ['Decade', 'Titles'] }) }),
+      chartCard({ title: 'Added per month', sub: 'Last 24 months',
+        chart: () => simpleColumns({ rows: added, unit: ['title', 'titles'], ariaLabel: 'Titles added per month' }),
+        table: () => simpleColumnsTable({ rows: added, head: ['Month', 'Added'] }) })),
+    h('div', { class: 'grid-2' },
+      card({ title: 'Largest', sub: 'Series count all their episodes', body: libItemRows(d.largest, { empty: 'No file sizes known yet.' }) }),
+      card({ title: 'Never watched',
+        sub: un && un.count > 0 ? `${num(un.count)} ${un.count === 1 ? 'title' : 'titles'} · ${bytes(un.size_bytes)} nobody has played` : 'Everything has been played at least once',
+        body: [libItemRows(un && un.items, { empty: 'Nothing unwatched — or no file sizes known yet.', showAdded: true }),
+          h('p', { class: 'help card-note' }, 'Combines plays recorded by finstats with Jellyfin’s own played flags, so history from before finstats counts too.')] })));
 }

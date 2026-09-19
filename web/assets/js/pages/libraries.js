@@ -1,9 +1,9 @@
 import { h, icon, num, bytes, durEl, relEl, relTime, dateTime } from '../dom.js';
-import { api } from '../api.js';
+import { api, soft } from '../api.js';
 import { readDays, saveDays } from '../state.js';
 import { replaceQuery } from '../router.js';
 import { pageHeader, card, filterBar, dataView, sk, emptyState, topList, poster } from '../components.js';
-import { activityCard } from '../widgets.js';
+import { activityCard, libraryInsights } from '../widgets.js';
 
 const KIND = { movies: 'Movies', tvshows: 'Shows', music: 'Music', musicvideos: 'Music videos', homevideos: 'Home videos', books: 'Books', boxsets: 'Collections', mixed: 'Mixed' };
 const KIND_ICON = { movies: 'film', tvshows: 'play', music: 'activity' };
@@ -37,8 +37,20 @@ export function librariesPage(ctx) {
     },
   });
   ctx.root.append(pageHeader('Libraries', 'What’s on the server and how much of it gets watched'),
-    filterBar({ days, onDays: (v) => { days = v; saveDays(v); replaceQuery({ days }); dv.load(); } }), view);
+    filterBar({ days, onDays: (v) => { days = v; saveDays(v); replaceQuery({ days }); dv.load(); } }), view, makeupSlot(ctx));
   dv.load();
+}
+
+/** Library make-up loads once per page: it has no time range, so range changes never refetch it. */
+function makeupSlot(ctx, libraryId) {
+  const slot = h('div', { class: 'makeup' });
+  dataView({
+    container: slot, signal: ctx.signal,
+    skeleton: () => [sk.line('240px', 18), sk.tiles(3), h('div', { class: 'grid-3' }, sk.cardRows(4), sk.cardRows(4), sk.cardRows(4))],
+    fetch: () => soft(api.get('/library/insights', libraryId ? { library_id: libraryId } : null, { signal: ctx.signal })),
+    render: (d) => libraryInsights(d, { scoped: !!libraryId }),
+  }).load();
+  return slot;
 }
 
 // ---------------------------------------------------------------- /libraries/:id
@@ -68,7 +80,7 @@ export function libraryPage(ctx) {
     },
   });
   ctx.root.append(h('a', { class: 'back-link', href: '/libraries' }, icon('chevronLeft', 14), 'Libraries'), headerSlot,
-    filterBar({ days, onDays: (v) => { days = v; saveDays(v); replaceQuery({ days }); dv.load(); } }), view);
+    filterBar({ days, onDays: (v) => { days = v; saveDays(v); replaceQuery({ days }); dv.load(); } }), view, makeupSlot(ctx, id));
   dv.load();
 }
 

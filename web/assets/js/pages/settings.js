@@ -1,4 +1,4 @@
-import { h, icon, num, bytes, relTime, dateTime, mount } from '../dom.js';
+import { h, icon, num, bytes, relTime, dateTime, mount, humanize } from '../dom.js';
 import { api, isAbort, uploadRaw } from '../api.js';
 import { pageHeader, card, sk, toggle, setBusy, inlineError, errorState, facts, spinner } from '../components.js';
 
@@ -6,6 +6,8 @@ const TASK_LABEL = {
   sync_users: ['Sync users', 'Names, roles and last-seen times from Jellyfin'],
   sync_libraries: ['Sync libraries and items', 'Movies, series, episodes and music, with file details'],
   sync_events: ['Sync server log', 'Jellyfin’s activity log: sign-ins, failed logins, tasks'],
+  sync_server: ['Server details', 'Version, storage, plugins, scheduled tasks and devices'],
+  sync_userdata: ['Watched & favourites', 'Per-user played flags and favourites from Jellyfin'],
   import: ['Jellystat import', 'Runs when you upload a backup below'],
 };
 
@@ -180,7 +182,7 @@ export default function settings(ctx) {
     if (!force && sig === tasksSig) return; // don't rebuild (and drop focus) when nothing changed
     tasksSig = sig;
     mount(tasksSlot, h('ul', { class: 'tasks' }, tasks.map((t) => {
-      const [name, desc] = TASK_LABEL[t.id] || [t.id, ''];
+      const [name, desc] = TASK_LABEL[t.id] || [humanize(String(t.id || 'task').replace(/^sync_/, 'Sync ')), ''];
       const running = t.state === 'running' || runBusy.has(t.id);
       const state = t.state === 'running' ? h('span', { class: 'sev sev-run' }, spinner(12), 'Running')
         : t.state === 'ok' ? h('span', { class: 'sev sev-good' }, icon('check', 13), 'Finished', t.finished_at ? h('span', { class: 'muted mono', title: dateTime(t.finished_at) }, ' ' + relTime(t.finished_at)) : null)

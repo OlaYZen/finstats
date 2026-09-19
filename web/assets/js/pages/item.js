@@ -1,4 +1,4 @@
-import { h, icon, num, bytes, bitrate, duration, durationExact, durEl, relEl, dateTime, episodeCode, compact } from '../dom.js';
+import { h, icon, num, bytes, bitrate, duration, durationExact, durEl, relEl, dateTime, episodeCode, compact, safeHttps } from '../dom.js';
 import { api, imgItem } from '../api.js';
 import { isAdmin, readDays, saveDays } from '../state.js';
 import { replaceQuery } from '../router.js';
@@ -47,6 +47,8 @@ export default function itemPage(ctx) {
           h('h1', { class: 'page-title' }, it.name),
           h('div', { class: 'chips' }, meta),
           it.genres && it.genres.length ? h('p', { class: 'item-genres' }, it.genres.join(' · ')) : null,
+          Array.isArray(it.studios) && it.studios.length ? h('p', { class: 'item-studios' }, it.studios.slice(0, 4).join(' · ')) : null,
+          externalLinks(it.external),
           it.overview ? h('p', { class: 'item-overview' }, it.overview) : null,
           it.library_id ? h('p', { class: 'item-lib' }, 'In ', h('a', { href: `/libraries/${it.library_id}` }, it.library_name || 'library'),
             it.date_created ? [' · added ', h('span', { title: dateTime(it.date_created) }, relEl(it.date_created, ''))] : null) : null));
@@ -55,6 +57,8 @@ export default function itemPage(ctx) {
         it.container ? ['Container', it.container, { mono: true }] : null,
         it.size_bytes ? ['Size', bytes(it.size_bytes), { mono: true }] : null,
         it.bitrate ? ['Bitrate', bitrate(it.bitrate), { mono: true }] : null,
+        it.bit_depth ? ['Bit depth', it.bit_depth + '-bit', { mono: true }] : null,
+        it.framerate ? ['Frame rate', (Math.round(Number(it.framerate) * 1000) / 1000) + ' fps', { mono: true }] : null,
         isAdmin() && it.path ? ['Path', h('span', { class: 'mono path' }, it.path)] : null,
       ]);
 
@@ -67,6 +71,7 @@ export default function itemPage(ctx) {
         activityCard({ daily: d.daily, bucket: d.bucket, title: 'Plays over time' }),
         d.seasons && d.seasons.length ? card({ title: 'Seasons', sub: 'Plays per episode in this range', body: seasons(d.seasons) }) : null,
         card({ title: 'Watched by', cls: 'card-flush', body: watchers(d.watchers) }),
+        playedBy(d.played_by),
         card({ title: 'Recent plays', cls: 'card-flush',
           actions: h('a', { class: 'btn btn-ghost btn-sm', href: `/activity?${key}=${encodeURIComponent(id)}&days=${days}` }, 'View all'),
           body: playsTable(recent.rows, { showUser: isAdmin(), onOpen: (p) => openPlayModal(p, { onDeleted: () => dv.load() }), empty: 'No plays in this range.' }) }),
@@ -78,6 +83,25 @@ export default function itemPage(ctx) {
   filtersSlot.append(filterBar({ days, onDays: (v) => { days = v; saveDays(v); replaceQuery({ days }); dv.load(); } }));
   ctx.root.append(filtersSlot, view);
   dv.load();
+}
+
+function externalLinks(list) {
+  const links = (Array.isArray(list) ? list : []).map((x) => ({ label: x && x.label, url: safeHttps(x && x.url) })).filter((x) => x.url && x.label);
+  if (!links.length) return null;
+  return h('div', { class: 'chips' }, links.map((x) =>
+    h('a', { class: 'chip chip-link', href: x.url, target: '_blank', rel: 'noopener noreferrer' }, x.label, icon('external', 11), h('span', { class: 'sr-only' }, ' (opens in a new tab)'))));
+}
+
+/** Jellyfin's played flags: covers people who watched before finstats existed. */
+function playedBy(rows) {
+  if (!Array.isArray(rows) || !rows.length) return null;
+  return card({ title: 'Marked played in Jellyfin', sub: 'Jellyfin’s own flags, including history from before finstats', cls: 'card-flush',
+    body: h('div', { class: 'table-scroll' }, h('table', { class: 'table' },
+      h('thead', null, h('tr', null, h('th', null, 'User'), h('th', null, 'Last played'), h('th', null, h('span', { class: 'sr-only' }, 'Favourite')))),
+      h('tbody', null, rows.map((r) => h('tr', null,
+        h('td', null, h('a', { class: 'user-cell', href: `/users/${r.user_id}` }, avatar(r.user_id, r.user_name, { size: 22 }), h('span', null, r.user_name || 'Unknown user'))),
+        h('td', null, r.last_played_at ? relEl(r.last_played_at) : h('span', { class: 'muted' }, '–')),
+        h('td', null, r.is_favorite ? h('span', { class: 'sev fav' }, icon('heart', 13), 'Favourite') : null)))))) });
 }
 
 function watchers(rows) {

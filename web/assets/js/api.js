@@ -53,6 +53,15 @@ export const api = {
 
 export const isAbort = (e) => e && e.name === 'AbortError';
 
+/**
+ * For secondary data a page can live without (newer endpoints, optional cards):
+ * resolves to null on failure instead of taking the whole page down. Aborts and
+ * expired sessions still propagate.
+ */
+export function soft(promise) {
+  return promise.catch((e) => { if (isAbort(e) || e.status === 401) throw e; return null; });
+}
+
 export const imgItem = (id, w = 120, kind = 'primary') => `/api/img/item/${encodeURIComponent(id)}?kind=${kind}&w=${w}`;
 export const imgUser = (id, w = 96) => `/api/img/user/${encodeURIComponent(id)}?w=${w}`;
 

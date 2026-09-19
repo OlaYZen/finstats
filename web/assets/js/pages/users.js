@@ -3,7 +3,7 @@ import { api } from '../api.js';
 import { isAdmin, readDays, saveDays } from '../state.js';
 import { replaceQuery } from '../router.js';
 import { pageHeader, card, filterBar, dataView, sk, avatar, emptyState, topList, chip, playsTable, statTile } from '../components.js';
-import { activityCard, heatmapCard } from '../widgets.js';
+import { activityCard, heatmapCard, genresCard } from '../widgets.js';
 import { bucketList, methodsBar } from '../charts.js';
 import { openPlayModal } from '../playmodal.js';
 
@@ -74,6 +74,7 @@ export function userPage(ctx) {
           statTile({ label: 'Plays', value: compact(t.plays), title: num(t.plays), hint: `${num(t.distinct_items)} different titles` }),
           statTile({ label: 'Movies', value: compact(t.movies), hint: 'plays' }),
           statTile({ label: 'Episodes', value: compact(t.episodes), hint: t.tracks ? `and ${num(t.tracks)} music plays` : 'plays' })),
+        jellyfinStrip(d.jellyfin),
         activityCard({ daily: d.daily, bucket: d.bucket }),
         h('div', { class: 'grid-2' },
           card({ title: 'Top series', sub: 'By watch time', body: topList(d.top_series) }),
@@ -82,6 +83,7 @@ export function userPage(ctx) {
         h('div', { class: 'grid-2' },
           card({ title: 'Play methods', sub: 'Share of plays', body: methodsBar(d.methods) }),
           card({ title: 'Clients', sub: 'By plays', body: bucketList(d.clients) })),
+        Array.isArray(d.genres) ? genresCard(d.genres) : null,
         card({ title: 'Devices', cls: 'card-flush', body: devicesTable(d.devices) }),
         isAdmin() ? card({ title: 'IP addresses', sub: 'Where this user has played from', cls: 'card-flush', body: ipsTable(d.ips) }) : null,
         card({ title: 'Recent plays', cls: 'card-flush',
@@ -94,6 +96,16 @@ export function userPage(ctx) {
   ctx.root.append(headerSlot, filterBar({ days, onDays: (v) => { days = v; saveDays(v); replaceQuery({ days }); dv.load(); } }), view);
   headerSlot.append(h('header', { class: 'page-header entity-header' }, h('span', { class: 'sk', style: { width: '56px', height: '56px', borderRadius: '50%' } }), h('div', null, sk.line('180px', 26))));
   dv.load();
+}
+
+/** Jellyfin's own flags — they cover history from before finstats was installed. */
+function jellyfinStrip(j) {
+  if (!j) return null;
+  const cell = (k, v) => h('div', null, h('dt', null, k), h('dd', { class: 'mono' }, num(v)));
+  return h('section', { class: 'strip', 'aria-label': 'In Jellyfin' },
+    h('h2', { class: 'strip-title' }, 'In Jellyfin'),
+    h('dl', { class: 'strip-facts' }, cell('Movies played', j.played_movies), cell('Episodes played', j.played_episodes), cell('Favourites', j.favorites)),
+    h('p', { class: 'strip-note' }, 'From Jellyfin’s played flags, including history from before finstats.'));
 }
 
 function devicesTable(devices) {

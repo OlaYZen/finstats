@@ -374,7 +374,8 @@ export function playsTable(rows, { showUser = true, onOpen, empty = 'No plays ma
         h('td', null, completionEl(p)),
         h('td', null, h('div', { class: 'client-cell' }, h('span', null, p.client || '–'), h('span', { class: 'muted' }, p.device_name || ''))),
         h('td', null, methodBadge(p.play_method)),
-        admin ? h('td', { class: 'mono' }, p.remote_ip || '–') : null);
+        admin ? h('td', { class: 'mono' }, p.remote_ip ? h('span', { class: 'ip-cell' }, p.remote_ip,
+          p.is_local == null ? null : h('span', { class: 'ip-net', role: 'img', title: p.is_local ? 'Local network' : 'Remote', 'aria-label': p.is_local ? 'Local network' : 'Remote' }, icon(p.is_local ? 'lan' : 'globe', 12))) : '–') : null);
       if (onOpen) {
         tr.addEventListener('click', (e) => { if (!e.target.closest('a,button')) onOpen(p, tr); });
         tr.addEventListener('keydown', (e) => { if ((e.key === 'Enter' || e.key === ' ') && e.target === tr) { e.preventDefault(); onOpen(p, tr); } });

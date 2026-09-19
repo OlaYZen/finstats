@@ -21,6 +21,7 @@ function navItems() {
     isAdmin() ? { href: '/users', label: 'Users', icon: 'users' } : { href: `/users/${me.id}`, label: 'My stats', icon: 'user' },
     { href: '/libraries', label: 'Libraries', icon: 'library', also: ['/items'] },
     { href: '/playback', label: 'Playback', icon: 'sliders' },
+    isAdmin() ? { href: '/server', label: 'Server', icon: 'server' } : null,
     isAdmin() ? { href: '/events', label: 'Server log', icon: 'log' } : null,
     isAdmin() ? { href: '/settings', label: 'Settings', icon: 'settings' } : null,
   ].filter(Boolean);

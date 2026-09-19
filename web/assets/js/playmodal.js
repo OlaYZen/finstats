@@ -1,11 +1,43 @@
 // Detail modal for one play (GET /api/activity/{id}).
 
-import { h, icon, duration, durationExact, dateTime, clock, bitrate, pct, humanize, episodeCode, mount } from './dom.js';
+import { h, icon, num, duration, durationExact, dateTime, timeOfDay, clock, bitrate, pct, humanize, episodeCode, mount } from './dom.js';
 import { api, isAbort } from './api.js';
 import { isAdmin } from './state.js';
 import { openModal, copyButton, methodBadge, facts, errorState, sk, poster, setBusy, inlineError } from './components.js';
 
 const res = (w, hgt) => (w && hgt ? `${w}×${hgt}` : null);
+const EVENT = {
+  start: ['Started', 'play'], pause: ['Paused', 'pause'], resume: ['Resumed', 'play'], seek: ['Skipped', 'skip'],
+  audio: ['Audio track', 'volume'], subtitle: ['Subtitles', 'captions'], transcode: ['Transcoding', 'cpu'], stop: ['Stopped', 'stop'],
+};
+
+/** Local / Remote as icon + word (never colour alone). `null` = unknown → nothing. */
+export function networkChip(isLocal) {
+  if (isLocal == null) return null;
+  return h('span', { class: 'chip', title: isLocal ? 'Played from your local network' : 'Played from outside your network' },
+    icon(isLocal ? 'lan' : 'globe', 12), isLocal ? 'Local' : 'Remote');
+}
+
+function timeline(p) {
+  const events = Array.isArray(p.events) ? p.events : [];
+  if (!events.length) {
+    const why = p.source === 'jellystat' ? 'Imported from Jellystat, which doesn’t record what happens during a play.'
+      : 'Nothing was recorded during this play.';
+    return h('p', { class: 'help' }, why);
+  }
+  return h('ol', { class: 'timeline' }, events.map((e) => {
+    const [label, ic] = EVENT[e.kind] || [humanize(e.kind || 'Event'), 'info'];
+    return h('li', { class: 'tl-row' },
+      h('time', { class: 'mono tl-time', title: dateTime(e.at) }, timeOfDay(e.at)),
+      h('span', { class: 'tl-mark', 'aria-hidden': 'true' }, icon(ic, 12)),
+      h('div', { class: 'tl-body' },
+        h('span', { class: 'tl-kind' }, label),
+        e.position_s != null ? h('span', { class: 'mono tl-pos', title: 'Position in the file' }, 'at ' + clock(e.position_s)) : null,
+        // "Transcode: ContainerNotSupported" reads better as "Transcode: Container not supported"
+        e.detail ? h('span', { class: 'tl-detail' }, e.kind === 'transcode' ? String(e.detail).replace(/([a-z0-9])([A-Z])/g, (m, a, b) => a + ' ' + b.toLowerCase()) : String(e.detail)) : null));
+  }));
+}
+
 const channels = (n) => (n == null ? null : { 1: 'Mono', 2: 'Stereo', 6: '5.1', 8: '7.1' }[n] || `${n} ch`);
 
 export function openPlayModal(play, { onDeleted } = {}) {
@@ -45,6 +77,9 @@ export function openPlayModal(play, { onDeleted } = {}) {
       ['Ended', p.active ? 'Still playing' : dateTime(p.ended_at), { mono: true }],
       ['Watched', h('span', { title: durationExact(p.duration_s) }, duration(p.duration_s)), { mono: true }],
       ['Paused for', p.paused_s ? duration(p.paused_s) : '–', { mono: true }],
+      p.start_position_s > 30 ? ['Resumed from', clock(p.start_position_s), { mono: true }] : null,
+      p.source !== 'jellystat' && p.pause_count != null ? ['Pauses', num(p.pause_count), { mono: true }] : null,
+      p.source !== 'jellystat' && p.seek_count != null ? ['Skips', num(p.seek_count), { mono: true }] : null,
       ['Stopped at', p.position_s != null ? `${clock(p.position_s)}${p.runtime_s ? ' / ' + clock(p.runtime_s) : ''}${p.completion != null ? ` (${pct(Math.min(1, p.completion))})` : ''}` : '–', { mono: true }],
     ]);
 
@@ -52,7 +87,7 @@ export function openPlayModal(play, { onDeleted } = {}) {
       ['Client', [p.client, p.app_version].filter(Boolean).join(' ') || '–'],
       ['Device', p.device_name],
       p.device_id ? ['Device ID', h('span', { class: 'copy-row' }, h('span', { class: 'mono trunc' }, p.device_id), copyButton(p.device_id, 'Copy device ID'))] : null,
-      isAdmin() ? ['IP address', p.remote_ip ? h('span', { class: 'copy-row' }, h('span', { class: 'mono' }, p.remote_ip), copyButton(p.remote_ip, 'Copy IP address')) : '–'] : null,
+      isAdmin() ? ['IP address', p.remote_ip ? h('span', { class: 'copy-row' }, h('span', { class: 'mono' }, p.remote_ip), copyButton(p.remote_ip, 'Copy IP address'), networkChip(p.is_local)) : '–'] : null,
     ]);
 
     const media = facts([
@@ -78,6 +113,7 @@ export function openPlayModal(play, { onDeleted } = {}) {
       h('h3', { class: 'section-label' }, 'Device'), device,
       h('h3', { class: 'section-label' }, 'Media'), media,
       transcode,
+      h('h3', { class: 'section-label' }, 'Timeline'), timeline(p),
       isAdmin() && !p.active ? deleteRow(p) : null];
   }
 

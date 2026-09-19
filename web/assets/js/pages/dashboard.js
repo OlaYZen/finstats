@@ -1,9 +1,9 @@
 import { h, icon, mount } from '../dom.js';
-import { api, isAbort } from '../api.js';
+import { api, isAbort, soft } from '../api.js';
 import { state, isAdmin, readDays, saveDays } from '../state.js';
 import { replaceQuery } from '../router.js';
 import { pageHeader, card, filterBar, dataView, sk, topList, playsTable, emptyState } from '../components.js';
-import { activityCard, heatmapCard, overviewTiles, nowPlayingList } from '../widgets.js';
+import { activityCard, heatmapCard, overviewTiles, nowPlayingList, insightTiles, genresCard, failedLoginsCard } from '../widgets.js';
 import { openPlayModal } from '../playmodal.js';
 
 export default function dashboard(ctx) {
@@ -39,17 +39,18 @@ export default function dashboard(ctx) {
     fetch: async () => {
       const f = { days, user_id: userId };
       const o = { signal: ctx.signal };
-      const [overview, series, movies, users, heat, recent] = await Promise.all([
+      const [overview, series, movies, users, heat, recent, insights] = await Promise.all([
         api.get('/stats/overview', f, o),
         api.get('/stats/top', { ...f, kind: 'series', limit: 5 }, o),
         api.get('/stats/top', { ...f, kind: 'movies', limit: 5 }, o),
         admin && !userId ? api.get('/stats/top', { ...f, kind: 'users', limit: 5 }, o) : api.get('/stats/top', { ...f, kind: 'music', limit: 5 }, o),
         api.get('/stats/heatmap', f, o),
         api.get('/activity', { ...f, page: 1, per_page: 8 }, o),
+        soft(api.get('/stats/insights', f, o)), // optional: the page works without it
       ]);
-      return { overview, series, movies, users, heat, recent };
+      return { overview, series, movies, users, heat, recent, insights };
     },
-    render: ({ overview, series, movies, users, heat, recent }) => {
+    render: ({ overview, series, movies, users, heat, recent, insights }) => {
       const nothingYet = days === 0 && !userId && !(overview.totals && overview.totals.plays);
       if (nothingYet) {
         return emptyState('No plays recorded yet',
@@ -60,13 +61,15 @@ export default function dashboard(ctx) {
       const usersMode = admin && !userId;
       return [
         overviewTiles({ totals: overview.totals, previous: overview.previous, daily: overview.daily, days, scoped: !admin || !!userId }),
+        insightTiles(insights),
         activityCard({ daily: overview.daily, bucket: overview.bucket }),
         h('div', { class: 'grid-3' },
           card({ title: 'Top series', sub: 'By watch time', body: topList(series.rows) }),
           card({ title: 'Top movies', sub: 'By watch time', body: topList(movies.rows) }),
           usersMode ? card({ title: 'Top users', sub: 'By watch time', body: topList(users.rows, { kind: 'users' }) })
                     : card({ title: 'Top music', sub: 'By watch time', body: topList(users.rows, { empty: 'No music played in this range.' }) })),
-        heatmapCard({ data: heat }),
+        insights ? h('div', { class: 'grid-heat' }, heatmapCard({ data: heat }), genresCard(insights.genres)) : heatmapCard({ data: heat }),
+        insights ? failedLoginsCard(insights.failed_logins) : null,
         card({ title: 'Recent activity', actions: h('a', { class: 'btn btn-ghost btn-sm', href: '/activity' }, 'View all', icon('chevronRight', 14)),
           cls: 'card-flush', body: playsTable(recent.rows, { showUser: admin, onOpen: (p) => openPlayModal(p, { onDeleted: () => dv.load() }), empty: 'No plays in this range.' }) }),
       ];

@@ -2,7 +2,7 @@
 // were validated against the card surface (#262626) with the dataviz validator,
 // and text never wears a series color.
 
-import { h, s, num, duration, durationExact, dayLabel, dayLabelLong, dayLabelYear, methodLabel, pct } from './dom.js';
+import { h, s, num, bytes, duration, durationExact, dayLabel, dayLabelLong, dayLabelYear, methodLabel, pct } from './dom.js';
 
 export const TYPES = [
   { key: 'Movie', label: 'Movies', color: '#9085e9' },
@@ -336,19 +336,141 @@ export function methodsBar(methods, metric = 'plays') {
 
 // ---------------------------------------------------------------- ranked bucket list (it is its own table)
 /** buckets: [{name, plays, watch_s}] — one color for every bar: the categories are nominal. */
-export function bucketList(buckets, { labelFn = (x) => x, empty = 'Nothing recorded in this range.' } = {}) {
+export function bucketList(buckets, { labelFn = (x) => x, empty = 'Nothing recorded in this range.', watch = true } = {}) {
   const rows = buckets || [];
-  if (!rows.length) return h('div', { class: 'chart-empty chart-empty-sm' }, empty);
+  if (!rows.length || !rows.some((b) => (b.plays || 0) > 0 || (b.watch_s || 0) > 0)) return h('div', { class: 'chart-empty chart-empty-sm' }, empty);
   const max = Math.max(1, ...rows.map((b) => b.plays || 0));
   return h('table', { class: 'buckets' },
-    h('thead', { class: 'sr-only' }, h('tr', null, h('th', null, 'Name'), h('th', null, 'Share'), h('th', null, 'Plays'), h('th', null, 'Watch time'))),
+    h('thead', { class: 'sr-only' }, h('tr', null, h('th', null, 'Name'), h('th', null, 'Share'), h('th', null, 'Plays'), watch ? h('th', null, 'Watch time') : null)),
     h('tbody', null, rows.map((b) => h('tr', null,
       h('th', { scope: 'row', class: 'bucket-name', title: labelFn(b.name) }, labelFn(b.name)),
       h('td', { class: 'bucket-bar' }, h('span', { class: 'bucket-track' },
-        h('span', { class: 'bucket-fill', style: { width: Math.max(1.5, ((b.plays || 0) / max) * 100) + '%', background: SINGLE } }))),
+        (b.plays || 0) > 0 ? h('span', { class: 'bucket-fill', style: { width: Math.max(1.5, ((b.plays || 0) / max) * 100) + '%', background: SINGLE } }) : null)),
       h('td', { class: 'mono r bucket-plays' }, num(b.plays)),
-      h('td', { class: 'mono r bucket-watch', title: durationExact(b.watch_s) }, duration(b.watch_s))))));
+      watch ? h('td', { class: 'mono r bucket-watch', title: durationExact(b.watch_s) }, duration(b.watch_s)) : null))));
 }
+
+/** Library make-up: [{name, count, size_bytes}] — bar by count, value = count, faint = size on disk. */
+export function libBucketList(buckets, { labelFn = (x) => x, empty = 'Nothing to show yet.', unit = 'Files' } = {}) {
+  const rows = (buckets || []).filter((b) => b && b.name != null);
+  if (!rows.length) return h('div', { class: 'chart-empty chart-empty-sm' }, empty);
+  const max = Math.max(1, ...rows.map((b) => b.count || 0));
+  const anySize = rows.some((b) => (b.size_bytes || 0) > 0);
+  return h('table', { class: 'buckets' },
+    h('thead', { class: 'sr-only' }, h('tr', null, h('th', null, 'Name'), h('th', null, 'Share'), h('th', null, unit), anySize ? h('th', null, 'Size') : null)),
+    h('tbody', null, rows.map((b) => h('tr', null,
+      h('th', { scope: 'row', class: 'bucket-name', title: labelFn(b.name) }, labelFn(b.name)),
+      h('td', { class: 'bucket-bar' }, h('span', { class: 'bucket-track' },
+        (b.count || 0) > 0 ? h('span', { class: 'bucket-fill', style: { width: Math.max(1.5, ((b.count || 0) / max) * 100) + '%', background: SINGLE } }) : null)),
+      h('td', { class: 'mono r bucket-plays' }, num(b.count)),
+      anySize ? h('td', { class: 'mono r bucket-watch' }, b.size_bytes ? bytes(b.size_bytes) : '–') : null))));
+}
+
+// ---------------------------------------------------------------- single-series columns
+/**
+ * rows: [{label, title, value}] in display order. One series → one colour, no legend
+ * (the card title says what is plotted).
+ */
+export function simpleColumns({ rows, unit = ['item', 'items'], ariaLabel = 'Column chart', empty = 'Nothing to show yet.' }) {
+  const data = rows || [];
+  const max = Math.max(0, ...data.map((d) => Number(d.value) || 0));
+  const wrap = h('div', { class: 'chart', tabindex: data.length && max > 0 ? 0 : null, role: 'group', 'aria-label': `${ariaLabel}. Use left and right arrow keys to read values.` });
+  if (!data.length || max <= 0) { wrap.append(h('div', { class: 'chart-empty' }, empty)); return wrap; }
+  const plot = h('div', { class: 'chart-plot' });
+  wrap.append(plot);
+
+  const H = 200, M = { l: 40, r: 8, t: 10, b: 24 };
+  const ticks = [...new Set(niceTicks(max).map((t) => Math.ceil(t)))];
+  const top = ticks[ticks.length - 1] || 1;
+  let active = -1, geom = null, band = null;
+  const fmt = (v) => `${num(v)} ${v === 1 ? unit[0] : unit[1]}`;
+
+  function draw(w) {
+    const pw = w - M.l - M.r, ph = H - M.t - M.b;
+    const slot = pw / data.length;
+    const bw = Math.max(1.5, Math.min(24, slot * 0.68));
+    const y = (v) => M.t + ph - (v / top) * ph;
+    geom = { slot };
+    const svg = s('svg', { width: w, height: H, viewBox: `0 0 ${w} ${H}`, 'aria-hidden': 'true' });
+    for (const t of ticks) {
+      const ty = Math.round(y(t)) + 0.5;
+      svg.append(s('line', { x1: M.l, x2: w - M.r, y1: ty, y2: ty, class: t === 0 ? 'axis-line' : 'grid-line' }));
+      svg.append(s('text', { x: M.l - 8, y: ty + 3.5, class: 'tick', 'text-anchor': 'end' }, num(t)));
+    }
+    band = s('rect', { class: 'col-band', x: 0, y: M.t, width: Math.max(slot, bw + 4), height: ph, rx: 3, visibility: 'hidden' });
+    svg.append(band);
+    const every = Math.max(1, Math.ceil(data.length / Math.max(2, Math.floor(pw / 64))));
+    data.forEach((d, i) => {
+      const cx = M.l + slot * i + slot / 2;
+      const v = Number(d.value) || 0;
+      if (v > 0) {
+        const y0 = y(0), y1 = Math.min(y(v), y0 - 0.75), x = cx - bw / 2;
+        const r = Math.min(4, bw / 2, Math.max(0, y0 - y1));
+        svg.append(s('path', { fill: SINGLE, d: `M${x},${y0} V${y1 + r} Q${x},${y1} ${x + r},${y1} H${x + bw - r} Q${x + bw},${y1} ${x + bw},${y1 + r} V${y0} Z` }));
+      }
+      if (i % every === 0 && cx + 20 < w) svg.append(s('text', { x: cx, y: H - 6, class: 'tick', 'text-anchor': 'middle' }, d.label));
+    });
+    const hit = s('rect', { x: M.l, y: M.t, width: pw, height: ph, fill: 'transparent' });
+    hit.addEventListener('pointermove', (e) => {
+      const r = hit.getBoundingClientRect();
+      setActive(Math.max(0, Math.min(data.length - 1, Math.floor(((e.clientX - r.left) / r.width) * data.length))));
+    });
+    hit.addEventListener('pointerleave', () => { if (document.activeElement !== wrap) setActive(-1); });
+    svg.append(hit);
+    plot.replaceChildren(svg);
+    if (active >= 0) setActive(active);
+  }
+  function setActive(i) {
+    active = i;
+    if (!band || !geom) return;
+    if (i < 0) { band.setAttribute('visibility', 'hidden'); hideTip(); return; }
+    const bwid = Number(band.getAttribute('width'));
+    const bx = M.l + geom.slot * i + geom.slot / 2 - bwid / 2;
+    band.setAttribute('x', bx);
+    band.setAttribute('visibility', 'visible');
+    const d = data[i], pr = plot.getBoundingClientRect();
+    showTip({ left: pr.left + bx, width: bwid, top: pr.top + M.t, bottom: pr.bottom },
+      tipRows(d.title || d.label, [{ color: SINGLE, value: fmt(Number(d.value) || 0), label: '' }]));
+  }
+  wrap.addEventListener('keydown', (e) => {
+    if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+      e.preventDefault();
+      setActive(active < 0 ? data.length - 1 : Math.max(0, Math.min(data.length - 1, active + (e.key === 'ArrowRight' ? 1 : -1))));
+    } else if (e.key === 'Escape') setActive(-1);
+  });
+  wrap.addEventListener('focus', () => { if (active < 0) setActive(data.length - 1); });
+  wrap.addEventListener('blur', () => setActive(-1));
+  responsive(wrap, draw);
+  return wrap;
+}
+
+export function simpleColumnsTable({ rows, head = ['Period', 'Count'] }) {
+  return h('div', { class: 'table-scroll chart-table' }, h('table', { class: 'table' },
+    h('thead', null, h('tr', null, h('th', null, head[0]), h('th', { class: 'r' }, head[1]))),
+    h('tbody', null, (rows || []).slice().reverse().map((d) => h('tr', null,
+      h('td', { class: 'mono' }, d.title || d.label), h('td', { class: 'mono r' }, num(d.value)))))));
+}
+
+// ---------------------------------------------------------------- client × play method
+/** rows: [{client, direct_play, direct_stream, transcode, watch_s}] — a small three-part bar per client. */
+export function clientMethods(rows) {
+  const data = (rows || []).filter((r) => r && ((r.direct_play || 0) + (r.direct_stream || 0) + (r.transcode || 0)) > 0);
+  if (!data.length) return h('div', { class: 'chart-empty chart-empty-sm' }, 'No plays in this range.');
+  const keys = ['direct_play', 'direct_stream', 'transcode'];
+  return h('div', { class: 'table-scroll' }, h('table', { class: 'table table-dense cm-table' },
+    h('thead', null, h('tr', null, h('th', null, 'Client'), h('th', { class: 'cm-barcol' }, h('span', { class: 'sr-only' }, 'Split')),
+      METHODS.map((m) => h('th', { class: 'r' }, methodLabel(m.key))))),
+    h('tbody', null, data.map((r) => {
+      const total = keys.reduce((a, k) => a + (r[k] || 0), 0);
+      return h('tr', null,
+        h('th', { scope: 'row', class: 'cm-client', title: r.client || '' }, r.client || 'Unknown client'),
+        h('td', { class: 'cm-barcol' }, h('span', { class: 'sbar sbar-sm', role: 'img',
+          'aria-label': METHODS.map((m, i) => `${methodLabel(m.key)} ${pct((r[keys[i]] || 0) / total)}`).join(', ') },
+          METHODS.map((m, i) => (r[keys[i]] || 0) > 0 ? h('span', { class: 'sbar-seg', style: { flexGrow: String(r[keys[i]]), background: m.color } }) : null))),
+        keys.map((k) => h('td', { class: 'mono r' }, r[k] ? num(r[k]) : h('span', { class: 'muted' }, '0'))));
+    }))));
+}
+export const methodLegend = () => legend(METHODS.map((m) => ({ color: m.color, label: methodLabel(m.key) })));
 
 // ---------------------------------------------------------------- sparkline
 export function sparkline(values, { w = 104, hgt = 30 } = {}) {

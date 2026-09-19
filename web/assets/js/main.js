@@ -14,6 +14,7 @@ import { librariesPage, libraryPage } from './pages/libraries.js';
 import itemPage from './pages/item.js';
 import playback from './pages/playback.js';
 import events from './pages/events.js';
+import serverPage from './pages/server.js';
 import settings from './pages/settings.js';
 import { setupPage, loginPage } from './pages/auth.js';
 
@@ -27,6 +28,7 @@ route('/libraries', librariesPage);
 route('/libraries/:id', libraryPage);
 route('/items/:id', itemPage);
 route('/playback', playback);
+route('/server', serverPage, { admin: true });
 route('/events', events, { admin: true });
 route('/settings', settings, { admin: true });
 route('*', (ctx) => {
