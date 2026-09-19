@@ -1,7 +1,13 @@
 target
 data
+*.db
+*.db-wal
+*.db-shm
+*.sqlite*
 *.jsonl
 backup_*
 .git
+.githooks
 .env
+.env.*
 docs

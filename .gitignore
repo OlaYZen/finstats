@@ -1,6 +1,20 @@
 /target
-/data
-# Personal Jellystat backups — never commit
+
+# Runtime data: the database holds your users, IP addresses and Jellyfin API key.
+/data/
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+*.backup.db
+
+# Personal Jellystat backups
 *.jsonl
 backup_*
+jellystat-upload.tmp
+
+# Secrets and local overrides
 .env
+.env.*
+docker-compose.override.yml

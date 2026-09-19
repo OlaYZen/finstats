@@ -1,0 +1,16 @@
+#!/bin/sh
+# Refuses to commit anything that looks like runtime data, a Jellystat backup or a secret,
+# even when it was force-added past .gitignore. Enable once per clone:
+#   git config core.hooksPath .githooks
+fail=0
+for f in $(git diff --cached --name-only --diff-filter=AM); do
+  case "$f" in
+    data/*|*.db|*.db-wal|*.db-shm|*.sqlite|*.sqlite3|*.jsonl|backup_*|*/backup_*|.env|.env.*|*.pem|*.key)
+      echo "pre-commit: refusing '$f' (runtime data, backup or secret)" >&2; fail=1 ;;
+  esac
+  size=$(git cat-file -s ":$f" 2>/dev/null || echo 0)
+  if [ "$size" -gt 2097152 ]; then
+    echo "pre-commit: refusing '$f' ($size bytes; nothing in this repo should be over 2 MB)" >&2; fail=1
+  fi
+done
+exit $fail
