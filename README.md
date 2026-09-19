@@ -9,11 +9,20 @@ One small Rust binary. One SQLite file. No Node, no Postgres, no background job 
   in the binary and has zero JavaScript dependencies.
 - **Sign in with Jellyfin** — your Jellyfin username and password. finstats never stores
   passwords and creates its own API key during setup.
-- **Collects everything Jellyfin exposes** — user, item, series/season/episode, client, device,
-  app version, IP address, play method, transcode reasons and hardware acceleration, video
-  codec / resolution / HDR range, audio codec / channels / language, subtitles, container,
-  bitrate, time watched vs. time paused, and where playback stopped. Plus your library
-  (with file sizes), users, and Jellyfin's own server activity log.
+- **Collects what Jellyfin exposes, and what happens in between** — per play: user, item,
+  series/season/episode, client, device, app version, IP address (and whether it was on your
+  LAN), play method, transcode reasons and hardware acceleration, video codec / resolution /
+  HDR range, audio codec / channels / language, subtitles, container, bitrate, time watched
+  vs. time paused, where playback resumed from and where it stopped — plus a **timeline of
+  the play itself**: every pause, skip, audio/subtitle switch and direct-play→transcode flip.
+- **Answers the questions an admin actually has** — How many streams run at once, and how many
+  of them transcode? Which clients force transcodes? How much data leaves the house? How far
+  do people get before they give up? What is my library made of (resolution, codecs, HDR,
+  size per decade), what are the biggest titles, and **which ones has nobody ever watched**
+  (checked against both finstats' history and Jellyfin's own played flags)?
+- **Knows the server too** — version and pending updates/restarts, disk usage per library
+  (Jellyfin 10.11+), plugins, scheduled task results, every registered device, the server
+  activity log, and failed sign-ins.
 - **Brings your history along** — imports Jellystat backups, including very large ones.
 
 ## Quick start
@@ -35,6 +44,14 @@ services:
 
 ```sh
 docker compose up -d --build
+```
+
+No Compose plugin? Plain Docker does the same:
+
+```sh
+docker build -t finstats:latest .
+docker run -d --name finstats --restart unless-stopped \
+  -e TZ=Europe/London -p 8080:8080 -v "$PWD/data:/data" finstats:latest
 ```
 
 Open `http://your-server:8080` and follow the two setup steps:
@@ -85,6 +102,18 @@ docker compose run --rm -v /path/to/backup.jsonl:/backup.jsonl:ro finstats impor
 | `PlayMethod: Transcode` with video *and* audio copied | Stored as `DirectStream` (a remux), same as for live plays. |
 | `jf_playback_reporting_plugin_data` | Skipped: Jellystat already folds these rows into its activity table. |
 
+## Upgrading
+
+Pull/rebuild and restart — the database migrates itself on start-up:
+
+```sh
+docker build -t finstats:latest . && docker rm -f finstats
+docker run -d --name finstats …        # the same run command as before; ./data is kept
+```
+
+Play timelines, pause/skip counts and resume points only exist for plays recorded live by
+finstats 0.2+; Jellystat never captured them, so imported plays show none.
+
 ## Configuration
 
 Everything is optional.
@@ -111,7 +140,7 @@ In the UI (**Settings**, administrators only):
 
 ```
 Jellyfin ──/Sessions every 5 s──▶ collector ──▶ SQLite ◀── stats API ◀── embedded web UI
-         ──/Users, /Items, /System/ActivityLog (periodic)──▶ sync ──┘
+         ──/Users, /Items, /Devices, /System/*, played flags (periodic)──▶ sync ──┘
 ```
 
 - A play is written the moment it is first seen and refreshed every 30 s while it runs, so a

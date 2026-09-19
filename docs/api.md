@@ -221,3 +221,75 @@ Re-importing the same backup is safe: plays are de-duplicated by their Jellystat
 ## Light status (any signed-in user)
 
 `GET /api/summary` → `{"active_sessions": 1, "plays_total": 2918, "last_sync_at": 0, "collector_ok": true, "version": "0.1.0"}` — cheap; poll for the status bar.
+
+---
+
+# v0.2 additions
+
+## Richer plays
+
+The collector now keeps a timeline per live play and counts interruptions.
+
+- `Play` rows (list + detail) gain `"pause_count": 0`, `"seek_count": 0`, and — admins only, else `null` —
+  `"is_local": true|false|null` (LAN / remote, derived from the IP).
+- `GET /api/activity/{id}` additionally returns `"start_position_s": 0|null` (where playback resumed from) and
+  ```jsonc
+  "events": [ {"at": 1790000000, "kind": "start"|"pause"|"resume"|"seek"|"audio"|"subtitle"|"transcode"|"stop",
+               "position_s": 512|null,
+               "detail": null | "12:40 → 31:05" | "EAC3 5.1 eng" | "Off" | "Transcode: ContainerNotSupported"} ]
+  ```
+  Oldest first. Empty for imported plays (Jellystat never recorded this).
+
+## `GET /api/stats/insights` (common filters)
+
+```jsonc
+{
+  "concurrency": {"peak": 4, "peak_at": 1790000000|null, "peak_transcodes": 2,
+                  "series": [{"date": "2026-01-31", "peak": 3}], "bucket": "day"|"week"},   // gap-free, same bucketing as overview.daily
+  "network": [Bucket],            // names "Local" / "Remote" / "Unknown"; [] for non-admins
+  "data_bytes": 1234567890,       // estimated bytes sent to clients (stream bitrate × time watched)
+  "genres": [Bucket],             // by watch time; episodes count towards their series' genres; max 12 + "Other"
+  "client_methods": [ {"client": "Jellyfin Web", "direct_play": 10, "direct_stream": 2, "transcode": 30, "watch_s": 0} ], // plays; sorted by total desc, max 12
+  "completion": [ {"name": "Under 10%", "plays": 0}, {"name": "10–50%", ...}, {"name": "50–90%", ...}, {"name": "Finished (90%+)", ...} ], // movies + episodes; fixed order
+  "behaviour": {"plays_measured": 120, "avg_pauses": 1.4, "avg_seeks": 0.8, "resumed_share": 0.31}, // live plays only; plays_measured = 0 → hide
+  "failed_logins": [ {"date": 0, "overview": "…", "user_name": null} ]   // 🔒 newest 10 in window; [] for non-admins
+}
+```
+
+## `GET /api/library/insights?library_id=` — what the library is made of (no time window)
+
+```jsonc
+{
+  "totals": {"files": 0, "size_bytes": 0, "runtime_s": 0, "movies": 0, "series": 0, "episodes": 0, "tracks": 0},
+  "resolutions": [LibBucket], "video_codecs": [LibBucket], "video_ranges": [LibBucket],
+  "containers": [LibBucket], "audio_codecs": [LibBucket],
+  "genres": [LibBucket],          // movies + series, size_bytes omitted (0)
+  "decades": [LibBucket],         // name "1990s", oldest first
+  "added": [ {"month": "2026-01", "count": 12} ],   // last 24 months, gap-free, oldest first
+  "largest": [LibItem],           // 15 biggest movies / series (series = sum of episodes)
+  "unwatched": {"count": 0, "size_bytes": 0, "items": [LibItem]}   // never played by anyone, per finstats history AND Jellyfin's own played flags; 25 biggest
+}
+// LibBucket = {"name", "count", "size_bytes"};   sorted by count desc (decades/added excepted), max 12 + "Other"
+// LibItem   = {"id","name","type","year","size_bytes","date_created","image_item_id"}
+```
+
+## `GET /api/server` 🔒 — the Jellyfin server itself
+
+```jsonc
+{
+  "fetched_at": 0|null,           // null → not fetched yet (run task sync_server)
+  "info": {"server_name","version","operating_system","architecture","has_update_available","has_pending_restart",
+           "transcoding_temp_path","cache_path","program_data_path","log_path","encoder_location"} | null,
+  "storage": [ {"label": "Shows" | "Program data" | "Cache" | "Transcodes" | …, "path", "free_bytes", "used_bytes", "kind": "library"|"system"} ], // [] on servers older than 10.11
+  "plugins": [ {"name","version","status","description"} ],
+  "scheduled_tasks": [ {"name","category","state","last_result": "Completed"|"Failed"|…|null,"last_run_at": 0|null,"last_duration_s": 0|null} ],
+  "devices": [ {"device_id","name","app","app_version","last_user_id","last_user_name","last_seen"} ]   // newest first
+}
+```
+New task ids in `/api/tasks`: `sync_server` (server info, plugins, tasks, devices) and `sync_userdata` (per-user played / favourite flags). Both runnable via `POST /api/tasks/{id}/run`.
+
+## Small additions to existing responses
+
+- `GET /api/users/{id}` gains `"genres": [Bucket]` and `"jellyfin": {"played_movies": 0, "played_episodes": 0, "favorites": 0} | null` (Jellyfin's own flags; covers history from before finstats).
+- `GET /api/items/{id}` → `item` gains `"studios": ["…"]`, `"external": [{"label": "IMDb", "url": "https://…"}]`, `"bit_depth"`, `"framerate"`; top level gains
+  `"played_by": [{"user_id","user_name","last_played_at": 0|null,"is_favorite": false}]` (Jellyfin's played flags; admins see everyone, others only themselves).
