@@ -253,6 +253,33 @@ pub fn upsert_item(conn: &Connection, library_id: &str, it: &Value, now: i64) ->
     Ok(())
 }
 
+/// How many actors per title are kept: the billed cast, not every walk-on.
+const MAX_ACTORS: usize = 12;
+
+/// Replaces what is known about one title's actors and directors with Jellyfin's current answer.
+pub fn store_people(conn: &Connection, it: &Value) -> Result<()> {
+    let Some(item_id) = it["Id"].as_str().map(norm_id) else { return Ok(()) };
+    conn.prepare_cached("DELETE FROM item_people WHERE item_id = ?1")?.execute([&item_id])?;
+    let Some(people) = it["People"].as_array() else { return Ok(()) };
+    let mut actors = 0usize;
+    for (sort, p) in people.iter().enumerate() {
+        let kind = match p["Type"].as_str() {
+            Some("Actor") if actors < MAX_ACTORS => {
+                actors += 1;
+                "Actor"
+            }
+            Some("Director") => "Director",
+            _ => continue,
+        };
+        let (Some(person_id), Some(name)) = (p["Id"].as_str().map(norm_id), opt_str(&p["Name"])) else { continue };
+        conn.prepare_cached(
+            "INSERT OR IGNORE INTO item_people(item_id, person_id, kind, name, role, sort, has_image) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+        )?
+        .execute(params![item_id, person_id, kind, name, opt_str(&p["Role"]), sort as i64, opt_str(&p["PrimaryImageTag"]).is_some()])?;
+    }
+    Ok(())
+}
+
 /// Plays recorded before their item was known get their library (and type details) filled in.
 pub fn backfill_playbacks(conn: &Connection) -> Result<()> {
     conn.execute_batch(
@@ -340,6 +367,37 @@ async fn sync_libraries(app: &App, jf: &Jellyfin) -> Result<String> {
                 break;
             }
         }
+        // Cast and crew, for films and shows only. A failure here never fails the library read.
+        let mut start = 0usize;
+        loop {
+            let items = match jf.people_page(&lib_id, start, PAGE).await {
+                Ok(items) => items,
+                Err(e) => {
+                    tracing::warn!("reading cast and crew of {lib_name} failed: {e:#}");
+                    break;
+                }
+            };
+            let got = items.len();
+            if got == 0 {
+                break;
+            }
+            app.tasks.update(ID, format!("{lib_name}: cast and crew"), None);
+            app.db
+                .call(move |c| {
+                    let tx = c.transaction()?;
+                    for it in &items {
+                        store_people(&tx, it)?;
+                    }
+                    tx.commit()?;
+                    Ok(())
+                })
+                .await?;
+            start += got;
+            if got < PAGE {
+                break;
+            }
+        }
+
         // Only after a library was read completely is "not seen" proof of removal.
         let lib = lib_id.clone();
         app.db
@@ -565,4 +623,35 @@ async fn sync_userdata(app: &App, jf: &Jellyfin) -> Result<String> {
             .await?;
     }
     Ok(format!("{total} played or favourite items"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn keeps_the_billed_cast_and_directors_and_replaces_them_on_the_next_read() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE item_people(item_id TEXT NOT NULL, person_id TEXT NOT NULL, kind TEXT NOT NULL, name TEXT NOT NULL, role TEXT,
+                                      sort INTEGER NOT NULL, has_image INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (item_id, person_id, kind));",
+        )
+        .unwrap();
+        let mut people: Vec<Value> = (0..20).map(|n| json!({ "Id": format!("a{n}"), "Name": format!("Actor {n}"), "Type": "Actor", "Role": "Extra" })).collect();
+        people[0]["PrimaryImageTag"] = json!("tag");
+        people.push(json!({ "Id": "d1", "Name": "Jane Doe", "Type": "Director" }));
+        people.push(json!({ "Id": "w1", "Name": "A Writer", "Type": "Writer" }));
+        // The same person acting in and directing a title is two credits.
+        people.push(json!({ "Id": "a0", "Name": "Actor 0", "Type": "Director" }));
+        store_people(&conn, &json!({ "Id": "AB-CD", "People": people })).unwrap();
+
+        let count = |sql: &str| -> i64 { conn.query_row(sql, [], |r| r.get(0)).unwrap() };
+        assert_eq!(count("SELECT COUNT(*) FROM item_people WHERE kind = 'Actor'"), MAX_ACTORS as i64);
+        assert_eq!(count("SELECT COUNT(*) FROM item_people WHERE kind = 'Director'"), 2);
+        assert_eq!(count("SELECT COUNT(*) FROM item_people WHERE item_id = 'abcd'"), MAX_ACTORS as i64 + 2);
+        assert_eq!(count("SELECT has_image FROM item_people WHERE person_id = 'a0' AND kind = 'Actor'"), 1);
+
+        store_people(&conn, &json!({ "Id": "AB-CD", "People": [{ "Id": "d2", "Name": "John Roe", "Type": "Director" }] })).unwrap();
+        assert_eq!(count("SELECT COUNT(*) FROM item_people"), 1);
+    }
 }

@@ -280,6 +280,35 @@ impl Jellyfin {
         Ok((items, total))
     }
 
+    /// One page of a library's films and shows with their cast and crew, and nothing else. Asked
+    /// separately from `items_page`: people on every episode would multiply that read for no gain.
+    pub async fn people_page(&self, library_id: &str, start: usize, limit: usize) -> Result<Vec<Value>> {
+        let q = [
+            ("ParentId", library_id.to_string()),
+            ("Recursive", "true".into()),
+            ("IncludeItemTypes", "Movie,Series".into()),
+            ("Fields", "People".into()),
+            ("ExcludeLocationTypes", "Virtual".into()),
+            ("CollapseBoxSetItems", "false".into()),
+            ("EnableUserData", "false".into()),
+            ("EnableImages", "false".into()),
+            ("SortBy", "DateCreated,SortName".into()),
+            ("SortOrder", "Ascending".into()),
+            ("StartIndex", start.to_string()),
+            ("Limit", limit.to_string()),
+            ("EnableTotalRecordCount", "false".into()),
+        ];
+        let resp = self.get("/Items").query(&q).timeout(Duration::from_secs(180)).send().await?;
+        if !resp.status().is_success() {
+            bail!("Jellyfin answered {} for /Items", resp.status());
+        }
+        let mut v: Value = resp.json().await?;
+        Ok(match v["Items"].take() {
+            Value::Array(a) => a,
+            _ => vec![],
+        })
+    }
+
     async fn get_array(&self, path: &str, query: &[(&str, String)]) -> Result<Vec<Value>> {
         match self.get_json(path, query).await? {
             Value::Array(a) => Ok(a),

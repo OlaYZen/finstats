@@ -234,6 +234,23 @@ const MIGRATIONS: &[&str] = &[
     CREATE INDEX idx_pb_group ON playbacks(group_id) WHERE group_id IS NOT NULL;
     CREATE INDEX idx_pb_item_start ON playbacks(item_id, started_at);
     "#,
+    // 8 — cast and crew of films and shows, for "most watched people" in the recap. Forgetting when
+    //     the library was last read makes the next start read it once more, so people arrive without
+    //     waiting for Jellyfin's next scan.
+    r#"
+    CREATE TABLE item_people (
+        item_id   TEXT NOT NULL,
+        person_id TEXT NOT NULL,
+        kind      TEXT NOT NULL,            -- Actor | Director
+        name      TEXT NOT NULL,
+        role      TEXT,
+        sort      INTEGER NOT NULL,         -- billing order within the title
+        has_image INTEGER NOT NULL DEFAULT 0,
+        PRIMARY KEY (item_id, person_id, kind)
+    ) WITHOUT ROWID;
+    CREATE INDEX idx_item_people_person ON item_people(person_id, kind);
+    DELETE FROM settings WHERE key = 'library_synced_at';
+    "#,
 ];
 
 impl Db {
