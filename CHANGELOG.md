@@ -6,6 +6,11 @@ binary and is what the **Patch notes** tab in the app shows.
 Format: `## [version] - date`, an optional one-paragraph summary, then `### Added`,
 `### Changed`, `### Fixed` or `### Removed` with one bullet per change.
 
+## [0.7.4] - 2026-09-19
+
+### Changed
+- **Patch notes are grouped by series.** Every `0.x` series is one fold holding all of its releases, so `v0.7` contains 0.7.0 to 0.7.4, with what the series was about, how many releases it has and when. Only the newest series starts open; older ones are a click away, and a closed fold still shows which one you are running.
+
 ## [0.7.3] - 2026-09-19
 
 ### Fixed
