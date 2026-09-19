@@ -453,7 +453,29 @@ pub struct ActivityQuery {
     item_type: Option<String>,
     item_id: Option<String>,
     series_id: Option<String>,
+    sort: Option<String>,
+    dir: Option<String>,
 }
+
+/// `ORDER BY` for a paginated list: a whitelisted column, empty values last whichever way it runs,
+/// and a fixed tiebreaker so pages never shuffle. Unknown keys fall back to the default order.
+fn order_by(columns: &[(&str, &str)], sort: Option<&str>, dir: Option<&str>, default: &str) -> String {
+    let Some((_, expr)) = sort.and_then(|k| columns.iter().find(|(key, _)| *key == k)) else { return default.to_string() };
+    let dir = if dir == Some("asc") { "ASC" } else { "DESC" };
+    format!("({expr}) IS NULL, {expr} {dir}, {default}")
+}
+
+const ACTIVITY_SORTS: [(&str, &str); 8] = [
+    ("when", "p.ended_at"),
+    ("user", "COALESCE(u.name, p.user_name) COLLATE NOCASE"),
+    ("title", "COALESCE(p.series_name, p.item_name) COLLATE NOCASE"),
+    ("watched", "p.duration_s"),
+    // The same rule as the `completion` field: where it stopped, or for imported plays how long it ran.
+    ("progress", "MIN(1.0, COALESCE(p.position_s, p.duration_s) * 1.0 / NULLIF(COALESCE(p.runtime_s, i.runtime_s), 0))"),
+    ("client", "p.client COLLATE NOCASE"),
+    ("method", "p.play_method"),
+    ("ip", "p.remote_ip"),
+];
 
 pub async fn activity(State(app): State<App>, user: AuthUser, Query(q): Query<ActivityQuery>) -> ApiResult {
     let page = q.page.unwrap_or(1).max(1);
@@ -490,7 +512,10 @@ pub async fn activity(State(app): State<App>, user: AuthUser, Query(q): Query<Ac
             }
         }
         let total: i64 = c.query_row(&format!("SELECT COUNT(*) FROM playbacks p {}", cond.sql()), params_from_iter(cond.args.iter()), |r| r.get(0))?;
-        let sql = format!("{PLAY_SELECT} {} ORDER BY p.ended_at DESC, p.id DESC LIMIT {per_page} OFFSET {}", cond.sql(), (page - 1) * per_page);
+        // Sorting by address is only for those who are shown addresses.
+        let sort = q.sort.as_deref().filter(|k| *k != "ip" || scope.perms.see_network);
+        let order = order_by(&ACTIVITY_SORTS, sort, q.dir.as_deref(), "p.ended_at DESC, p.id DESC");
+        let sql = format!("{PLAY_SELECT} {} ORDER BY {order} LIMIT {per_page} OFFSET {}", cond.sql(), (page - 1) * per_page);
         let rows: Vec<Value> = rows_json(c, &sql, &cond.args)?.into_iter().map(|m| decorate_play(m, scope.perms.see_network, false)).collect();
         Ok(json!({ "total": total, "page": page, "per_page": per_page, "rows": rows }))
     })
@@ -1096,7 +1121,12 @@ pub struct EventsQuery {
     q: Option<String>,
     #[serde(rename = "type")]
     kind: Option<String>,
+    sort: Option<String>,
+    dir: Option<String>,
 }
+
+const EVENT_SORTS: [(&str, &str); 4] =
+    [("when", "e.date"), ("event", "e.name COLLATE NOCASE"), ("type", "e.type COLLATE NOCASE"), ("user", "u.name COLLATE NOCASE")];
 
 pub async fn events(State(app): State<App>, ServerViewer(_): ServerViewer, Query(q): Query<EventsQuery>) -> ApiResult {
     let page = q.page.unwrap_or(1).max(1);
@@ -1123,7 +1153,8 @@ pub async fn events(State(app): State<App>, ServerViewer(_): ServerViewer, Query
                     "SELECT e.id, e.date, e.name, COALESCE(e.overview, e.short_overview) AS overview, e.type, e.severity,
                             e.user_id, u.name AS user_name, e.item_id
                      FROM server_events e LEFT JOIN users u ON u.id = e.user_id {wh}
-                     ORDER BY e.date DESC, e.id DESC LIMIT {per_page} OFFSET {}",
+                     ORDER BY {} LIMIT {per_page} OFFSET {}",
+                    order_by(&EVENT_SORTS, q.sort.as_deref(), q.dir.as_deref(), "e.date DESC, e.id DESC"),
                     (page - 1) * per_page
                 ),
                 &args,
@@ -1454,4 +1485,19 @@ pub async fn server(State(app): State<App>, ServerViewer(_): ServerViewer) -> Ap
         })
         .await?;
     Ok(Json(out))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn order_by_only_accepts_known_columns() {
+        let default = "p.ended_at DESC, p.id DESC";
+        assert_eq!(order_by(&ACTIVITY_SORTS, Some("watched"), Some("asc"), default), "(p.duration_s) IS NULL, p.duration_s ASC, p.ended_at DESC, p.id DESC");
+        assert!(order_by(&ACTIVITY_SORTS, Some("watched"), Some("sideways"), default).contains("p.duration_s DESC"));
+        // Anything that is not on the list never reaches the SQL.
+        assert_eq!(order_by(&ACTIVITY_SORTS, Some("p.id; DROP TABLE playbacks"), Some("asc"), default), default);
+        assert_eq!(order_by(&ACTIVITY_SORTS, None, None, default), default);
+    }
 }
