@@ -1076,3 +1076,11 @@ button.ep[aria-disabled="true"]:hover { filter: none; outline: 0; }
 .radar-dot.is-active { r: 6.5; fill: var(--accent-hi); }
 .radar-hit { fill: transparent; cursor: default; }
 .radar-label { fill: var(--text-muted); font-size: 12.5px; font-family: var(--sans, inherit); }
+
+/* ------------------------------------------------------------ library artwork (Jellyfin's own library image) */
+/* On a card the artwork stands where the type icon used to; the icon returns when there is no picture. */
+.lib-art { flex: none; width: 78px; height: 44px; object-fit: cover; border-radius: 6px; border: 1px solid var(--border-soft); background: var(--bg-sunken); }
+/* same head height with or without artwork, so the numbers line up across a row of cards */
+.lib-card .lib-head { min-height: 46px; }
+.lib-art-lg { width: 176px; height: 99px; border-radius: 8px; }
+@media (max-width: 560px) { .lib-art-lg { width: 120px; height: 68px; } }

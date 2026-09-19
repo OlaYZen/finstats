@@ -1,5 +1,5 @@
 import { h, icon, num, bytes, durEl, relEl, relTime, dateTime } from '../dom.js';
-import { api, soft } from '../api.js';
+import { api, soft, imgItem } from '../api.js';
 import { readDays, saveDays } from '../state.js';
 import { replaceQuery } from '../router.js';
 import { pageHeader, card, filterBar, dataView, sk, emptyState, topList, poster } from '../components.js';
@@ -15,6 +15,16 @@ function counts(l) {
 }
 
 // ---------------------------------------------------------------- /libraries
+/**
+ * The picture Jellyfin shows for a library on its home screen. `fallback` (the plain type icon on
+ * the cards) takes its place when Jellyfin has none; without a fallback it simply disappears.
+ */
+function libraryArt(l, w, cls, fallback = null) {
+  if (l.removed) return fallback; // Jellyfin no longer has it, so there is nothing to ask for
+  return h('img', { class: cls, src: imgItem(l.id, w), alt: '', loading: 'lazy', decoding: 'async',
+    onError: (e) => { if (fallback) e.target.replaceWith(fallback); else e.target.remove(); } });
+}
+
 export function librariesPage(ctx) {
   ctx.title('Libraries');
   let days = readDays(ctx.query);
@@ -27,7 +37,7 @@ export function librariesPage(ctx) {
       const libs = (data.libraries || []).slice().sort((a, b) => (a.removed - b.removed) || (b.watch_s || 0) - (a.watch_s || 0));
       if (!libs.length) return emptyState('No libraries yet', 'Libraries appear after the first sync with Jellyfin. You can start one from Settings → Tasks.');
       return h('div', { class: 'lib-grid' }, libs.map((l) => h('a', { class: ['lib-card', l.removed && 'is-dim'], href: `/libraries/${l.id}` },
-        h('div', { class: 'lib-head' }, h('span', { class: 'lib-icon' }, icon(KIND_ICON[l.collection_type] || 'library', 16)),
+        h('div', { class: 'lib-head' }, libraryArt(l, 300, 'lib-art', h('span', { class: 'lib-icon' }, icon(KIND_ICON[l.collection_type] || 'library', 16))),
           h('div', null, h('div', { class: 'lib-name' }, l.name), h('div', { class: 'lib-kind' }, KIND[l.collection_type] || 'Library', l.removed ? ' · removed from Jellyfin' : ''))),
         h('div', { class: 'lib-counts mono' }, counts(l), l.size_bytes ? ` · ${bytes(l.size_bytes)}` : ''),
         h('dl', { class: 'lib-stats' },
@@ -67,7 +77,7 @@ export function libraryPage(ctx) {
     render: (d) => {
       const l = d.library;
       ctx.title(l.name);
-      headerSlot.replaceChildren(pageHeader(l.name, [KIND[l.collection_type] || 'Library', counts(l), l.size_bytes ? bytes(l.size_bytes) : null, l.removed ? 'removed from Jellyfin' : null].filter(Boolean).join(' · ')));
+      headerSlot.replaceChildren(pageHeader(l.name, [KIND[l.collection_type] || 'Library', counts(l), l.size_bytes ? bytes(l.size_bytes) : null, l.removed ? 'removed from Jellyfin' : null].filter(Boolean).join(' · '), libraryArt(l, 480, 'lib-art lib-art-lg')));
       return [
         h('div', { class: 'tiles tiles-3' },
           h('div', { class: 'tile' }, h('div', { class: 'tile-label' }, 'Watch time'), h('div', { class: 'tile-value' }, durEl(l.watch_s, ''))),
