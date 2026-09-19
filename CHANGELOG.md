@@ -6,6 +6,11 @@ binary and is what the **Patch notes** tab in the app shows.
 Format: `## [version] - date`, an optional one-paragraph summary, then `### Added`,
 `### Changed`, `### Fixed` or `### Removed` with one bullet per change.
 
+## [0.7.7] - 2026-09-19
+
+### Fixed
+- **Movies that belong to a collection were shown as "No longer in library".** On servers with *group movies into collections* switched on, Jellyfin hands out the collection instead of the films inside it, so finstats never saw those films and marked them as removed; on one server that hid 556 of 1,238 items in the Movies library. finstats now asks for the films themselves. The next library read brings them back and re-attaches their plays; the update triggers that read right away.
+
 ## [0.7.6] - 2026-09-19
 
 ### Changed
