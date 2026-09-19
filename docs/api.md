@@ -474,3 +474,31 @@ to the caller, so someone without `see_everyone` still sees who they are watchin
 (any order; case, accents, punctuation and a leading article ignored; one slip allowed in words of 4–7 letters, two in
 longer ones; music also matches on its artist). Results are ranked, best first. The `q` filters of `/api/activity` and
 `/api/events` are word-by-word as well: each word must occur in at least one searched column.
+
+---
+
+# v0.8 — Recap: days, people, rewatches
+
+`GET /api/recap` gains, all within the same period and scope as the rest of the response:
+
+```jsonc
+{
+  "totals": { …, "movie_watch_s": 0, "episode_watch_s": 0, "track_watch_s": 0 },
+  "genres": {"count": 16, "plays": 480, "watch_s": 0} | null,   // distinct genres; plays and time of titles that have any genre
+                                                                  // (top_genres[0].watch_s / genres.watch_s = the top genre's share)
+  "people": {                                                     // most watched cast and crew, 5 each, by watch time
+    "actors":    [{"id": "…", "name": "…", "has_image": true, "plays": 0, "watch_s": 0, "titles": 3, "top_title": "…"}],
+    "directors": [ … same shape … ]
+  },
+  "rewatch": {"sittings": 0, "rewatches": 0, "share": 0.12} | null,
+  "days": [{"date": "2026-03-14", "plays": 3, "watch_s": 0}]      // only days with plays, oldest first, server TZ
+}
+```
+
+- **People** come from the films and shows themselves (an episode counts towards its show's cast). Only actors — the
+  first 12 billed per title — and directors are kept. A person's portrait is `GET /api/images/items/{person id}`.
+  They are read with the library, in a second, smaller request per library (`IncludeItemTypes=Movie,Series`,
+  `Fields=People`); until the first library read after upgrading, both lists are empty.
+- A **sitting** is one film or episode on one local day (plays of at least 5 minutes). A **rewatch** is a sitting with
+  something that already had one in the period: `rewatches = sittings − distinct titles`, `share = rewatches / sittings`.
+  Picking a play up again on the same day is not a rewatch.

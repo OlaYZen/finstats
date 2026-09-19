@@ -70,12 +70,13 @@ and current day streak.
 
 ### Your year in review
 
-<img src="docs/screenshots/recap.png" alt="Recap: 399 hours watched in 2025, rank among viewers, most watched show with poster" width="100%">
+<img src="docs/screenshots/recap.png" alt="Recap: Your 2025, replayed — the top posters fanned out beside the headline, above a waveform of the year with one bar per week" width="100%">
 
 A personal recap for every user, in the spirit of Spotify Wrapped: hours watched, top shows, movies,
-music and genres, the month-by-month story of the year, and a viewing personality — night owl,
-weekend warrior, binge watcher and more. Plus the records worth bragging about: biggest binge,
-longest daily streak, most rewatched title, the oldest film you watched.
+music and genres, the actors and directors you spent the most time with, and a viewing
+personality — night owl, weekend warrior, binge watcher and more. See the whole year as a calendar
+of days, find out which weekday took the crown, and collect the records worth bragging about:
+biggest binge, longest daily streak, most rewatched title, the oldest film you watched.
 
 Each person sees only their own. Administrators can open another person's recap; nobody else can,
 whatever permissions they hold, and there is no recap of the whole server.
