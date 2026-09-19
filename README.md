@@ -215,6 +215,11 @@ git config core.hooksPath .githooks
 
 ## License
 
-MIT. Bundled fonts: Inter and JetBrains Mono, both under the SIL Open Font License 1.1.
+finstats is free software under the [GNU General Public License v3.0](LICENSE). You may use,
+study, share and change it; if you distribute a modified version, it has to stay under the same
+license with its source available. It comes with no warranty.
+
+The bundled fonts, Inter and JetBrains Mono, are under the SIL Open Font License 1.1
+([Inter](web/assets/fonts/LICENSE-Inter.txt), [JetBrains Mono](web/assets/fonts/LICENSE-JetBrainsMono.txt)).
 
 <sub>Screenshots show generated demo data: invented users, titles and artwork.</sub>
