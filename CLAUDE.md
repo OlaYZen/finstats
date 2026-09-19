@@ -22,7 +22,7 @@ cargo run -- import-jellystat <backup.jsonl>                         # headless 
 cargo run -- relink                                                  # re-attach history to renamed items, then exit
 
 for f in web/assets/js/*.js web/assets/js/pages/*.js; do node --check "$f"; done   # the only JS check there is
-docker build -t finstats:latest .
+docker build -t finstats:latest .        # local image; the published one is ghcr.io/olayzen/finstats
 ```
 
 - **Do not run `cargo fmt`.** The code is deliberately not rustfmt-formatted (hundreds of long lines); formatting
@@ -193,6 +193,14 @@ commit that touches Rust must build and pass `cargo test` on its own.
 finstats is `GPL-3.0-only` (`LICENSE`, `Cargo.toml`). A new dependency must carry a GPL-3.0-compatible license
 (MIT, Apache-2.0, BSD, ISC, Zlib, MPL-2.0 and similar are fine; check with `cargo metadata`). The bundled fonts are
 OFL-1.1 and their license texts live next to them in `web/assets/fonts/` — keep them together.
+
+## Publishing
+
+The repository is `github.com/OlaYZen/finstats`; images go to `ghcr.io/olayzen/finstats`. `.github/workflows/docker.yml` runs the unit
+tests, builds amd64 and arm64 on native runners (no QEMU), and publishes `:edge` from `main` and `:X.Y.Z`, `:X.Y`, `:X`, `:latest` from a
+`vX.Y.Z` tag, then creates the GitHub release from that version's `CHANGELOG.md` section. It refuses a tag that does not match
+`Cargo.toml` or has no changelog entry, so the release commit and its tag must be pushed together. Docs always point at the published
+image, never at a locally built tag.
 
 ## Git conventions
 

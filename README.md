@@ -8,6 +8,13 @@
 </p>
 
 <p align="center">
+  <a href="https://github.com/OlaYZen/finstats/releases/latest"><img src="https://img.shields.io/github/v/release/OlaYZen/finstats?label=release&color=8a5cf5" alt="Latest release"></a>
+  <a href="https://github.com/OlaYZen/finstats/pkgs/container/finstats"><img src="https://img.shields.io/badge/image-ghcr.io%2Folayzen%2Ffinstats-8a5cf5" alt="Docker image on the GitHub Container Registry"></a>
+  <a href="https://github.com/OlaYZen/finstats/actions/workflows/docker.yml"><img src="https://img.shields.io/github/actions/workflow/status/OlaYZen/finstats/docker.yml?label=build" alt="Build status"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-GPL--3.0-8a5cf5" alt="License: GPL-3.0"></a>
+</p>
+
+<p align="center">
   <img src="docs/screenshots/dashboard.png" alt="The finstats dashboard: two live streams, watch-time tiles and an activity chart" width="100%">
 </p>
 
@@ -108,7 +115,7 @@ docker run -d --name finstats --restart unless-stopped \
   -p 8080:8080 \
   -e TZ=Europe/London \
   -v "$PWD/data:/data" \
-  finstats:latest
+  ghcr.io/olayzen/finstats:latest
 ```
 
 <details>
@@ -117,7 +124,7 @@ docker run -d --name finstats --restart unless-stopped \
 ```yaml
 services:
   finstats:
-    image: finstats:latest
+    image: ghcr.io/olayzen/finstats:latest
     container_name: finstats
     restart: unless-stopped
     ports:
@@ -130,8 +137,10 @@ services:
 
 </details>
 
-There is no published image yet — build it once from this repository with
-`docker build -t finstats:latest .`
+The image is published for 64-bit Intel/AMD and ARM machines (a Raspberry Pi 4 or 5 works) at
+[`ghcr.io/olayzen/finstats`](https://github.com/OlaYZen/finstats/pkgs/container/finstats). `:latest` is the newest release;
+pin a version such as `:1.0.0`, or `:1` for every 1.x update, if you prefer to choose when to upgrade. `:edge` follows
+development and may be rough.
 
 Then open **http://your-server:8080** and:
 
@@ -197,9 +206,15 @@ instance has already been collecting. The library is read from Jellyfin again by
 
 ## Updating
 
-Rebuild or pull the new image and start the container again with the same command. Your data
-lives in the `data` folder and upgrades itself on start-up. After an update, the **Patch notes**
-tab shows a dot until you have read what changed — the same notes live in [CHANGELOG.md](CHANGELOG.md).
+```sh
+docker pull ghcr.io/olayzen/finstats:latest
+docker rm -f finstats
+# …then the same `docker run` as above. With Compose: docker compose pull && docker compose up -d
+```
+
+Your data lives in the `data` folder and upgrades itself on start-up; finstats also keeps its own weekly
+backups there. After an update, the **Patch notes** tab shows a dot until you have read what changed. The same
+notes are on the [releases page](https://github.com/OlaYZen/finstats/releases) and in [CHANGELOG.md](CHANGELOG.md).
 
 ## Questions
 
@@ -232,10 +247,14 @@ UX patterns collected at [uxgoodpatterns.com](https://uxgoodpatterns.com): forms
 that close three ways, tables you can sort, states for loading, empty and failed.
 
 ```sh
+git clone https://github.com/OlaYZen/finstats.git && cd finstats
 cargo build --release
 FINSTATS_DATA_DIR=./data ./target/release/finstats
 cargo test
+docker build -t finstats:dev .          # your own image instead of the published one
 ```
+
+Found a bug or have an idea? [Open an issue](https://github.com/OlaYZen/finstats/issues).
 
 - [HTTP API](docs/api.md) — the contract the web UI is built on
 - [How Jellystat data is interpreted](docs/jellystat-import.md)
