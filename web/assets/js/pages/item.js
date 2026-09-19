@@ -1,6 +1,6 @@
 import { h, icon, num, bytes, bitrate, duration, durationExact, durEl, relEl, dateTime, episodeCode, compact, safeHttps } from '../dom.js';
 import { api, imgItem } from '../api.js';
-import { isAdmin, readDays, saveDays } from '../state.js';
+import { readDays, saveDays, can } from '../state.js';
 import { replaceQuery } from '../router.js';
 import { card, filterBar, dataView, sk, poster, avatar, chip, statTile, playsTable, emptyState, facts } from '../components.js';
 import { activityCard } from '../widgets.js';
@@ -59,7 +59,7 @@ export default function itemPage(ctx) {
         it.bitrate ? ['Bitrate', bitrate(it.bitrate), { mono: true }] : null,
         it.bit_depth ? ['Bit depth', it.bit_depth + '-bit', { mono: true }] : null,
         it.framerate ? ['Frame rate', (Math.round(Number(it.framerate) * 1000) / 1000) + ' fps', { mono: true }] : null,
-        isAdmin() && it.path ? ['Path', h('span', { class: 'mono path' }, it.path)] : null,
+        can('see_server') && it.path ? ['Path', h('span', { class: 'mono path' }, it.path)] : null,
       ]);
 
       return [
@@ -74,7 +74,7 @@ export default function itemPage(ctx) {
         playedBy(d.played_by),
         card({ title: 'Recent plays', cls: 'card-flush',
           actions: h('a', { class: 'btn btn-ghost btn-sm', href: `/activity?${key}=${encodeURIComponent(id)}&days=${days}` }, 'View all'),
-          body: playsTable(recent.rows, { showUser: isAdmin(), onOpen: (p) => openPlayModal(p, { onDeleted: () => dv.load() }), empty: 'No plays in this range.' }) }),
+          body: playsTable(recent.rows, { showUser: can('see_everyone'), onOpen: (p) => openPlayModal(p, { onDeleted: () => dv.load() }), empty: 'No plays in this range.' }) }),
         file.children.length ? card({ title: 'File', body: file }) : null,
       ];
     },

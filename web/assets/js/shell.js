@@ -3,7 +3,7 @@
 
 import { h, icon, num, relTime, dateTime, mount } from './dom.js';
 import { api, isAbort } from './api.js';
-import { state, isAdmin, resetCaches, hasUnseenVersion, onVersionSeen, noteRunningVersion } from './state.js';
+import { state, resetCaches, hasUnseenVersion, onVersionSeen, noteRunningVersion, can } from './state.js';
 import { navigate, onRouteChange } from './router.js';
 import { avatar } from './components.js';
 import { openPalette } from './palette.js';
@@ -19,12 +19,12 @@ function navItems() {
     { href: '/', label: 'Dashboard', icon: 'home', exact: true },
     { href: '/recap', label: 'Recap', icon: 'recap' },
     { href: '/activity', label: 'Activity', icon: 'activity' },
-    isAdmin() ? { href: '/users', label: 'Users', icon: 'users' } : { href: `/users/${me.id}`, label: 'My stats', icon: 'user' },
+    can('see_everyone') ? { href: '/users', label: 'Users', icon: 'users' } : { href: `/users/${me.id}`, label: 'My stats', icon: 'user' },
     { href: '/libraries', label: 'Libraries', icon: 'library', also: ['/items'] },
     { href: '/playback', label: 'Playback', icon: 'sliders' },
-    isAdmin() ? { href: '/server', label: 'Server', icon: 'server' } : null,
-    isAdmin() ? { href: '/events', label: 'Server log', icon: 'log' } : null,
-    isAdmin() ? { href: '/settings', label: 'Settings', icon: 'settings' } : null,
+    can('see_server') ? { href: '/server', label: 'Server', icon: 'server' } : null,
+    can('see_server') ? { href: '/events', label: 'Server log', icon: 'log' } : null,
+    can('manage') ? { href: '/settings', label: 'Settings', icon: 'settings' } : null,
     { href: '/changelog', label: 'Patch notes', icon: 'tag', dot: hasUnseenVersion },
   ].filter(Boolean);
 }
@@ -146,7 +146,7 @@ function buildShell() {
   const el = h('div', { class: 'app' }, topbar, sidebar, scrim, main, statusbar, toTop);
 
   return {
-    el, content, userId: me.id + ':' + me.is_admin,
+    el, content, userId: me.id + ':' + me.is_admin + ':' + JSON.stringify(me.permissions || {}),
     setActive(path) {
       setDrawer(false);
       for (const a of navLinks) {
@@ -180,7 +180,7 @@ export function layout(kind) {
     if (!bare.isConnected) mount(appRoot, bare);
     return bare;
   }
-  const key = state.user.id + ':' + state.user.is_admin;
+  const key = state.user.id + ':' + state.user.is_admin + ':' + JSON.stringify(state.user.permissions || {});
   if (shell && shell.userId !== key) { shell.destroy(); shell = null; }
   if (!shell) {
     shell = buildShell();
@@ -202,7 +202,7 @@ onRouteChange(() => {
 /** Where Esc leads from this page; null on top-level pages. `back` = prefer the real history entry. */
 function escTarget(path) {
   if (/^\/libraries\/[^/]+/.test(path)) return { up: '/libraries' };
-  if (/^\/users\/[^/]+/.test(path)) return isAdmin() ? { up: '/users' } : null; // for everyone else this is "My stats", a top-level page
+  if (/^\/users\/[^/]+/.test(path)) return can('see_everyone') ? { up: '/users' } : null; // for everyone else this is "My stats", a top-level page
   if (/^\/items\/[^/]+/.test(path)) return { up: '/libraries', back: true };     // reached from anywhere, so return to wherever that was
   return null;
 }

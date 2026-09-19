@@ -2,7 +2,7 @@
 
 import { h, icon, num, duration, durationExact, dateTime, timeOfDay, clock, bitrate, pct, humanize, episodeCode, mount } from './dom.js';
 import { api, isAbort } from './api.js';
-import { isAdmin } from './state.js';
+import { can } from './state.js';
 import { openModal, copyButton, methodBadge, facts, errorState, sk, poster, setBusy, inlineError } from './components.js';
 
 const res = (w, hgt) => (w && hgt ? `${w}×${hgt}` : null);
@@ -87,7 +87,7 @@ export function openPlayModal(play, { onDeleted } = {}) {
       ['Client', [p.client, p.app_version].filter(Boolean).join(' ') || '–'],
       ['Device', p.device_name],
       p.device_id ? ['Device ID', h('span', { class: 'copy-row' }, h('span', { class: 'mono trunc' }, p.device_id), copyButton(p.device_id, 'Copy device ID'))] : null,
-      isAdmin() ? ['IP address', p.remote_ip ? h('span', { class: 'copy-row' }, h('span', { class: 'mono' }, p.remote_ip), copyButton(p.remote_ip, 'Copy IP address'), networkChip(p.is_local)) : '–'] : null,
+      can('see_network') ? ['IP address', p.remote_ip ? h('span', { class: 'copy-row' }, h('span', { class: 'mono' }, p.remote_ip), copyButton(p.remote_ip, 'Copy IP address'), networkChip(p.is_local)) : '–'] : null,
     ]);
 
     const media = facts([
@@ -114,7 +114,7 @@ export function openPlayModal(play, { onDeleted } = {}) {
       h('h3', { class: 'section-label' }, 'Media'), media,
       transcode,
       h('h3', { class: 'section-label' }, 'Timeline'), timeline(p),
-      isAdmin() && !p.active ? deleteRow(p) : null];
+      can('manage') && !p.active ? deleteRow(p) : null];
   }
 
   // Destructive action: inline two-step inside the modal, explicit Cancel/Delete.

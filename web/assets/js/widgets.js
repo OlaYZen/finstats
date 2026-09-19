@@ -3,7 +3,7 @@
 import { h, icon, num, compact, bytes, duration, durationExact, clock, bitrate, humanize, episodeCode, store, mount, relTime, dateTime, dayLabelLong } from './dom.js';
 import { columnsChart, columnsTable, heatmap, heatmapTable, sparkline, bucketList, libBucketList, simpleColumns, simpleColumnsTable } from './charts.js';
 import { card, chartCard, segmented, statTile, poster, avatar, methodBadge, facts } from './components.js';
-import { isAdmin, rangeLong } from './state.js';
+import { rangeLong, can } from './state.js';
 
 const METRICS = [{ value: 'watch_s', label: 'Watch time' }, { value: 'plays', label: 'Plays' }];
 
@@ -80,7 +80,7 @@ export function nowPlayingCard(sn) {
         methodBadge(sn.play_method),
         [sn.video, sn.audio].filter(Boolean).map((x) => h('span', { class: 'chip mono' }, x)),
         sn.bitrate ? h('span', { class: 'chip mono' }, bitrate(sn.bitrate)) : null,
-        isAdmin() && sn.remote_ip ? h('span', { class: 'chip mono', title: 'IP address' }, sn.remote_ip) : null),
+        can('see_network') && sn.remote_ip ? h('span', { class: 'chip mono', title: 'IP address' }, sn.remote_ip) : null),
       h('div', { class: 'np-progress' },
         h('div', { class: 'meter meter-wide', role: 'progressbar', 'aria-label': 'Playback position', 'aria-valuemin': 0, 'aria-valuemax': 100, 'aria-valuenow': prog == null ? null : Math.round(prog * 100) },
           h('span', { class: 'meter-fill', style: { width: (prog || 0) * 100 + '%' } })),
@@ -116,7 +116,7 @@ export function insightTiles(ins) {
       h('div', { class: 'tile-label' }, 'Data streamed'),
       h('div', { class: 'tile-value', title: num(ins.data_bytes) + ' bytes' }, bytes(ins.data_bytes)),
       h('div', { class: 'tile-foot' }, h('span', { class: 'tile-vs' }, 'estimated from stream bitrates'))) : null,
-    isAdmin() && netTotal > 0 ? h('div', { class: 'tile tile-quiet' },
+    can('see_network') && netTotal > 0 ? h('div', { class: 'tile tile-quiet' },
       h('div', { class: 'tile-label' }, 'Remote plays'),
       h('div', { class: 'tile-value' }, Math.round((remote / netTotal) * 100) + '%'),
       h('div', { class: 'tile-foot' }, h('span', { class: 'tile-vs' }, `${num(remote)} of ${num(netTotal)} plays`))) : null,
@@ -130,7 +130,7 @@ export function genresCard(genres, { sub = 'By watch time' } = {}) {
 
 /** Admin-only; hidden entirely when there is nothing to show. */
 export function failedLoginsCard(rows) {
-  if (!isAdmin() || !Array.isArray(rows) || !rows.length) return null;
+  if (!can('see_server') || !Array.isArray(rows) || !rows.length) return null;
   return card({ title: 'Failed sign-ins', sub: 'Most recent attempts on your Jellyfin server',
     actions: h('a', { class: 'btn btn-ghost btn-sm', href: '/events' }, 'Server log', icon('chevronRight', 14)),
     body: h('ul', { class: 'mini-list' }, rows.map((r) => h('li', { class: 'mini-row' },

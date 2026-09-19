@@ -1,6 +1,7 @@
 import { h, icon, num, bytes, relTime, dateTime, mount, humanize } from '../dom.js';
 import { api, isAbort, uploadRaw } from '../api.js';
-import { pageHeader, card, sk, toggle, setBusy, inlineError, errorState, facts, spinner } from '../components.js';
+import { isAdmin } from '../state.js';
+import { pageHeader, card, sk, toggle, setBusy, inlineError, errorState, facts, spinner, avatar } from '../components.js';
 
 const TASK_LABEL = {
   sync_users: ['Sync users', 'Names, roles and last-seen times from Jellyfin'],
@@ -43,7 +44,7 @@ export default function settings(ctx) {
   ctx.root.append(pageHeader('Settings', 'Connection, access, collection and data'),
     h('div', { class: 'stack settings' },
       card({ title: 'Jellyfin connection', body: connSlot }),
-      card({ title: 'Access', body: accessSlot }),
+      card({ title: 'Access', sub: 'Who can use finstats and what they can see', body: accessSlot }),
       card({ title: 'Collection', sub: 'How finstats gathers data from Jellyfin', body: collectSlot }),
       card({ title: 'Tasks', body: tasksSlot }),
       card({ title: 'Import from Jellystat', sub: 'Bring your playback history with you', body: importSlot, id: 'import' }),
@@ -99,9 +100,75 @@ export default function settings(ctx) {
       h('div', { class: 'setting-control' }, note, sw)), err];
   }
 
-  function renderAccess() {
-    mount(accessSlot, toggleRow({ key: 'allow_user_login', label: 'Let non-admin users sign in',
-      help: 'They sign in with their Jellyfin account and only ever see their own stats. IP addresses and settings stay admin-only.' }));
+  // ------------------------------------------------------------ access & permissions
+  // Rows: "Everyone" (the defaults) and one per user. A switch takes effect at once. What everyone
+  // has is shown as on, and locked, on each person's row, because personal grants only ever add.
+  async function renderAccess() {
+    if (!isAdmin()) {
+      mount(accessSlot, h('p', { class: 'help' }, 'Only Jellyfin administrators can change who has access to finstats and what they can see.'));
+      return;
+    }
+    let data;
+    try { data = await api.get('/permissions', null, { signal: ctx.signal }); }
+    catch (e) { if (isAbort(e) || e.status === 401) return; mount(accessSlot, errorState(e, renderAccess)); return; }
+    const perms = data.available || [];
+    const admins = (data.users || []).filter((u) => u.is_admin);
+    const people = (data.users || []).filter((u) => !u.is_admin);
+    let defaults = new Set(data.defaults || []);
+    const rowsEl = h('tbody');
+    const problem = h('div');
+
+    function row({ id, label, sub, granted, save }) {
+      const note = h('span', { class: 'saved-note perm-note', 'aria-live': 'polite' });
+      let timer;
+      const cells = perms.map((pm) => {
+        const inherited = id !== null && defaults.has(pm.key);
+        const sw = toggle({ checked: inherited || granted.has(pm.key), labelledby: `perm-h-${pm.key} perm-r-${id || 'all'}`,
+          onChange: async (next, revert) => {
+            mount(problem, '');
+            const want = new Set(granted); if (next) want.add(pm.key); else want.delete(pm.key);
+            note.replaceChildren(spinner(12));
+            try {
+              await save([...want]);
+              granted = want;
+              note.replaceChildren(icon('check', 13), 'Saved');
+              clearTimeout(timer); timer = setTimeout(() => note.replaceChildren(), 1800);
+              if (id === null) { defaults = want; paint(); } // everyone's rows inherit from this one
+            } catch (e) {
+              revert(!next); note.replaceChildren();
+              mount(problem, inlineError('perm-err', `Couldn’t save: ${e.message}`));
+            }
+          } });
+        if (inherited) { sw.disabled = true; sw.classList.add('is-inherited'); sw.title = 'Everyone has this, so it can’t be taken away from one person'; }
+        return h('td', { class: 'perm-cell' }, sw);
+      });
+      return h('tr', null,
+        h('th', { scope: 'row', class: 'perm-who', id: `perm-r-${id || 'all'}` }, label, sub ? h('span', { class: 'perm-sub' }, sub) : null),
+        cells, h('td', { class: 'perm-saved' }, note));
+    }
+
+    function paint() {
+      mount(rowsEl,
+        row({ id: null, label: h('span', { class: 'perm-name' }, 'Everyone'), sub: 'Applies to every Jellyfin user', granted: new Set(defaults),
+          save: (list) => api.put('/permissions/defaults', { permissions: list }) }),
+        people.map((u) => row({ id: u.id,
+          label: h('span', { class: 'user-cell' }, avatar(u.id, u.name, { size: 24, hasImage: u.has_image }), h('span', { class: 'perm-name' }, u.name)),
+          sub: u.is_disabled ? 'Disabled in Jellyfin' : null, granted: new Set(u.permissions || []),
+          save: async (list) => { const r = await api.put(`/permissions/users/${u.id}`, { permissions: list }); u.permissions = r.permissions; } })));
+    }
+    paint();
+
+    mount(accessSlot,
+      h('p', { class: 'help perm-intro' }, 'Jellyfin administrators',
+        admins.length ? [' (', admins.map((u) => u.name).join(', '), ')'] : null,
+        ' always have full access. Everyone else gets what you switch on here. The year recap is always personal, whatever is granted.'),
+      h('div', { class: 'table-scroll' },
+        h('table', { class: 'perm-table' },
+          h('thead', null, h('tr', null, h('th', { scope: 'col' }, 'Who'),
+            perms.map((pm) => h('th', { scope: 'col', id: `perm-h-${pm.key}`, title: pm.description }, pm.label)), h('th', null, h('span', { class: 'sr-only' }, 'Status')))),
+          rowsEl)),
+      problem,
+      h('dl', { class: 'perm-legend' }, perms.map((pm) => [h('dt', null, pm.label), h('dd', null, pm.description)])));
   }
 
   const FIELDS = [

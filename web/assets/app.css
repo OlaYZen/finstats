@@ -965,3 +965,25 @@ a.chip-link:hover { border-color: var(--accent); color: var(--text); text-decora
 .cl-items strong { color: #f0f0f0; font-weight: 600; }
 .cl-code { padding: 1px 5px; border-radius: 4px; background: var(--bg-sunken); border: 1px solid var(--border-soft); font-size: 12px; }
 @media (max-width: 560px) { .cl-date { margin-left: 0; flex-basis: 100%; } }
+
+/* ------------------------------------------------------------ permissions */
+.perm-intro { margin: 0 0 12px; max-width: 78ch; }
+.table-scroll { overflow-x: auto; }
+.perm-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.perm-table thead th { padding: 6px 12px 8px; text-align: center; font-size: 11.5px; font-weight: 600; color: var(--text-muted); white-space: nowrap; border-bottom: 1px solid var(--border-soft); }
+.perm-table thead th:first-child { text-align: left; padding-left: 0; }
+.perm-table tbody tr + tr { border-top: 1px solid var(--border-soft); }
+.perm-table tbody tr:first-child { background: color-mix(in srgb, var(--accent) 6%, transparent); }
+.perm-who { padding: 9px 12px 9px 0; text-align: left; font-weight: 400; white-space: nowrap; }
+.perm-table tbody tr:first-child .perm-who { padding-left: 10px; }
+.perm-name { font-weight: 550; color: var(--text); }
+.perm-sub { display: block; margin-top: 1px; color: var(--text-faint); font-size: 12px; }
+.perm-cell { padding: 9px 12px; text-align: center; }
+.perm-cell .switch { vertical-align: middle; }
+.perm-saved { width: 76px; padding-left: 4px; white-space: nowrap; }
+.switch:disabled { cursor: not-allowed; }
+.switch.is-inherited { opacity: .45; }
+.perm-legend { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 5px 16px; margin: 16px 0 0; font-size: 12.5px; }
+.perm-legend dt { color: var(--text); font-weight: 550; }
+.perm-legend dd { margin: 0; color: var(--text-muted); }
+@media (max-width: 560px) { .perm-legend { grid-template-columns: minmax(0, 1fr); } .perm-legend dd { margin-bottom: 6px; } }

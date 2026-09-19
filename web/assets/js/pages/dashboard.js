@@ -1,6 +1,6 @@
 import { h, icon, mount } from '../dom.js';
 import { api, isAbort, soft } from '../api.js';
-import { state, isAdmin, readDays, saveDays } from '../state.js';
+import { state, readDays, saveDays, can } from '../state.js';
 import { replaceQuery } from '../router.js';
 import { pageHeader, card, filterBar, dataView, sk, topList, playsTable, emptyState } from '../components.js';
 import { activityCard, heatmapCard, overviewTiles, nowPlayingList, insightTiles, genresCard, failedLoginsCard } from '../widgets.js';
@@ -10,8 +10,8 @@ import { recapBanner } from './recap.js';
 export default function dashboard(ctx) {
   ctx.title('Dashboard');
   let days = readDays(ctx.query);
-  let userId = isAdmin() ? ctx.query.get('user_id') || '' : '';
-  const admin = isAdmin();
+  let userId = can('see_everyone') ? ctx.query.get('user_id') || '' : '';
+  const admin = can('see_everyone'); // sees the whole server rather than only themselves
 
   // ---- now playing (live; not scoped by the filters below)
   const npCount = h('span', { class: 'count-pill mono', hidden: true });
@@ -55,9 +55,9 @@ export default function dashboard(ctx) {
       const nothingYet = days === 0 && !userId && !(overview.totals && overview.totals.plays);
       if (nothingYet) {
         return emptyState('No plays recorded yet',
-          admin ? 'finstats is now watching your Jellyfin server — new plays show up here as they happen. You can also bring in your history from Jellystat.'
+          can('manage') ? 'finstats is now watching your Jellyfin server — new plays show up here as they happen. You can also bring in your history from Jellystat.'
                 : 'Your plays show up here as they happen.',
-          admin ? h('a', { class: 'btn btn-primary', href: '/settings#import' }, icon('upload', 14), 'Import from Jellystat') : null);
+          can('manage') ? h('a', { class: 'btn btn-primary', href: '/settings#import' }, icon('upload', 14), 'Import from Jellystat') : null);
       }
       const usersMode = admin && !userId;
       return [

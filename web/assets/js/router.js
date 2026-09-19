@@ -1,7 +1,7 @@
 // History-API router with a per-page lifecycle: every page gets an AbortSignal
 // and timer helpers that are torn down on the next navigation.
 
-import { state } from './state.js';
+import { state, can } from './state.js';
 
 const routes = [];
 let current = null; // {cleanup: [], abort}
@@ -73,7 +73,7 @@ function render(scroll = true) {
   if (redirect) { history.replaceState(null, '', redirect); return render(scroll); }
 
   let m = match(url.pathname);
-  if (m && m.route.admin && !(state.user && state.user.is_admin)) {
+  if (m && m.route.perm && !can(m.route.perm)) {
     history.replaceState(null, '', '/');
     return render(scroll);
   }

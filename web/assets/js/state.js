@@ -5,10 +5,12 @@ import { api, clearViewCache } from './api.js';
 
 export const state = {
   status: null, // {configured, version, server_name?}
-  user: null,   // {id, name, is_admin, has_image}
+  user: null,   // {id, name, is_admin, has_image, permissions: {see_everyone, see_network, see_server, manage}}
 };
 
 export const isAdmin = () => !!(state.user && state.user.is_admin);
+/** What the signed-in user may see or do. The server enforces all of it; this only decides what to draw. */
+export const can = (perm) => !!(state.user && (state.user.is_admin || (state.user.permissions && state.user.permissions[perm])));
 
 export const RANGES = [
   { value: 7, label: '7d', long: 'Last 7 days' },

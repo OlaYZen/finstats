@@ -1,6 +1,6 @@
 import { h, num, durEl, relEl, compact, duration, durationExact } from '../dom.js';
 import { api } from '../api.js';
-import { isAdmin, readDays, saveDays } from '../state.js';
+import { readDays, saveDays, can } from '../state.js';
 import { replaceQuery } from '../router.js';
 import { pageHeader, card, filterBar, dataView, sk, avatar, emptyState, topList, chip, playsTable, statTile } from '../components.js';
 import { activityCard, heatmapCard, genresCard } from '../widgets.js';
@@ -85,7 +85,7 @@ export function userPage(ctx) {
           card({ title: 'Clients', sub: 'By plays', body: bucketList(d.clients) })),
         Array.isArray(d.genres) ? genresCard(d.genres) : null,
         card({ title: 'Devices', cls: 'card-flush', body: devicesTable(d.devices) }),
-        isAdmin() ? card({ title: 'IP addresses', sub: 'Where this user has played from', cls: 'card-flush', body: ipsTable(d.ips) }) : null,
+        can('see_network') ? card({ title: 'IP addresses', sub: 'Where this user has played from', cls: 'card-flush', body: ipsTable(d.ips) }) : null,
         card({ title: 'Recent plays', cls: 'card-flush',
           actions: h('a', { class: 'btn btn-ghost btn-sm', href: `/activity?user_id=${encodeURIComponent(id)}&days=${days}` }, 'View all'),
           body: playsTable(recent.rows, { showUser: false, onOpen: (p) => openPlayModal(p, { onDeleted: () => dv.load() }), empty: 'No plays in this range.' }) }),

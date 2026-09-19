@@ -1,6 +1,6 @@
 import { h, icon, debounce, num } from '../dom.js';
 import { api } from '../api.js';
-import { isAdmin, readDays, saveDays, rangeLong } from '../state.js';
+import { readDays, saveDays, rangeLong, can } from '../state.js';
 import { replaceQuery } from '../router.js';
 import { pageHeader, card, filterBar, dataView, sk, playsTable, pagination, segmented } from '../components.js';
 import { openPlayModal } from '../playmodal.js';
@@ -19,7 +19,7 @@ export default function activity(ctx) {
   const q0 = ctx.query;
   const f = {
     days: readDays(q0),
-    user_id: isAdmin() ? q0.get('user_id') || '' : '',
+    user_id: can('see_everyone') ? q0.get('user_id') || '' : '',
     method: q0.get('method') || '',
     type: q0.get('type') || '',
     q: q0.get('q') || '',
@@ -37,7 +37,7 @@ export default function activity(ctx) {
     render: (data) => {
       summary.textContent = `${num(data.total)} ${data.total === 1 ? 'play' : 'plays'} · ${rangeLong(f.days).toLowerCase()}`;
       return [
-        playsTable(data.rows, { showUser: isAdmin(), onOpen: (p) => openPlayModal(p, { onDeleted: () => dv.load() }),
+        playsTable(data.rows, { showUser: can('see_everyone'), onOpen: (p) => openPlayModal(p, { onDeleted: () => dv.load() }),
           empty: 'No plays match these filters. Try a longer range or clear the search.' }),
         data.total > PER_PAGE ? pagination({ page: data.page || f.page, perPage: data.per_page || PER_PAGE, total: data.total,
           onPage: (p) => { f.page = p; apply(false); window.scrollTo({ top: 0 }); } }) : null,

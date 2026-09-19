@@ -2,7 +2,7 @@
 
 import { h, icon, num, compact, duration, durationExact, durEl, relEl, initials, episodeCode, methodLabel, pct, mount } from './dom.js';
 import { api, imgItem, imgUser, isAbort, recordRequests, viewCacheGet, viewCacheSet } from './api.js';
-import { RANGES, userList, isAdmin } from './state.js';
+import { RANGES, userList, can } from './state.js';
 
 // ---------------------------------------------------------------- layout bits
 export function pageHeader(title, sub, right) {
@@ -265,7 +265,7 @@ export function userCombobox({ value, onChange, signal }) {
 export function filterBar({ days, onDays, userId, onUser, signal, extra = [] }) {
   return h('div', { class: 'filters', role: 'group', 'aria-label': 'Filters' },
     rangeControl(days, onDays),
-    onUser && isAdmin() ? userCombobox({ value: userId || '', onChange: onUser, signal }) : null,
+    onUser && can('see_everyone') ? userCombobox({ value: userId || '', onChange: onUser, signal }) : null,
     extra);
 }
 
@@ -392,7 +392,7 @@ export function completionEl(p) {
 /** rows: Play[]; onOpen(play, rowEl) opens the detail modal. */
 export function playsTable(rows, { showUser = true, onOpen, empty = 'No plays match these filters.' } = {}) {
   if (!rows || !rows.length) return emptyState(empty);
-  const admin = isAdmin();
+  const admin = can('see_network'); // the IP column
   return h('div', { class: 'table-scroll' }, h('table', { class: 'table table-hover plays' },
     h('thead', null, h('tr', null,
       showUser ? h('th', null, 'User') : null, h('th', null, 'Title'), h('th', null, 'When'), h('th', { class: 'r' }, 'Watched'),

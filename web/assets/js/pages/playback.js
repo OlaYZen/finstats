@@ -1,6 +1,6 @@
 import { h, humanize, store } from '../dom.js';
 import { api, soft } from '../api.js';
-import { isAdmin, readDays, saveDays } from '../state.js';
+import { readDays, saveDays, can } from '../state.js';
 import { replaceQuery } from '../router.js';
 import { pageHeader, card, chartCard, filterBar, dataView, sk, segmented } from '../components.js';
 import { bucketList, methodsBar, simpleColumns, simpleColumnsTable, clientMethods, methodLegend } from '../charts.js';
@@ -12,7 +12,7 @@ const chLabel = (x) => ({ 1: 'Mono', 2: 'Stereo', 6: '5.1', 8: '7.1' }[x] || (/^
 export default function playback(ctx) {
   ctx.title('Playback');
   let days = readDays(ctx.query);
-  let userId = isAdmin() ? ctx.query.get('user_id') || '' : '';
+  let userId = can('see_everyone') ? ctx.query.get('user_id') || '' : '';
   let metric = store.get('finstats.methodMetric', 'plays') === 'watch_s' ? 'watch_s' : 'plays';
   const view = h('div', { class: 'stack' });
 
@@ -80,7 +80,7 @@ function insightCards(ins) {
   const clients = card({ title: 'Which clients transcode', sub: 'Plays per client, split by play method', actions: methodLegend(), cls: 'card-legend', body: clientMethods(ins.client_methods) });
   const completion = card({ title: 'How far people get', sub: 'Movies and episodes, by where playback stopped',
     body: bucketList(ins.completion, { watch: false, empty: 'No movie or episode plays in this range.' }) });
-  const network = isAdmin() && net.length ? card({ title: 'Network', sub: 'Where plays came from', body: bucketList(net) }) : null;
+  const network = can('see_network') && net.length ? card({ title: 'Network', sub: 'Where plays came from', body: bucketList(net) }) : null;
   const behaviour = beh.plays_measured > 0 ? card({ title: 'Viewing behaviour', sub: `Based on ${num(beh.plays_measured)} live ${beh.plays_measured === 1 ? 'play' : 'plays'}`,
     body: h('dl', { class: 'kpis' },
       h('div', null, h('dt', null, 'Pauses per play'), h('dd', { class: 'mono' }, one(beh.avg_pauses))),
