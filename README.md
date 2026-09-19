@@ -1,202 +1,220 @@
-# finstats
+<h1 align="center">finstats</h1>
 
-Playback statistics for [Jellyfin](https://jellyfin.org) — who watched what, when, on which
-device, from where, and whether your server had to transcode it.
+<p align="center">
+  <b>See what your Jellyfin server is really doing.</b><br>
+  Who is watching, what they watch, how it streams — and your year in review.<br>
+  One tiny container. No database server. Set up in two minutes.
+</p>
 
-One small Rust binary. One SQLite file. No Node, no Postgres, no background job runner.
+<p align="center">
+  <img src="docs/screenshots/dashboard.png" alt="The finstats dashboard: two live streams, watch-time tiles and an activity chart" width="100%">
+</p>
 
-- **Light** — ~10 MB binary, ~20 MB of RAM, a ~25 MB Docker image. The web UI is embedded
-  in the binary and has zero JavaScript dependencies.
-- **Sign in with Jellyfin** — your Jellyfin username and password. finstats never stores
-  passwords and creates its own API key during setup.
-- **Collects what Jellyfin exposes, and what happens in between** — per play: user, item,
-  series/season/episode, client, device, app version, IP address (and whether it was on your
-  LAN), play method, transcode reasons and hardware acceleration, video codec / resolution /
-  HDR range, audio codec / channels / language, subtitles, container, bitrate, time watched
-  vs. time paused, where playback resumed from and where it stopped — plus a **timeline of
-  the play itself**: every pause, skip, audio/subtitle switch and direct-play→transcode flip.
-- **Answers the questions an admin actually has** — How many streams run at once, and how many
-  of them transcode? Which clients force transcodes? How much data leaves the house? How far
-  do people get before they give up? What is my library made of (resolution, codecs, HDR,
-  size per decade), what are the biggest titles, and **which ones has nobody ever watched**
-  (checked against both finstats' history and Jellyfin's own played flags)?
-- **Knows the server too** — version and pending updates/restarts, disk usage per library
-  (Jellyfin 10.11+), plugins, scheduled task results, every registered device, the server
-  activity log, and failed sign-ins.
-- **Brings your history along** — imports Jellystat backups, including very large ones.
+## Why finstats
 
-## Quick start
+Jellyfin tells you what is playing right now. It does not tell you that one client transcodes
+everything it touches, that four people stream at once every Saturday, or that a third of your
+disk is films nobody has ever pressed play on.
+
+finstats watches your server quietly in the background and turns that into answers. It is a
+lightweight alternative to Jellystat and Streamystats: a single small program with its own
+built-in database, using about **20 MB of memory**. Nothing else to install, nothing to maintain.
+
+Already using Jellystat? [Bring your history with you](#moving-from-jellystat) — it takes seconds.
+
+## What you get
+
+### A live view of your server
+See every stream as it happens: who, what, on which device and from where, whether it plays
+directly or transcodes, and why. A status bar keeps the essentials in sight on every page.
+
+### Answers, not just charts
+
+<img src="docs/screenshots/playback.png" alt="Playback page: play methods, concurrent streams over time, which clients transcode, how far people get" width="100%">
+
+- **How busy does it get?** Peak concurrent streams over time, and how many of them transcode.
+- **Which apps cause transcoding?** Every client, split by direct play, remux and transcode, with the reasons Jellyfin reports.
+- **How much leaves the house?** Local versus remote plays and an estimate of data streamed.
+- **Do people finish what they start?** See how far viewers get before they stop.
+- **What is my library made of?** Resolutions, codecs, HDR, size per decade, what was added when —
+  and the big one: **titles nobody has ever watched**, sorted by how much space they take.
+
+### Every play, down to the pause button
+
+<img align="right" src="docs/screenshots/timeline.png" alt="Play details with a timeline: started, paused, resumed, subtitles switched, skipped ahead, stopped" width="46%">
+
+Other tools store one line per play. finstats records what happened *during* it: every pause and
+resume, every skip, audio and subtitle switches, the moment a direct play turned into a transcode,
+where playback picked up and where it stopped.
+
+Alongside the usual details — device, app version, IP address and whether it was on your network,
+video and audio format, bitrate, time watched versus time paused.
+
+Renamed a file? Jellyfin treats it as a new item and orphans its history. finstats notices and
+re-attaches the old plays to the new entry.
+
+<br clear="right">
+
+### Your year in review
+
+<img src="docs/screenshots/recap.png" alt="Recap: 399 hours watched in 2025, rank among viewers, most watched show with poster" width="100%">
+
+A personal recap for every user, in the spirit of Spotify Wrapped: hours watched, top shows, movies,
+music and genres, the month-by-month story of the year, and a viewing personality — night owl,
+weekend warrior, binge watcher and more. Plus the records worth bragging about: biggest binge,
+longest daily streak, most rewatched title, the oldest film you watched.
+
+Each person sees only their own. Even administrators.
+
+### Private by design
+- **Sign in with your Jellyfin account.** No new passwords, and finstats never stores yours.
+- **Users see only themselves.** Let family and friends sign in if you like: they get their own
+  statistics and recap — never other people's activity, IP addresses or file paths.
+- **Nothing leaves your network.** No telemetry, no external services, no fonts or scripts loaded
+  from the internet. Posters are fetched from your own Jellyfin.
+- **Read-only.** finstats never changes anything on your Jellyfin server and never starts a library scan.
+
+## Get started
+
+You need Docker and a Jellyfin server (10.9 or newer).
+
+```sh
+docker run -d --name finstats --restart unless-stopped \
+  -p 8080:8080 \
+  -e TZ=Europe/London \
+  -v "$PWD/data:/data" \
+  finstats:latest
+```
+
+<details>
+<summary>Prefer Docker Compose?</summary>
 
 ```yaml
-# docker-compose.yml
 services:
   finstats:
-    build: .            # or image: finstats:latest once you've built it
+    image: finstats:latest
     container_name: finstats
     restart: unless-stopped
     ports:
       - "8080:8080"
     environment:
-      TZ: Europe/London   # your timezone — used for "per day" and "hour of day" stats
+      TZ: Europe/London   # your timezone
     volumes:
       - ./data:/data
 ```
 
-```sh
-docker compose up -d --build
-```
+</details>
 
-No Compose plugin? Plain Docker does the same:
+There is no published image yet — build it once from this repository with
+`docker build -t finstats:latest .`
 
-```sh
-docker build -t finstats:latest .
-docker run -d --name finstats --restart unless-stopped \
-  -e TZ=Europe/London -p 8080:8080 -v "$PWD/data:/data" finstats:latest
-```
+Then open **http://your-server:8080** and:
 
-Open `http://your-server:8080` and follow the two setup steps:
+1. Enter your Jellyfin address and test the connection.
+2. Sign in with a Jellyfin administrator account.
 
-1. Enter your Jellyfin address (for example `http://jellyfin:8096`) and test the connection.
-2. Sign in with a Jellyfin **administrator** account.
+That's it. finstats starts watching immediately and fills in your library in the background.
+Set `TZ` to your own timezone so "today" and "evening" mean what you expect.
 
-That's it. finstats creates an API key named `finstats` in Jellyfin (Dashboard → API Keys),
-starts watching sessions, and copies your library and users in the background.
+> Inside a container, `localhost` is the container itself. Use your server's address
+> (for example `http://192.168.1.10:8096`) or the Jellyfin container's name.
 
-> The container runs as UID/GID 1000. If `./data` is owned by someone else, either
-> `chown 1000:1000 data` or add `user: "<uid>:<gid>"` to the service.
+## Moving from Jellystat
 
-## Importing from Jellystat
+Your history comes with you. In Jellystat:
 
-In Jellystat:
+1. Open **Settings → Backup**
+2. Select only **Activity** (it turns purple)
+3. Under settings click **Settings**, scroll to the end and start a backup
+4. Go back to **Backups**, open **Actions** on the new backup and click **Download**
 
-1. Open your Jellystat instance
-2. Navigate to **Settings** and select the **Backup** tab
-3. Select only **Activity** (it turns purple when selected)
-4. Under settings click **Settings**
-5. Scroll all the way to the end and start a backup
-6. Navigate back to **Backups**
-7. Select **Actions** on the backup you just took once it is visible and click **Download**
+In finstats, open **Settings → Import from Jellystat** and drop the file in.
 
-Then in finstats: **Settings → Import from Jellystat**, and drop the file in.
+Large backups are no problem — a 350 MB file imports in a few seconds — and importing the same
+file twice is safe. One thing to know: Jellystat never recorded what happens during a play, so
+imported history has no pause-and-skip timelines. Everything finstats records from now on does.
+[How imported data is interpreted →](docs/jellystat-import.md)
 
-- Backups that also contain libraries, items and users are fine — finstats uses those tables
-  to fill in anything it has not synced from Jellyfin itself.
-- Importing the same backup twice is safe. Plays are de-duplicated by their Jellystat id.
-- The file is streamed to disk and parsed line by line, so a 350 MB backup imports in a few
-  seconds without a memory spike. An import is a single transaction: it either fully
-  succeeds or changes nothing.
+## Settings
 
-Headless alternative:
+Everything works out of the box. If you want to tune it, **Settings** in the app has:
 
-```sh
-docker compose run --rm -v /path/to/backup.jsonl:/backup.jsonl:ro finstats import-jellystat /backup.jsonl
-```
-
-### How Jellystat data is interpreted
-
-| Jellystat field | finstats |
+| | |
 |---|---|
-| `ActivityDateInserted` | The **end** of the play. Start = end − `PlaybackDuration`. |
-| `NowPlayingItemId` + `EpisodeId` | For episodes the first is the *series*, the second the episode. |
-| `PlayState.PositionTicks` | Not imported as a position — Jellystat usually captures it when the session is first seen, not when it stops. Completion for imported plays is *time watched ÷ runtime* instead. |
-| `PlayMethod: Transcode` with video *and* audio copied | Stored as `DirectStream` (a remux), same as for live plays. |
-| `jf_playback_reporting_plugin_data` | Skipped: Jellystat already folds these rows into its activity table. |
+| **Let other users sign in** | Off by default. When on, non-admin Jellyfin users can sign in and see their own statistics only. |
+| **Follow Jellyfin's library scan** | On by default. finstats refreshes its copy of your library right after Jellyfin's own scheduled scan — no second schedule to manage. |
+| **Check for playback every** | How often finstats looks for streams. Default 5 seconds. |
+| **Treat a restart as the same play** | A stream that stops and resumes within 10 minutes counts as one viewing. |
+| **Ignore plays shorter than** | Leave accidental clicks out of the statistics. |
 
-## Upgrading
-
-Pull/rebuild and restart — the database migrates itself on start-up:
-
-```sh
-docker build -t finstats:latest . && docker rm -f finstats
-docker run -d --name finstats …        # the same run command as before; ./data is kept
-```
-
-Play timelines, pause/skip counts and resume points only exist for plays recorded live by
-finstats 0.2+; Jellystat never captured them, so imported plays show none.
-
-Every release is described in [`CHANGELOG.md`](CHANGELOG.md). The same file is compiled into
-the binary and shown in the app under **Patch notes**, where a dot on the tab tells you an
-update has landed since you last looked.
-
-## Configuration
-
-Everything is optional.
+<details>
+<summary>Environment variables</summary>
 
 | Variable | Default | |
 |---|---|---|
-| `TZ` | UTC | Timezone for day buckets and the hour-of-day heatmap. |
-| `FINSTATS_BIND` | `0.0.0.0:8080` | Listen address. |
-| `FINSTATS_DATA_DIR` | `/data` in Docker, `./data` otherwise | Database and image cache. |
-| `FINSTATS_TRUST_PROXY` | off | Set to `1` behind a reverse proxy so sign-in rate limiting sees the real client IP (`X-Forwarded-For`). |
-| `JELLYFIN_URL` + `JELLYFIN_API_KEY` | – | Skip the setup wizard. Both or neither. Takes precedence over the wizard's values. |
-| `RUST_LOG` | `finstats=info` | Log filter, e.g. `finstats=debug`. |
+| `TZ` | UTC | Your timezone, for per-day and hour-of-day statistics. |
+| `FINSTATS_BIND` | `0.0.0.0:8080` | Address to listen on. |
+| `FINSTATS_DATA_DIR` | `/data` | Where the database and poster cache live. |
+| `FINSTATS_TRUST_PROXY` | off | Set to `1` behind a reverse proxy so sign-in rate limiting sees real client addresses. |
+| `JELLYFIN_URL` + `JELLYFIN_API_KEY` | – | Skip the setup wizard. Set both or neither. |
+| `RUST_LOG` | `finstats=info` | Log detail, e.g. `finstats=debug`. |
 
-In the UI (**Settings**, administrators only):
+</details>
 
-- **Let other users sign in** — off by default. When on, non-admin Jellyfin users can sign in
-  and see *only their own* statistics; IP addresses, other users, file paths, the server log
-  and settings stay hidden from them. This is enforced by the server, not the UI.
-- **Follow Jellyfin's library scan** — on by default. finstats never starts a scan on Jellyfin; it
-  only reads. With this on, the (large) library read happens right after Jellyfin's own
-  *Scan Media Library* scheduled task finishes — never on a separate timer and never mid-scan —
-  so Jellyfin's schedule is the only schedule. A weekly safety-net read covers servers that rely
-  on real-time monitoring. Turn it off to use a plain interval instead.
-- **Session polling** (default 5 s), **library read interval** (default 6 h; only used when not
-  following Jellyfin's scan), **merge window** (default 10 min — a play that resumes on the same
-  device within the window continues the same record instead of creating a new one) and
-  **ignore plays shorter than**.
+## Updating
 
-## How it works
+Rebuild or pull the new image and start the container again with the same command. Your data
+lives in the `data` folder and upgrades itself on start-up. After an update, the **Patch notes**
+tab shows a dot until you have read what changed — the same notes live in [CHANGELOG.md](CHANGELOG.md).
 
+## Questions
+
+**Does it slow Jellyfin down?**
+No. It asks Jellyfin one small question every few seconds and reads your library only after
+Jellyfin has finished its own scan.
+
+**Where is my data, and how do I back it up?**
+In one file: `data/finstats.db`. Copy it while finstats is stopped, or run
+`sqlite3 data/finstats.db ".backup backup.db"` while it is running.
+
+**Can I put it behind a reverse proxy?**
+Yes. Forward to port 8080 and set `FINSTATS_TRUST_PROXY=1`. Sign-in cookies are marked secure
+automatically when the proxy reports HTTPS.
+
+**How do I start over?**
+Stop the container, delete the `data` folder, start it again. To clean up fully, also remove the
+`finstats` API key in Jellyfin (Dashboard → API Keys).
+
+**Is it safe to expose to the internet?**
+It is built for it — Jellyfin-backed sign-in, rate limiting, hashed sessions, a strict content
+security policy — but like anything self-hosted, a reverse proxy with HTTPS is strongly
+recommended. [Security details →](docs/security.md)
+
+## For developers
+
+finstats is written in Rust with a dependency-free web UI compiled into the binary.
+
+```sh
+cargo build --release
+FINSTATS_DATA_DIR=./data ./target/release/finstats
+cargo test
 ```
-Jellyfin ──/Sessions every 5 s──▶ collector ──▶ SQLite ◀── stats API ◀── embedded web UI
-         ──/Users, /Items, /Devices, /System/*, played flags (periodic)──▶ sync ──┘
-```
 
-- A play is written the moment it is first seen and refreshed every 30 s while it runs, so a
-  restart loses seconds, not the play. Only time spent *not paused* counts as watched.
-- Posters are proxied through finstats and cached on disk, so your browser never needs to
-  reach Jellyfin directly (it often can't, when Jellyfin only lives on the Docker network).
-- Backup: copy `data/finstats.db` (plus `-wal`/`-shm` if present) — or
-  `sqlite3 data/finstats.db ".backup backup.db"` while running.
+- [HTTP API](docs/api.md) — the contract the web UI is built on
+- [How Jellystat data is interpreted](docs/jellystat-import.md)
+- [Security model](docs/security.md)
+- [Patch notes](CHANGELOG.md)
 
-## Security notes
-
-- Sign-in is checked against Jellyfin on every login; the Jellyfin session that check creates
-  is ended immediately. finstats sessions are random 256-bit tokens, stored hashed, sent as an
-  `HttpOnly; SameSite=Lax` cookie (`Secure` when served over HTTPS via a proxy).
-- Sign-in attempts are rate limited per IP (10 per 5 minutes).
-- The Jellyfin API key is stored in `finstats.db`. Protect the data directory accordingly.
-- Until setup is completed, anyone who can reach the port can start the wizard — but finishing
-  it requires a Jellyfin administrator's credentials.
-- Writes are refused when the `Origin` header doesn't match; a strict Content-Security-Policy
-  is sent with every response; the UI loads nothing from third parties (fonts are bundled).
-
-## Contributing safely
-
-The database (`data/finstats.db`) contains your users, their IP addresses and your Jellyfin
-API key, and Jellystat backups contain your whole viewing history. Both are ignored by git and
-by the Docker build. For a second lock, enable the bundled hook once per clone — it refuses
-to commit databases, backups, `.env` files or anything over 2 MB, even when force-added:
+The database holds your users, their IP addresses and your Jellyfin API key, and a Jellystat
+backup is a complete viewing history. Both are ignored by git. Before contributing, switch on the
+bundled commit guard as a second lock:
 
 ```sh
 git config core.hooksPath .githooks
 ```
 
-## Building from source
-
-```sh
-cargo build --release
-FINSTATS_DATA_DIR=./data ./target/release/finstats
-```
-
-Requires Rust 1.85+ and a C compiler (SQLite is compiled in). In debug builds the web UI is
-read from `web/` at runtime, so you can edit and refresh. The HTTP API is documented in
-[`docs/api.md`](docs/api.md).
-
-Jellyfin 10.9 and newer are supported (responses are requested in a fixed JSON casing, so
-both the 10.x and newer API generations work).
-
 ## License
 
-MIT. Bundled fonts: Inter and JetBrains Mono, both SIL Open Font License 1.1.
+MIT. Bundled fonts: Inter and JetBrains Mono, both under the SIL Open Font License 1.1.
+
+<sub>Screenshots show generated demo data: invented users, titles and artwork.</sub>
