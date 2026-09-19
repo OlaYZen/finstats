@@ -298,7 +298,7 @@ const RESOLUTION_SQL: &str = "CASE
     WHEN p.width >= 700 OR p.height >= 400 THEN '480p'
     ELSE 'SD' END";
 
-const CHANNELS_SQL: &str = "CASE p.audio_channels WHEN 1 THEN 'Mono' WHEN 2 THEN 'Stereo'
+const CHANNELS_SQL: &str = "CASE p.audio_channels WHEN 0 THEN NULL WHEN 1 THEN 'Mono' WHEN 2 THEN 'Stereo'
     WHEN 6 THEN '5.1' WHEN 8 THEN '7.1' ELSE p.audio_channels || ' ch' END";
 
 fn top(conn: &Connection, cond: &Cond, kind: &str, limit: i64, by_plays: bool) -> Result<Vec<Value>> {
