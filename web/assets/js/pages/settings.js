@@ -4,7 +4,7 @@ import { pageHeader, card, sk, toggle, setBusy, inlineError, errorState, facts, 
 
 const TASK_LABEL = {
   sync_users: ['Sync users', 'Names, roles and last-seen times from Jellyfin'],
-  sync_libraries: ['Sync libraries and items', 'Movies, series, episodes and music, with file details'],
+  sync_libraries: ['Read libraries and items', 'Copies titles and file details from Jellyfin. Read-only: it never starts a scan on Jellyfin'],
   sync_events: ['Sync server log', 'Jellyfin’s activity log: sign-ins, failed logins, tasks'],
   sync_server: ['Server details', 'Version, storage, plugins, scheduled tasks and devices'],
   sync_userdata: ['Watched & favourites', 'Per-user played flags and favourites from Jellyfin'],
@@ -77,31 +77,36 @@ export default function settings(ctx) {
     ]), h('p', { class: 'help' }, 'finstats talks to Jellyfin with its own API key, created during setup. To point finstats at another server, start it with a fresh data directory.'));
   }
 
-  function renderAccess() {
+  /** An immediate-effect setting: a switch that saves on change and confirms next to itself. */
+  function toggleRow({ key, label, help }) {
     const note = h('span', { class: 'saved-note', 'aria-live': 'polite' });
     const err = h('div');
     let noteTimer;
-    const sw = toggle({ checked: settingsData.allow_user_login, labelledby: 'allow-label', describedby: 'allow-help',
+    const sw = toggle({ checked: !!settingsData[key], labelledby: `${key}-label`, describedby: `${key}-help`,
       onChange: async (next, revert) => {
         mount(err, ''); note.replaceChildren(spinner(12));
         try {
-          settingsData = await api.put('/settings', { allow_user_login: next });
+          settingsData = await api.put('/settings', { [key]: next });
           note.replaceChildren(icon('check', 13), 'Saved');
           clearTimeout(noteTimer); noteTimer = setTimeout(() => note.replaceChildren(), 2000);
         } catch (e) {
           revert(!next); note.replaceChildren();
-          mount(err, inlineError('allow-err', `Couldn’t save: ${e.message}`));
+          mount(err, inlineError(`${key}-err`, `Couldn’t save: ${e.message}`));
         }
       } });
-    mount(accessSlot, h('div', { class: 'setting-row' },
-      h('div', null, h('div', { class: 'setting-label', id: 'allow-label' }, 'Let non-admin users sign in'),
-        h('p', { class: 'help', id: 'allow-help' }, 'They sign in with their Jellyfin account and only ever see their own stats. IP addresses and settings stay admin-only.')),
-      h('div', { class: 'setting-control' }, note, sw)), err);
+    return [h('div', { class: 'setting-row' },
+      h('div', null, h('div', { class: 'setting-label', id: `${key}-label` }, label), h('p', { class: 'help', id: `${key}-help` }, help)),
+      h('div', { class: 'setting-control' }, note, sw)), err];
+  }
+
+  function renderAccess() {
+    mount(accessSlot, toggleRow({ key: 'allow_user_login', label: 'Let non-admin users sign in',
+      help: 'They sign in with their Jellyfin account and only ever see their own stats. IP addresses and settings stay admin-only.' }));
   }
 
   const FIELDS = [
     { key: 'poll_interval_s', label: 'Check for playback every', unit: 'seconds', min: 2, max: 60, help: 'How often finstats asks Jellyfin what’s playing. 2–60.' },
-    { key: 'sync_interval_h', label: 'Sync libraries and users every', unit: 'hours', min: 1, max: 168, help: 'Keeps titles, users and file details up to date. 1–168.' },
+    { key: 'sync_interval_h', label: 'Otherwise, re-read the library every', unit: 'hours', min: 1, max: 168, help: 'Only used when finstats is not following Jellyfin’s scan, or the server doesn’t report one. 1–168.' },
     { key: 'merge_window_s', label: 'Treat a restart as the same play within', unit: 'seconds', min: 0, max: 86400, help: 'If the same user resumes the same title on the same device within this window, it counts as one play. 0 turns merging off.' },
     { key: 'min_play_s', label: 'Ignore plays shorter than', unit: 'seconds', min: 0, max: 3600, help: 'Short plays stay in the database but are left out of stats. 0 counts everything.' },
   ];
@@ -151,7 +156,8 @@ export default function settings(ctx) {
         mount(formErr, inlineError('collect-err', `Couldn’t save: ${err.message}`));
       } finally { setBusy(save, false); }
     });
-    mount(collectSlot, form);
+    mount(collectSlot, toggleRow({ key: 'follow_jellyfin_scan', label: 'Follow Jellyfin’s library scan',
+      help: 'finstats never starts a scan on Jellyfin. With this on, it re-reads your library only after Jellyfin’s own “Scan Media Library” task has finished, so Jellyfin’s schedule is the only schedule.' }), form);
   }
 
   // ------------------------------------------------------------ tasks

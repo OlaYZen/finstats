@@ -39,32 +39,65 @@ pub fn spawn(app: &App, id: &'static str) -> bool {
     true
 }
 
+const LIGHT_EVERY_S: i64 = 900;
+const SCAN_CHECK_EVERY_S: i64 = 300;
+/// Even when following Jellyfin's scan, re-read once a week: real-time monitoring adds
+/// items without the scan task ever running.
+const SAFETY_NET_S: i64 = 7 * 86_400;
+
+/// finstats only ever *reads* from Jellyfin; it never starts a scan there. By default the
+/// (expensive) library read simply follows Jellyfin's own "Scan Media Library" task.
 pub async fn scheduler(app: App) {
-    let mut last_full = 0i64;
     let mut last_light = 0i64;
+    let mut last_scan_check = 0i64;
+    let mut last_library: i64 = app
+        .db
+        .call(|c| Ok(db::get_setting(c, "library_synced_at")?.and_then(|v| v.parse().ok()).unwrap_or(0)))
+        .await
+        .unwrap_or(0);
     loop {
-        if app.is_configured() {
+        if let Some(jf) = app.jellyfin() {
             let now = db::now();
-            let interval = app.settings().sync_interval_h.clamp(1, 168) * 3600;
-            if now - last_full >= interval {
-                last_full = now;
+            let settings = app.settings();
+            if now - last_light >= LIGHT_EVERY_S {
+                // Users, the activity log and server details are tiny; keep them fresh.
                 last_light = now;
                 refresh_server_info(&app).await;
                 spawn(&app, "sync_users");
                 spawn(&app, "sync_events");
-                spawn(&app, "sync_libraries");
                 spawn(&app, "sync_server");
+            }
+
+            let timer_due = now - last_library >= settings.sync_interval_h.clamp(1, 168) * 3600;
+            let due = if !settings.follow_jellyfin_scan {
+                timer_due
+            } else if now - last_scan_check >= SCAN_CHECK_EVERY_S {
+                last_scan_check = now;
+                match jf.library_scan_status().await {
+                    Ok(Some((true, _))) => false, // mid-scan: a read now would be half old, half new
+                    Ok(Some((false, Some(finished)))) => {
+                        if finished > last_library {
+                            tracing::info!("Jellyfin finished a library scan; reading the library");
+                        }
+                        finished > last_library || now - last_library >= SAFETY_NET_S
+                    }
+                    Ok(Some((false, None))) => timer_due, // Jellyfin has never scanned: fall back to the timer
+                    Ok(None) => {
+                        tracing::debug!("Jellyfin lists no library scan task; using the timer");
+                        timer_due
+                    }
+                    Err(_) => false,                                 // Jellyfin unreachable; the collector already reports that
+                }
+            } else {
+                false
+            };
+            if due && spawn(&app, "sync_libraries") {
+                last_library = now;
                 spawn(&app, "sync_userdata");
-            } else if now - last_light >= 900 {
-                // Users and the activity log are tiny; keep them fresher than the library.
-                last_light = now;
-                spawn(&app, "sync_users");
-                spawn(&app, "sync_events");
-                spawn(&app, "sync_server");
             }
         }
         tokio::select! {
-            _ = app.wake.notified() => {}
+            _ = app.wake.notified() => { last_scan_check = 0; }
             _ = tokio::time::sleep(Duration::from_secs(60)) => {}
         }
     }
@@ -318,7 +351,12 @@ async fn sync_libraries(app: &App, jf: &Jellyfin) -> Result<String> {
     }
 
     app.tasks.update(ID, "Linking plays to libraries", Some(1.0));
-    app.db.call(|c| backfill_playbacks(c)).await?;
+    app.db
+        .call(move |c| {
+            backfill_playbacks(c)?;
+            db::set_setting(c, "library_synced_at", &started.to_string())
+        })
+        .await?;
     Ok(format!("{total_items} items in {lib_count} libraries"))
 }
 

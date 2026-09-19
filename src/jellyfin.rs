@@ -297,6 +297,17 @@ impl Jellyfin {
         self.get_array("/ScheduledTasks", &[("isHidden", "false".into())]).await
     }
 
+    /// Jellyfin's own "Scan Media Library" task: (is it running right now, when it last finished).
+    /// `None` when the server does not list such a task.
+    pub async fn library_scan_status(&self) -> Result<Option<(bool, Option<i64>)>> {
+        let tasks = self.scheduled_tasks().await?;
+        Ok(tasks.iter().find(|t| t["Key"].as_str() == Some("RefreshLibrary") || t["Name"].as_str() == Some("Scan Media Library")).map(|t| {
+            let running = t["State"].as_str().is_some_and(|s| s != "Idle");
+            let finished = t["LastExecutionResult"]["EndTimeUtc"].as_str().and_then(crate::db::parse_ts);
+            (running, finished)
+        }))
+    }
+
     /// Disk usage per library and system folder. Only exists on Jellyfin 10.11+.
     pub async fn storage(&self) -> Option<Value> {
         self.get_json("/System/Info/Storage", &[]).await.ok()

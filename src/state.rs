@@ -42,8 +42,12 @@ pub struct JfConfig {
     pub from_env: bool,
 }
 
+// `default`: settings saved by an older version simply lack the newer keys.
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(default)]
 pub struct Settings {
+    /// Re-read the library when Jellyfin's own scan task finishes instead of on a timer.
+    pub follow_jellyfin_scan: bool,
     pub allow_user_login: bool,
     pub poll_interval_s: i64,
     pub sync_interval_h: i64,
@@ -53,7 +57,7 @@ pub struct Settings {
 
 impl Default for Settings {
     fn default() -> Self {
-        Self { allow_user_login: false, poll_interval_s: 5, sync_interval_h: 6, merge_window_s: 600, min_play_s: 0 }
+        Self { follow_jellyfin_scan: true, allow_user_login: false, poll_interval_s: 5, sync_interval_h: 6, merge_window_s: 600, min_play_s: 0 }
     }
 }
 
