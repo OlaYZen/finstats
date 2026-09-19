@@ -123,7 +123,8 @@ export function nowPlayingView() {
 
   function update(sessions) {
     const next = new Map();
-    let sameCards = sessions.length === live.size;
+    // An empty view has drawn nothing yet, not even "nothing is playing": zero cards is not "the same cards".
+    let sameCards = sessions.length === live.size && root.hasChildNodes();
     const corrected = [];
     for (const s of sessions) {
       const old = live.get(s.key);
