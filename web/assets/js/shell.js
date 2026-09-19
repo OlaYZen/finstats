@@ -17,6 +17,7 @@ function navItems() {
   const me = state.user;
   return [
     { href: '/', label: 'Dashboard', icon: 'home', exact: true },
+    { href: '/recap', label: 'Recap', icon: 'recap' },
     { href: '/activity', label: 'Activity', icon: 'activity' },
     isAdmin() ? { href: '/users', label: 'Users', icon: 'users' } : { href: `/users/${me.id}`, label: 'My stats', icon: 'user' },
     { href: '/libraries', label: 'Libraries', icon: 'library', also: ['/items'] },

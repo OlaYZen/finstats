@@ -5,6 +5,7 @@ import { replaceQuery } from '../router.js';
 import { pageHeader, card, filterBar, dataView, sk, topList, playsTable, emptyState } from '../components.js';
 import { activityCard, heatmapCard, overviewTiles, nowPlayingList, insightTiles, genresCard, failedLoginsCard } from '../widgets.js';
 import { openPlayModal } from '../playmodal.js';
+import { recapBanner } from './recap.js';
 
 export default function dashboard(ctx) {
   ctx.title('Dashboard');
@@ -83,6 +84,7 @@ export default function dashboard(ctx) {
 
   ctx.root.append(
     pageHeader('Dashboard', state.status && state.status.server_name ? `Playback on ${state.status.server_name}` : 'Playback on your Jellyfin server'),
+    recapBanner(admin),
     h('section', { class: 'np-section', 'aria-label': 'Now playing' }, h('h2', { class: 'section-title' }, 'Now playing', npCount), npBody),
     filters, view);
 
