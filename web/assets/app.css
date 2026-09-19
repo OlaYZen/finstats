@@ -988,3 +988,7 @@ a.chip-link:hover { border-color: var(--accent); color: var(--text); text-decora
 .perm-legend dt { color: var(--text); font-weight: 550; }
 .perm-legend dd { margin: 0; color: var(--text-muted); }
 @media (max-width: 560px) { .perm-legend { grid-template-columns: minmax(0, 1fr); } .perm-legend dd { margin-bottom: 6px; } }
+
+/* ------------------------------------------------------------ two-line table cells */
+.when-cell, .completion-cell { display: inline-flex; flex-direction: column; gap: 2px; }
+.cell-sub { color: var(--text-faint); font-size: 11px; white-space: nowrap; }

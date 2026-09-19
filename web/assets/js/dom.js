@@ -189,6 +189,14 @@ export function relTime(ts) {
   return Math.round(d / (86400 * 365)) + 'y ago';
 }
 
+/** A compact absolute timestamp: "19 Sep, 14:04", with the year once it is not this year. */
+export function shortStamp(ts) {
+  if (!ts) return '';
+  const d = new Date(ts * 1000);
+  const sameYear = d.getFullYear() === new Date().getFullYear();
+  return d.toLocaleString(undefined, { day: 'numeric', month: 'short', ...(sameYear ? {} : { year: 'numeric' }), hour: '2-digit', minute: '2-digit', hour12: false });
+}
+
 export function relEl(ts, cls = 'mono') {
   return h('time', { class: cls, title: dateTime(ts), dateTime: ts ? new Date(ts * 1000).toISOString() : '' }, relTime(ts));
 }

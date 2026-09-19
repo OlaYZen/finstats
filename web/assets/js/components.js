@@ -1,6 +1,6 @@
 // Reusable UI pieces. All of them return DOM nodes.
 
-import { h, icon, num, compact, duration, durationExact, durEl, relEl, initials, episodeCode, methodLabel, pct, mount } from './dom.js';
+import { h, icon, num, compact, duration, durationExact, durEl, relEl, initials, episodeCode, methodLabel, pct, mount, clock, shortStamp } from './dom.js';
 import { api, imgItem, imgUser, isAbort, recordRequests, viewCacheGet, viewCacheSet } from './api.js';
 import { RANGES, userList, can } from './state.js';
 
@@ -384,9 +384,13 @@ export function playTitle(p, { link = true } = {}) {
 export function completionEl(p) {
   if (p.completion == null) return h('span', { class: 'muted mono' }, '–');
   const c = Math.max(0, Math.min(1, p.completion));
-  return h('span', { class: 'completion', title: `Stopped at ${pct(c)}` },
-    h('span', { class: 'meter', role: 'img', 'aria-label': `${pct(c)} watched` }, h('span', { class: 'meter-fill', style: { width: c * 100 + '%' } })),
-    h('span', { class: 'mono' }, pct(c)));
+  // Where playback stopped, as a position in the title. Imported plays never recorded one.
+  const stoppedAt = p.position_s != null && p.runtime_s ? `${clock(p.position_s)} / ${clock(p.runtime_s)}` : null;
+  return h('span', { class: 'completion-cell' },
+    h('span', { class: 'completion', title: stoppedAt ? `Stopped at ${stoppedAt}` : `Stopped at ${pct(c)}` },
+      h('span', { class: 'meter', role: 'img', 'aria-label': `${pct(c)} watched` }, h('span', { class: 'meter-fill', style: { width: c * 100 + '%' } })),
+      h('span', { class: 'mono' }, pct(c))),
+    stoppedAt ? h('span', { class: 'cell-sub mono' }, stoppedAt) : null);
 }
 
 /** rows: Play[]; onOpen(play, rowEl) opens the detail modal. */
@@ -401,7 +405,8 @@ export function playsTable(rows, { showUser = true, onOpen, empty = 'No plays ma
       const tr = h('tr', { tabindex: 0, class: p.active ? 'is-live' : '', 'aria-label': `Open details for ${p.item_name || 'play'}` },
         showUser ? h('td', null, h('a', { class: 'user-cell', href: `/users/${p.user_id}`, onClick: (e) => e.stopPropagation() }, avatar(p.user_id, p.user_name, { size: 22 }), h('span', null, p.user_name))) : null,
         h('td', { class: 'td-title' }, h('div', { class: 'title-cell' }, poster(p.image_item_id, p.series_name || p.item_name, { w: 120, cls: 'poster-xs' }), playTitle(p))),
-        h('td', null, p.active ? h('span', { class: 'badge live' }, h('span', { class: 'badge-dot' }), 'Playing now') : relEl(p.ended_at || p.started_at)),
+        h('td', null, p.active ? h('span', { class: 'badge live' }, h('span', { class: 'badge-dot' }), 'Playing now')
+          : h('span', { class: 'when-cell' }, relEl(p.ended_at || p.started_at), h('span', { class: 'cell-sub mono' }, shortStamp(p.ended_at || p.started_at)))),
         h('td', { class: 'r' }, durEl(p.duration_s)),
         h('td', null, completionEl(p)),
         h('td', null, h('div', { class: 'client-cell' }, h('span', null, p.client || '–'), h('span', { class: 'muted' }, p.device_name || ''))),
