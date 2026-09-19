@@ -95,8 +95,16 @@ No build step, no dependencies, no CDN: vanilla ES modules served from the binar
 element builder, icon map, formatters), `api.js`, `router.js` (History API; the server returns `index.html` for any
 non-`/api`, non-`/assets` path), `components.js`, `charts.js` (hand-rolled SVG), `pages/*.js`. Rules that hold
 everywhere: API/user strings reach the DOM only via `h()`/`textContent` (never `innerHTML` with data); fetches are
-aborted and timers cleared on route change; refetch keeps the previous render at reduced opacity, skeletons only on
-first load; every new card must hide itself when its data is missing (older servers, non-admins, imported plays).
+aborted and timers cleared on route change; every new card must hide itself when its data is missing (older servers,
+non-admins, imported plays). Native `el.append(null)` prints the text "null" — pass possibly-absent nodes through
+`h()` or filter them first.
+
+Pages load through `dataView()` (`components.js`), which is stale-while-revalidate: it records the GET URLs a page's
+`fetch()` issues (they must be fired synchronously when `fetch()` is called), uses them as the cache key, paints a
+remembered result at once, refreshes behind it and only re-renders when the JSON differs. Skeletons appear only after
+150 ms and then stay at least 300 ms. The cache is in-memory per tab and is cleared by `resetCaches()` (sign-out) and
+by any non-GET request. Esc is handled globally in `shell.js` (steps back out of `/libraries/:id`, `/users/:id`,
+`/items/:id`); overlays must keep calling `stopPropagation()` on their own Esc.
 `ux-rules.md` is the checklist each screen is held to. The look is Obsidian's dark theme via the tokens at the top of
 `app.css`; categorical chart colours follow the entity (Movie/Episode/Audio/Other), never rank.
 
