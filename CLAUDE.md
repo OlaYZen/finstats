@@ -121,9 +121,10 @@ aborted and timers cleared on route change; every new card must hide itself when
 non-admins, imported plays). Native `el.append(null)` prints the text "null" — pass possibly-absent nodes through
 `h()` or filter them first.
 
-"Now playing" (`nowPlayingView` in `widgets.js`) is polled every 5 s but ticks locally every second. It only re-syncs to the
-server's position when that means something (pause, a gap over 15 s, or the server being ahead): clients report their
-position to Jellyfin roughly every 10 s, so snapping to every poll would make the clock jump backwards.
+"Now playing" (`nowPlayingView` in `widgets.js`) is polled every 5 s, but **only the 1 s ticker moves a clock** (+1 whole
+second per beat). A poll never repaints it; it only corrects the position when that means something (pause, server > 3 s
+ahead or > 15 s behind — clients report to Jellyfin roughly every 10 s), and even then by setting it one short so the
+change lands on the next beat. Painting from the poll is what made the clock stutter.
 
 Pages load through `dataView()` (`components.js`), which is stale-while-revalidate: it records the GET URLs a page's
 `fetch()` issues (they must be fired synchronously when `fetch()` is called), uses them as the cache key, paints a
