@@ -24,7 +24,7 @@ export function usersPage(ctx) {
           h('th', null, 'Last played'), h('th', null, 'Last title'), h('th', null, 'Last client'), h('th', null, 'Last seen on Jellyfin'))),
         h('tbody', null, users.map((u) => h('tr', { class: u.removed || u.is_disabled ? 'is-dim' : '' },
           h('td', null, h('a', { class: 'user-cell user-cell-lg', href: `/users/${u.id}` }, avatar(u.id, u.name, { size: 30, hasImage: u.has_image }),
-            h('span', null, h('span', { class: 'user-name' }, u.name),
+            h('span', { class: 'user-ident' }, h('span', { class: 'user-name' }, u.name),
               h('span', { class: 'user-tags' }, u.is_admin ? chip('Admin') : null, u.is_disabled ? chip('Disabled') : null, u.removed ? chip('Removed from Jellyfin') : null)))),
           h('td', { class: 'mono r' }, num(u.plays)),
           h('td', { class: 'r' }, durEl(u.watch_s)),

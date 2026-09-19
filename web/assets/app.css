@@ -358,6 +358,9 @@ kbd {
 .user-cell-lg { gap: 11px; }
 .user-name { display: block; font-weight: 550; }
 .user-tags { display: flex; gap: 5px; margin-top: 2px; }
+/* In the users table the tags sit beside the name, so a tagged row is no taller than the others. */
+.user-ident { display: inline-flex; align-items: center; gap: 8px; min-width: 0; }
+.user-ident .user-tags { margin-top: 0; }
 .user-tags:empty { display: none; }
 .title-cell { display: flex; align-items: center; gap: 10px; min-width: 220px; }
 .play-title { min-width: 0; line-height: 1.35; }
