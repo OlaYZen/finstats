@@ -1,11 +1,11 @@
 // Recap — the year in review. The one loud page in an otherwise quiet app:
 // editorial numerals, poster art as the material, one idea per chapter.
 
-import { h, icon, mount, num, duration, durationExact, bytes, pct, parseDay, initials } from '../dom.js';
+import { h, icon, mount, num, duration, durationExact, pct, parseDay } from '../dom.js';
 import { api, imgItem } from '../api.js';
-import { state, isAdmin, userList } from '../state.js';
+import { state } from '../state.js';
 import { replaceQuery } from '../router.js';
-import { dataView, segmented, combobox, poster, avatar, emptyState, sk } from '../components.js';
+import { dataView, segmented, poster, emptyState, sk } from '../components.js';
 import { showTip, hideTip } from '../charts.js';
 
 const BAR = '#9085e9';      // the single series hue used everywhere else in finstats
@@ -36,14 +36,8 @@ const plural = (n, one, many) => `${num(n)} ${Number(n) === 1 ? one : many}`;
 const hour2 = (i) => String(i).padStart(2, '0') + ':00';
 
 // ---------------------------------------------------------------- voice
-/** Every sentence exists in three voices: you, a named person, everyone on the server. */
-function voiceFor(scope, me) {
-  const server = (scope && scope.server_name) || 'this server';
-  if (!scope || !scope.user_id) return { kind: 'server', who: `Everyone on ${server}`, whoLow: 'everyone', your: 'The server’s', yourLow: 'the server’s', server };
-  if (me && scope.user_id === me.id) return { kind: 'you', who: 'You', whoLow: 'you', your: 'Your', yourLow: 'your', server };
-  const name = scope.user_name || 'This user';
-  return { kind: 'named', who: name, whoLow: name, your: `${name}’s`, yourLow: `${name}’s`, server };
-}
+/** A recap is always the signed-in person's own, so the copy speaks to them directly. */
+const YOU = { who: 'You', whoLow: 'you', your: 'Your', yourLow: 'your' };
 
 // ---------------------------------------------------------------- motion
 const reducedMotion = () => typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -185,7 +179,7 @@ function heroChapter(d, v, periodLabel) {
   const strip = tiles.length ? h('div', { class: 'rc-hero-strip', 'aria-hidden': 'true' }, tiles.map((x) =>
     h('img', { src: imgItem(x.image_item_id, 300), alt: '', decoding: 'async', onError: (e) => e.target.remove() }))) : null;
   const isYear = /^\d{4}$/.test(periodLabel);
-  const eyebrow = v.kind === 'server' ? `${isYear ? periodLabel : 'The ' + periodLabel.toLowerCase()} on ${v.server}` : `${v.your} ${isYear ? periodLabel : periodLabel.toLowerCase()}`;
+  const eyebrow = `${v.your} ${isYear ? periodLabel : periodLabel.toLowerCase()}`;
   const hrs = hoursOf(t.watch_s);
   const days = hrs / 24;
   const daysText = days >= 10 ? num(days) : (Math.round(days * 10) / 10).toLocaleString();
@@ -217,7 +211,7 @@ function personaChapter(d, v) {
   if (!p && !hasHours && !hasDays) return null;
   return chapter({
     id: 'persona', eyebrow: 'Viewing personality', cls: 'rc-persona',
-    title: p ? h('span', { class: 'rc-persona-title' }, p.title || 'Creature of habit') : `When ${v.whoLow === 'you' ? 'you watch' : v.kind === 'server' ? 'people watch' : v.whoLow + ' watches'}`,
+    title: p ? h('span', { class: 'rc-persona-title' }, p.title || 'Creature of habit') : 'When you watch',
     lead: p && p.line ? p.line : null,
     body: !hasHours && !hasDays ? null : h('div', { class: 'rc-persona-charts' },
       hasHours ? h('figure', { class: 'rc-figure' }, h('figcaption', null, 'Around the clock', h('span', null, 'Watch time by hour of day')),
@@ -270,7 +264,7 @@ function recordsChapter(d, v, isYear) {
     image: r.first_play.image_item_id || null, name: r.first_play.name }));
   if (r.oldest_title) cards.push(recordCard({ label: 'Oldest title', value: r.oldest_title.year ? `From ${r.oldest_title.year}` : r.oldest_title.name, context: r.oldest_title.name, image: r.oldest_title.image_item_id || null, name: r.oldest_title.name }));
   if (!cards.length) return null;
-  return chapter({ id: 'records', eyebrow: 'Records', title: v.kind === 'you' ? 'The days you’ll remember' : 'The days that stood out', body: h('div', { class: 'rc-records' }, cards) });
+  return chapter({ id: 'records', eyebrow: 'Records', title: 'The days you’ll remember', body: h('div', { class: 'rc-records' }, cards) });
 }
 
 function discoveryChapter(d, v) {
@@ -278,7 +272,7 @@ function discoveryChapter(d, v) {
   if (!x) return null;
   const once = (x.one_and_done || []).filter(Boolean);
   if (!x.new_series && !x.finished_movies && !x.finished_episodes && !once.length) return null;
-  const started = v.kind === 'server' ? 'New shows people started' : v.kind === 'you' ? 'New shows you started' : `New shows ${v.who} started`;
+  const started = 'New shows you started';
   return chapter({
     id: 'discovery', eyebrow: 'Discovery', title: started,
     body: [
@@ -300,50 +294,24 @@ function clientsChapter(d, v) {
   if (!rows.length) return null;
   const total = (d.totals && d.totals.plays) || rows.reduce((a, c) => a + (c.plays || 0), 0) || 1;
   return chapter({
-    id: 'clients', eyebrow: v.kind === 'you' ? 'How you watched' : 'How it was watched', title: `Mostly on ${rows[0].name}.`,
+    id: 'clients', eyebrow: 'How you watched', title: `Mostly on ${rows[0].name}.`,
     body: h('ul', { class: 'rc-chips' }, rows.map((c) => h('li', { class: 'rc-chip' }, h('span', { class: 'rc-chip-name' }, c.name), h('span', { class: 'rc-chip-val mono' }, pct((c.plays || 0) / total), ' of plays')))),
-  });
-}
-
-function serverChapter(d) {
-  const s = d.server;
-  if (!s) return null;
-  const users = (s.top_users || []).filter(Boolean);
-  const share = s.transcode_share;
-  return chapter({
-    id: 'server', eyebrow: 'Server edition', title: `What ${d.scope && d.scope.server_name ? d.scope.server_name : 'the server'} carried`,
-    body: h('div', { class: 'rc-server' },
-      users.length ? h('div', { class: 'rc-board' }, h('h3', { class: 'rc-subhead' }, 'Viewer leaderboard'),
-        h('ol', { class: 'rc-ranked' }, users.map((u, i) => h('li', { class: 'rc-ranked-row' },
-          h('span', { class: 'rc-ranked-n mono' }, String(i + 1)),
-          avatar(u.id, u.name, { size: 36, hasImage: u.has_image }),
-          h('div', { class: 'rc-ranked-main' }, u.id ? h('a', { class: 'rc-link rc-ranked-name', href: `/users/${u.id}` }, u.name || initials(u.name)) : h('span', { class: 'rc-ranked-name' }, u.name || 'Unknown'),
-            h('span', { class: 'rc-ranked-sub' }, plural(u.plays, 'play', 'plays'))),
-          h('span', { class: 'rc-ranked-val mono', title: durationExact(u.watch_s) }, duration(u.watch_s)))))) : null,
-      h('div', { class: 'rc-server-facts' },
-        s.peak_concurrent ? h('div', { class: 'rc-big' }, h('span', { class: 'rc-big-num' }, countUp(s.peak_concurrent)), h('span', { class: 'rc-big-label' }, s.peak_concurrent === 1 ? 'stream at the busiest moment' : 'streams at once, at the busiest moment')) : null,
-        s.data_bytes ? h('div', { class: 'rc-big rc-big-quiet' }, h('span', { class: 'rc-big-num' }, bytes(s.data_bytes)), h('span', { class: 'rc-big-label' }, 'sent to players, estimated from stream bitrates')) : null,
-        share != null ? h('div', { class: 'rc-big rc-big-quiet' }, h('span', { class: 'rc-big-num' }, pct(share)), h('span', { class: 'rc-big-label' }, 'of plays had to be transcoded'),
-          h('span', { class: 'meter meter-wide rc-meter', role: 'img', 'aria-label': `${pct(share)} of plays transcoded` }, h('span', { class: 'meter-fill', style: { width: Math.max(0, Math.min(100, share * 100)) + '%' } }))) : null,
-        s.items_added ? h('div', { class: 'rc-big rc-big-quiet' }, h('span', { class: 'rc-big-num' }, countUp(s.items_added)), h('span', { class: 'rc-big-label' }, `new items in the library${s.bytes_added ? ` · ${bytes(s.bytes_added)}` : ''}`)) : null)),
   });
 }
 
 // ---------------------------------------------------------------- page
 function buildStory(d, me, periodLabel) {
-  const v = voiceFor(d.scope, me);
-  const admin = !!(me && me.is_admin);
-  const verb = v.kind === 'you' ? 'you' : v.kind === 'server' ? 'people' : v.who;
+  const v = YOU;
   const parts = [
     heroChapter(d, v, periodLabel),
     topChapter('shows', d.top_series, {
-      eyebrow: 'Top shows', title: v.kind === 'server' ? 'The show everyone kept coming back to' : `${v.your} most watched show`,
+      eyebrow: 'Top shows', title: `${v.your} most watched show`,
       lead: (t) => `${hoursText(t.watch_s)} hours with ${t.name}${t.episodes ? `, over ${plural(t.episodes, 'episode', 'episodes')}` : ''}.`,
       facts: (t) => [['Watch time', duration(t.watch_s)], t.episodes ? ['Episodes', num(t.episodes)] : null, ['Plays', num(t.plays)]],
       extra: (t) => (t.episodes ? plural(t.episodes, 'episode', 'episodes') : null),
     }),
     topChapter('movies', d.top_movies, {
-      eyebrow: 'Top movies', title: v.kind === 'server' ? `The movie of the ${/^\d{4}$/.test(periodLabel) ? 'year' : 'period'}` : `${v.your} top movie`,
+      eyebrow: 'Top movies', title: `${v.your} top movie`,
       lead: (t) => `${t.name}${t.plays > 1 ? ` — played ${num(t.plays)} times` : ''}, ${duration(t.watch_s)} in total.`,
       facts: (t) => [['Watch time', duration(t.watch_s)], ['Plays', num(t.plays)]],
       extra: (t) => plural(t.plays, 'play', 'plays'),
@@ -359,14 +327,12 @@ function buildStory(d, me, periodLabel) {
     recordsChapter(d, v, /^\d{4}$/.test(periodLabel)),
     discoveryChapter(d, v),
     clientsChapter(d, v),
-    serverChapter(d),
     chapter({
       id: 'outro', cls: 'rc-outro', title: `That was ${periodLabel.toLowerCase().startsWith('last') ? 'the ' + periodLabel.toLowerCase() : periodLabel}.`,
-      lead: `Everything ${verb} watch${v.kind === 'named' ? 'es' : ''} from here on is already counting towards the next one.`,
+      lead: 'Everything you watch from here on is already counting towards the next one.',
       body: [
         h('div', { class: 'rc-outro-links' }, h('a', { class: 'btn', href: '/activity' }, icon('activity', 14), 'See all activity'),
-          v.kind !== 'server' && d.scope && d.scope.user_id ? h('a', { class: 'btn btn-ghost', href: `/users/${d.scope.user_id}` }, icon('user', 14), v.kind === 'you' ? 'Your stats' : `${v.who}’s stats`) : null),
-        admin && v.kind === 'server' ? h('p', { class: 'rc-note' }, 'Every viewer has a recap of their own — pick someone in the box at the top of this page.') : null,
+          me && me.id ? h('a', { class: 'btn btn-ghost', href: `/users/${me.id}` }, icon('user', 14), 'Your stats') : null),
       ],
     }),
   ];
@@ -376,18 +342,13 @@ function buildStory(d, me, periodLabel) {
 export default function recapPage(ctx) {
   ctx.title('Recap');
   const me = state.user;
-  const admin = isAdmin();
   const qYear = ctx.query.get('year');
   let year = /^\d{4}$/.test(qYear || '') || qYear === 'last12' ? qYear : '';
-  let userId = admin ? ctx.query.get('user') || '' : '';
   let reveal = revealer();
   ctx.onCleanup(() => { reveal.stop(); hideTip(); });
 
   const yearSlot = h('div', { class: 'rc-yearslot' });
-  const controls = h('div', { class: 'filters rc-controls', role: 'group', 'aria-label': 'Recap period and scope' }, yearSlot,
-    admin ? combobox({ value: userId, allLabel: 'Everyone', placeholder: 'Everyone', label: 'Viewer',
-      load: () => userList(ctx.signal).then((us) => us.map((u) => ({ value: u.id, label: u.name }))),
-      onChange: (val) => { userId = val; sync(); dv.load(); } }) : null);
+  const controls = h('div', { class: 'filters rc-controls' }, yearSlot);
   const view = h('div', { class: 'rc-story' });
 
   const periodLabel = (y) => (y === 'last12' ? 'Last 12 months' : String(y));
@@ -400,14 +361,14 @@ export default function recapPage(ctx) {
     const options = [...years.map((y) => ({ value: y, label: y })), { value: 'last12', label: 'Last 12 months' }];
     mount(yearSlot, segmented({ label: 'Period', value: current, options, onChange: (val) => { year = val; sync(); dv.load(); } }));
   }
-  const sync = () => replaceQuery({ year, user: userId });
+  const sync = () => replaceQuery({ year });
 
   const dv = dataView({
     container: view, signal: ctx.signal,
     skeleton: () => [h('div', { class: 'rc-hero rc-sk' }, h('div', { class: 'rc-hero-text' }, sk.line('160px', 12), sk.line('min(70%, 420px)', 96), sk.line('min(90%, 520px)', 16))),
       h('div', { class: 'rc-chapter is-in' }, sk.line('120px', 12), sk.line('min(80%, 380px)', 30), sk.block(220)),
       h('div', { class: 'rc-chapter is-in' }, sk.line('120px', 12), sk.line('min(80%, 380px)', 30), sk.block(220))],
-    fetch: () => api.get('/recap', { year, user_id: userId }, { signal: ctx.signal }),
+    fetch: () => api.get('/recap', { year }, { signal: ctx.signal }),
     render: (d) => {
       if (d.year != null) year = String(d.year);
       paintYears(d);
@@ -417,9 +378,7 @@ export default function recapPage(ctx) {
       reveal = revealer();
       view.classList.toggle('rc-anim', reveal.animated); // content is only ever hidden when something will reveal it
       if (d.empty || !d.totals || !d.totals.plays) {
-        const v = voiceFor(d.scope, me);
-        return emptyState(`Nothing was played in ${year === 'last12' ? 'the last 12 months' : label}.`,
-          v.kind === 'server' ? 'Pick another period above.' : `${v.who} didn’t play anything in this period. Pick another one above.`);
+        return emptyState(`Nothing was played in ${year === 'last12' ? 'the last 12 months' : label}.`, 'You didn’t play anything in this period. Pick another one above.');
       }
       const story = buildStory(d, me, label);
       // Observe after mount so the first screen reveals immediately.
@@ -437,11 +396,11 @@ export default function recapPage(ctx) {
 }
 
 /** Dashboard banner, December and January only. */
-export function recapBanner(admin) {
+export function recapBanner() {
   const now = new Date();
   const m = now.getMonth();
   if (m !== 11 && m !== 0) return null;
   const y = m === 11 ? now.getFullYear() : now.getFullYear() - 1;
   return h('a', { class: 'recap-banner', href: `/recap?year=${y}` }, icon('recap', 15),
-    h('span', null, admin ? `The ${y} recap is ready` : `Your ${y} recap is ready`), icon('chevronRight', 14, 'recap-banner-go'));
+    h('span', null, `Your ${y} recap is ready`), icon('chevronRight', 14, 'recap-banner-go'));
 }

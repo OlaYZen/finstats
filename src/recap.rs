@@ -1,4 +1,4 @@
-//! The year in review: one endpoint that tells the story of a period for a user or the whole server.
+//! The year in review: one endpoint that tells the signed-in user the story of their own year.
 
 use std::collections::BTreeSet;
 
@@ -18,7 +18,6 @@ use crate::stats::{one_json, rows_json};
 #[derive(Deserialize)]
 pub struct RecapQuery {
     year: Option<String>,
-    user_id: Option<String>,
 }
 
 /// `WHERE` over `playbacks p` for the period and scope, plus its arguments.
@@ -41,7 +40,8 @@ impl Window {
 const TITLE_ID: &str = "COALESCE(p.series_id, p.item_id)";
 
 pub async fn recap(State(app): State<App>, user: AuthUser, Query(q): Query<RecapQuery>) -> ApiResult {
-    let scope_user = if user.is_admin { q.user_id.as_deref().map(db::norm_id).filter(|s| !s.is_empty()) } else { Some(user.id.clone()) };
+    // A recap is personal: everyone, administrators included, only ever gets their own.
+    let scope_user = Some(user.id.clone());
     let min_play_s = app.settings().min_play_s;
     let server_name = app.config.read().unwrap().as_ref().map(|c| c.server_name.clone()).unwrap_or_else(|| "Jellyfin".into());
     let requested = q.year.unwrap_or_default();
@@ -115,7 +115,7 @@ fn build(c: &Connection, scope_user: Option<String>, min_play_s: i64, server_nam
         "top_series": [], "top_movies": [], "top_tracks": [], "top_genres": [],
         "months": [], "hours": [], "weekdays": [], "persona": null, "records": {},
         "discovery": { "new_series": 0, "one_and_done": [], "finished_movies": 0, "finished_episodes": 0 },
-        "clients": [], "server": null,
+        "clients": [],
     });
     if empty {
         return Ok(out);
@@ -151,9 +151,6 @@ fn build(c: &Connection, scope_user: Option<String>, min_play_s: i64, server_nam
         &format!("SELECT p.client AS name, COUNT(*) AS plays, COALESCE(SUM(p.duration_s), 0) AS watch_s FROM playbacks p {} GROUP BY 1 ORDER BY watch_s DESC LIMIT 3", w.with("p.client IS NOT NULL")),
         &w.args,
     )?);
-    if scope_user.is_none() {
-        out["server"] = server_edition(c, &w)?;
-    }
     Ok(out)
 }
 
@@ -404,56 +401,6 @@ fn discovery(c: &Connection, w: &Window) -> Result<Value> {
     Ok(json!({
         "new_series": new_series, "one_and_done": one_and_done,
         "finished_movies": finished.get("finished_movies"), "finished_episodes": finished.get("finished_episodes"),
-    }))
-}
-
-fn server_edition(c: &Connection, w: &Window) -> Result<Value> {
-    let top_users = rows_json(
-        c,
-        &format!(
-            "SELECT p.user_id AS id, COALESCE(u.name, MAX(p.user_name)) AS name, (u.image_tag IS NOT NULL) AS has_image,
-                    COUNT(*) AS plays, COALESCE(SUM(p.duration_s), 0) AS watch_s
-             FROM playbacks p LEFT JOIN users u ON u.id = p.user_id {} GROUP BY p.user_id ORDER BY watch_s DESC LIMIT 5",
-            w.wh
-        ),
-        &w.args,
-    )?;
-    let sums = one_json(
-        c,
-        &format!(
-            "SELECT CAST(COALESCE(SUM(COALESCE(json_extract(p.transcode, '$.bitrate'), p.bitrate) / 8.0 * p.duration_s), 0) AS INTEGER) AS data_bytes,
-                    ROUND(COALESCE(AVG(p.play_method = 'Transcode'), 0), 3) AS transcode_share FROM playbacks p {}",
-            w.wh
-        ),
-        &w.args,
-    )?
-    .unwrap_or_default();
-
-    let mut points: Vec<(i64, i32)> = vec![];
-    let mut stmt = c.prepare(&format!("SELECT p.started_at, p.ended_at FROM playbacks p {}", w.with("p.ended_at > p.started_at")))?;
-    let mut rows = stmt.query(params_from_iter(w.args.iter()))?;
-    while let Some(r) = rows.next()? {
-        points.push((r.get(0)?, 1));
-        points.push((r.get(1)?, -1));
-    }
-    points.sort();
-    let (mut live, mut peak) = (0, 0);
-    for (_, delta) in points {
-        live += delta;
-        peak = peak.max(live);
-    }
-
-    let added = one_json(
-        c,
-        "SELECT COUNT(*) AS items_added, COALESCE(SUM(size_bytes), 0) AS bytes_added FROM items
-         WHERE removed = 0 AND type IN ('Movie', 'Episode', 'Audio', 'Video', 'MusicVideo') AND date_created >= ?1 AND date_created < ?2",
-        &[w.from.into(), w.to.into()],
-    )?
-    .unwrap_or_default();
-    Ok(json!({
-        "top_users": top_users, "peak_concurrent": peak,
-        "data_bytes": sums.get("data_bytes"), "transcode_share": sums.get("transcode_share"),
-        "items_added": added.get("items_added"), "bytes_added": added.get("bytes_added"),
     }))
 }
 

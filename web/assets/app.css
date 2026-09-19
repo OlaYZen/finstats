@@ -805,7 +805,6 @@ a.chip-link:hover { border-color: var(--accent); color: var(--text); text-decora
 .rc-chapter > .rc-eyebrow + .rc-title { margin-top: 10px; }
 .rc-chapter > .rc-title + .rc-lead { margin-top: 12px; }
 .rc-subhead { font-size: 15px; font-weight: 650; color: #ececec; letter-spacing: -.01em; }
-.rc-note { margin-top: 4px; color: var(--text-faint); font-size: 13px; max-width: 62ch; }
 .rc-link { color: inherit; text-decoration: none; border-radius: var(--radius-sm); }
 .rc-link:hover { color: var(--accent-hi); text-decoration: underline; text-underline-offset: 3px; }
 
@@ -909,9 +908,6 @@ a.chip-link:hover { border-color: var(--accent); color: var(--text); text-decora
 .rc-chip-name { font-size: 15px; font-weight: 600; color: #ececec; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .rc-chip-val { flex: none; color: var(--text-faint); font-size: 12px; }
 
-.rc-server { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr); gap: clamp(24px, 4vw, 56px); align-items: start; }
-.rc-server-facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 200px), 1fr)); gap: clamp(20px, 3vw, 36px); align-items: end; }
-.rc-board .rc-ranked { margin-top: 8px; }
 
 .rc-outro { padding-top: clamp(28px, 4vw, 48px); border-top: 1px solid var(--border-soft); }
 .rc-outro-links { display: flex; flex-wrap: wrap; gap: 10px; }
@@ -926,7 +922,7 @@ a.chip-link:hover { border-color: var(--accent); color: var(--text); text-decora
 }
 
 @media (max-width: 900px) {
-  .rc-top, .rc-persona-charts, .rc-server { grid-template-columns: minmax(0, 1fr); }
+  .rc-top, .rc-persona-charts { grid-template-columns: minmax(0, 1fr); }
   .rc-col-foot { display: none; }
 }
 @media (max-width: 560px) {

@@ -298,20 +298,20 @@ New task ids in `/api/tasks`: `sync_server` (server info, plugins, tasks, device
 
 # v0.3 — Recap (the year in review)
 
-`GET /api/recap?year=2026&user_id=` — `year` is a calendar year (server TZ) or `last12` (the last 12 full months
-plus the current one). Default: the newest year that has plays. Admins may pass `user_id` (absent = whole server);
-non-admins always get their own recap. Everything is computed for that scope and period only.
+`GET /api/recap?year=2026` — a recap is personal: everyone, administrators included, only ever gets their **own**.
+`year` is a calendar year (server TZ) or `last12` (the last 12 full months plus the current one).
+Default: the newest year that has plays.
 
 ```jsonc
 {
   "years": [2026, 2025],                 // years that have plays in this scope, newest first
   "year": 2026 | "last12", "from": 1790000000, "to": 1790000000,   // [from, to)
-  "scope": {"user_id": "…"|null, "user_name": "…"|null, "server_name": "…"},
+  "scope": {"user_id": "…", "user_name": "…", "server_name": "…"},          // always the signed-in user
   "empty": false,                        // true → nothing was played in this period; all lists empty
 
   "totals": {"plays", "watch_s", "distinct_items", "movies", "episodes", "tracks",   // plays per type
              "series_count", "active_days"},
-  "rank": {"position": 2, "of": 8, "share": 0.31} | null,  // by watch time among users that played anything; null for the server recap
+  "rank": {"position": 2, "of": 8, "share": 0.31} | null,  // by watch time among users that played anything (no names)
 
   "top_series": [RecapTitle],  "top_movies": [RecapTitle],  "top_tracks": [RecapTitle],   // up to 5 each, by watch time
   "top_genres": [Bucket],                // up to 6, by watch time, no "Other"
@@ -338,12 +338,6 @@ non-admins always get their own recap. Everything is computed for that scope and
                 "one_and_done": [{"id","name","image_item_id"}],  // up to 5 shows with exactly one episode started, ever
                 "finished_movies": 31, "finished_episodes": 402}, // ≥ 90% complete
 
-  "clients": [Bucket],                   // top 3
-
-  "server": null | {                     // only for the server recap (admin, no user_id)
-    "top_users": [ {"id","name","has_image","plays","watch_s"} ],   // up to 5
-    "peak_concurrent": 4, "data_bytes": 0, "transcode_share": 0.46,   // share of plays
-    "items_added": 1200, "bytes_added": 0
-  }
+  "clients": [Bucket]                    // top 3
 }
 ```

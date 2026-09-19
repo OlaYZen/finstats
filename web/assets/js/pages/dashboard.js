@@ -84,7 +84,7 @@ export default function dashboard(ctx) {
 
   ctx.root.append(
     pageHeader('Dashboard', state.status && state.status.server_name ? `Playback on ${state.status.server_name}` : 'Playback on your Jellyfin server'),
-    recapBanner(admin),
+    recapBanner(),
     h('section', { class: 'np-section', 'aria-label': 'Now playing' }, h('h2', { class: 'section-title' }, 'Now playing', npCount), npBody),
     filters, view);
 
