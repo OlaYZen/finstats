@@ -21,7 +21,7 @@ use tower_http::compression::CompressionLayer;
 use crate::auth::{self, AuthUser, JellyfinAdmin, Manager};
 use crate::state::{ApiError, ApiResult, App, Settings};
 use crate::db::rusqlite::OptionalExtension;
-use crate::{changelog, db, import, profile, recap, stats, sync};
+use crate::{changelog, db, groups, import, profile, recap, stats, sync};
 
 #[derive(RustEmbed)]
 #[folder = "$CARGO_MANIFEST_DIR/web"]
@@ -42,6 +42,7 @@ pub fn router(app: App) -> Router {
         .route("/stats/heatmap", get(stats::heatmap_handler))
         .route("/stats/playback", get(stats::playback))
         .route("/stats/insights", get(stats::insights))
+        .route("/stats/groups", get(groups::groups))
         .route("/library/insights", get(stats::library_insights))
         .route("/server", get(stats::server))
         .route("/recap", get(recap::recap))
@@ -294,7 +295,17 @@ async fn put_settings(State(app): State<App>, Manager(user): Manager, Json(patch
     let next: Settings = serde_json::from_value(merged).map_err(|e| ApiError::bad_request(format!("Invalid settings: {e}")))?;
     next.validate().map_err(ApiError::bad_request)?;
     let raw = serde_json::to_string(&next).map_err(anyhow::Error::from)?;
-    app.db.call(move |c| db::set_setting(c, "settings", &raw)).await?;
+    let regroup = (next.group_window_s != app.settings().group_window_s).then_some(next.group_window_s);
+    app.db
+        .call(move |c| {
+            db::set_setting(c, "settings", &raw)?;
+            // A different window means different groups, for the whole history.
+            if let Some(window) = regroup {
+                groups::detect(c, window, None)?;
+            }
+            Ok(())
+        })
+        .await?;
     *app.settings.write().unwrap() = next;
     app.wake.notify_waiters();
     Ok(Json(settings_json(&app)))

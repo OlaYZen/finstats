@@ -150,6 +150,8 @@ pub fn run(db: &Db, path: &Path, tasks: Option<&Tasks>) -> Result<ImportResult> 
     finalize(&tx)?;
     report("Saving", 0.99);
     tx.commit()?;
+    let window = crate::state::Settings::load(&conn)?.group_window_s;
+    crate::groups::detect(&mut conn, window, None)?;
     conn.execute_batch("PRAGMA optimize;")?;
     Ok(res)
 }

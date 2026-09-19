@@ -3,6 +3,7 @@ mod auth;
 mod changelog;
 mod collector;
 mod db;
+mod groups;
 mod import;
 mod jellyfin;
 mod media;
@@ -119,6 +120,8 @@ async fn serve(db: db::Db, data_dir: PathBuf) -> Result<()> {
             c.execute("DELETE FROM sessions WHERE expires_at <= ?1", [db::now()])?;
             db::backfill_is_local(c)?;
             relink::relink_orphans(c)?;
+            let settings_now = Settings::load(c)?;
+            groups::detect(c, settings_now.group_window_s, None)?;
             Ok((stored, Settings::load(c)?, device_id))
         })
         .await?;

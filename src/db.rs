@@ -228,6 +228,12 @@ const MIGRATIONS: &[&str] = &[
         PRIMARY KEY (user_id, item_id)
     ) WITHOUT ROWID;
     "#,
+    // 7 — group watching: plays that were watched together share a group_id (the lowest play id in it)
+    r#"
+    ALTER TABLE playbacks ADD COLUMN group_id INTEGER;
+    CREATE INDEX idx_pb_group ON playbacks(group_id) WHERE group_id IS NOT NULL;
+    CREATE INDEX idx_pb_item_start ON playbacks(item_id, started_at);
+    "#,
 ];
 
 impl Db {

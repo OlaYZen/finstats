@@ -56,11 +56,13 @@ pub struct Settings {
     pub sync_interval_h: i64,
     pub merge_window_s: i64,
     pub min_play_s: i64,
+    /// Different people starting the same title within this many seconds are watching together.
+    pub group_window_s: i64,
 }
 
 impl Default for Settings {
     fn default() -> Self {
-        Self { follow_jellyfin_scan: true, allow_user_login: false, default_permissions: vec![], poll_interval_s: 5, sync_interval_h: 6, merge_window_s: 600, min_play_s: 0 }
+        Self { follow_jellyfin_scan: true, allow_user_login: false, default_permissions: vec![], poll_interval_s: 5, sync_interval_h: 6, merge_window_s: 600, min_play_s: 0, group_window_s: 60 }
     }
 }
 
@@ -82,6 +84,7 @@ impl Settings {
         check("poll_interval_s", self.poll_interval_s, 2, 60)?;
         check("sync_interval_h", self.sync_interval_h, 1, 168)?;
         check("merge_window_s", self.merge_window_s, 0, 86_400)?;
+        check("group_window_s", self.group_window_s, 5, 600)?;
         check("min_play_s", self.min_play_s, 0, 3_600)
     }
 }

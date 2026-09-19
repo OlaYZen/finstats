@@ -394,7 +394,8 @@ const PLAY_SELECT: &str = "SELECT p.id, p.source, p.active, p.user_id, COALESCE(
     p.client, p.device_name, p.device_id, p.app_version, p.remote_ip, p.play_method, p.container, p.bitrate,
     p.video_codec, p.width, p.height, p.video_range, p.bit_depth,
     p.audio_codec, p.audio_channels, p.audio_language, p.subtitle_codec, p.subtitle_language, p.transcode,
-    p.pause_count, p.seek_count, p.start_position_s, p.is_local
+    p.pause_count, p.seek_count, p.start_position_s, p.is_local, p.group_id,
+    CASE WHEN p.group_id IS NULL THEN NULL ELSE (SELECT COUNT(DISTINCT g.user_id) FROM playbacks g WHERE g.group_id = p.group_id) END AS group_size
   FROM playbacks p
   LEFT JOIN items i ON i.id = p.item_id
   LEFT JOIN users u ON u.id = p.user_id";
@@ -507,6 +508,17 @@ pub async fn activity_detail(State(app): State<App>, user: AuthUser, Path(id): P
         let mut play = decorate_play(play, scope.perms.see_network, true);
         let events = rows_json(c, "SELECT at, kind, position_s, detail FROM playback_events WHERE playback_id = ?1 ORDER BY id", &[id.into()])?;
         play["events"] = json!(events);
+        // The people it was watched with. Visible to anyone who can see this play: it was a shared evening.
+        let with = match play["group_id"].as_i64() {
+            Some(g) => rows_json(
+                c,
+                "SELECT DISTINCT p.user_id, COALESCE(u.name, p.user_name) AS user_name FROM playbacks p LEFT JOIN users u ON u.id = p.user_id
+                 WHERE p.group_id = ?1 AND p.user_id <> ?2 ORDER BY 2",
+                &[g.into(), play["user_id"].as_str().unwrap_or_default().to_string().into()],
+            )?,
+            None => vec![],
+        };
+        play["watched_with"] = json!(with);
         Ok(Some(play))
     })
     .await?;

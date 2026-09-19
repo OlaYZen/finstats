@@ -199,7 +199,7 @@ pub async fn run(app: App) {
                     tracing::info!("connection to Jellyfin restored");
                 }
                 failures = 0;
-                if let Err(e) = tick(&app, &mut tracked, &mut devices_seen, &sessions, settings.merge_window_s).await {
+                if let Err(e) = tick(&app, &mut tracked, &mut devices_seen, &sessions, settings.merge_window_s, settings.group_window_s).await {
                     tracing::error!("collector tick failed: {e:#}");
                 }
                 let mut st = app.collector.write().unwrap();
@@ -236,6 +236,7 @@ async fn tick(
     devices_seen: &mut HashMap<(String, String), Instant>,
     sessions: &[Value],
     merge_window_s: i64,
+    group_window_s: i64,
 ) -> Result<()> {
     let now = db::now();
     let tick_at = Instant::now();
@@ -356,6 +357,8 @@ async fn tick(
                     rec.update_progress(c, row_id)?;
                     insert_events(c, row_id, &[PlayEvent { at: rec.ended_at, kind: "stop", position_s: rec.position_s, detail: None }])?;
                 }
+                // Now that its length is known: was this one watched together with someone?
+                crate::groups::detect(c, group_window_s, Some(&rec.item_id))?;
                 Ok(())
             })
             .await?;
