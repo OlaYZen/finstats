@@ -6,6 +6,11 @@ binary and is what the **Patch notes** tab in the app shows.
 Format: `## [version] - date`, an optional one-paragraph summary, then `### Added`,
 `### Changed`, `### Fixed` or `### Removed` with one bullet per change.
 
+## [0.8.1] - 2026-09-19
+
+### Added
+- **Pages for actors and directors.** Click a face in the recap's "Most watched people", or in the new **Cast & crew** row on any film, show or episode, to open that person's page: everything they are in on your server, how much of it has been watched and by whom, and what is still waiting. Like every other page it follows the time range you pick, and people who may only see their own statistics see only their own watching there. Esc takes you back to where you came from.
+
 ## [0.8.0] - 2026-09-19
 
 The recap has a new look, and more to say.
