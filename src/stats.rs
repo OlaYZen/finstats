@@ -967,6 +967,8 @@ pub async fn search(State(app): State<App>, user: AuthUser, Query(q): Query<Sear
 
 pub async fn now_playing(State(app): State<App>, user: AuthUser) -> ApiResult {
     let mut sessions = app.live.read().unwrap().clone();
+    // Before anything is filtered out: you may see who you are watching with, even if you can't see their streams.
+    crate::groups::mark_live(&mut sessions, app.settings().group_window_s);
     if !user.perms.see_everyone {
         sessions.retain(|s| s["user_id"].as_str() == Some(user.id.as_str()));
     }

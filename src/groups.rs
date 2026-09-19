@@ -54,6 +54,41 @@ fn cluster(rows: &[Row], window_s: i64) -> Vec<(i64, i64)> {
     out
 }
 
+/// The same idea for streams that are running right now: same title, different people, and either
+/// started within the window or sitting at nearly the same position. While something is playing,
+/// position is the stronger signal; start times are only as exact as the moment finstats first
+/// noticed each stream. Adds `"group": {"size", "with": [{user_id, user_name}]}` to each member.
+pub fn mark_live(sessions: &mut [Value], window_s: i64) {
+    let near = window_s.max(30);
+    let n = sessions.len();
+    let mut with: Vec<Vec<usize>> = vec![vec![]; n];
+    for a in 0..n {
+        for b in 0..n {
+            let (x, y) = (&sessions[a], &sessions[b]);
+            if a == b || x["item_id"] != y["item_id"] || x["user_id"] == y["user_id"] {
+                continue;
+            }
+            let close = |k: &str| matches!((x[k].as_i64(), y[k].as_i64()), (Some(p), Some(q)) if (p - q).abs() <= if k == "position_s" { near } else { window_s });
+            if close("position_s") || close("started_at") {
+                with[a].push(b);
+            }
+        }
+    }
+    for (i, others) in with.into_iter().enumerate() {
+        if others.is_empty() {
+            continue;
+        }
+        let mut people: Vec<Value> = vec![];
+        for o in others {
+            let who = json!({ "user_id": sessions[o]["user_id"], "user_name": sessions[o]["user_name"] });
+            if !people.contains(&who) {
+                people.push(who);
+            }
+        }
+        sessions[i]["group"] = json!({ "size": people.len() + 1, "with": people });
+    }
+}
+
 /// (Re)assign `group_id` for one item, or for everything. Returns the number of groups found.
 pub fn detect(conn: &mut Connection, window_s: i64, only_item: Option<&str>) -> Result<usize> {
     let tx = conn.transaction()?;
@@ -228,6 +263,19 @@ mod tests {
         let rows = vec![r(1, "a", 0, 1500), r(2, "b", 4, 1500), r(3, "c", 44, 1400), r(4, "d", 3600, 1500)];
         assert_eq!(cluster(&rows, 60), vec![(1, 1), (2, 1), (3, 1)]);
         assert_eq!(cluster(&rows, 5), vec![(1, 1), (2, 1)], "a tight window loses the late joiner");
+    }
+
+    #[test]
+    fn live_streams_at_the_same_spot_are_a_group() {
+        let s = |user: &str, item: &str, pos: i64, started: i64| json!({ "user_id": user, "user_name": user, "item_id": item, "position_s": pos, "started_at": started });
+        // a and b: same episode, same position, though finstats noticed them minutes apart (it restarted).
+        // c: same episode, far behind, started long before. d: something else at the same position.
+        let mut live = vec![s("a", "ep", 902, 5000), s("b", "ep", 905, 5400), s("c", "ep", 120, 1000), s("d", "other", 902, 5000), s("a", "ep", 903, 5001)];
+        mark_live(&mut live, 60);
+        assert_eq!(live[0]["group"]["size"], 2);
+        assert_eq!(live[0]["group"]["with"][0]["user_name"], "b");
+        assert_eq!(live[1]["group"]["with"].as_array().unwrap().len(), 1, "a on two devices is still one person");
+        assert!(live[2]["group"].is_null() && live[3]["group"].is_null());
     }
 
     #[test]
