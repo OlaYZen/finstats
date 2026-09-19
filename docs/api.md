@@ -188,7 +188,8 @@ Both send long-lived `Cache-Control`. Use as `<img loading="lazy">` with an `one
 {"jellyfin_url","server_name","server_version",
  "allow_user_login": false,        // let non-admin Jellyfin users sign in and see their own stats
  "poll_interval_s": 5,             // session polling, 2..60
- "sync_interval_h": 6,             // library/user sync, 1..168
+ "follow_jellyfin_scan": true,     // read the library when Jellyfin's own scan task finishes, not on a timer
+ "sync_interval_h": 6,             // library read interval, 1..168 — only used when not following Jellyfin's scan
  "merge_window_s": 600,            // resume the same play if it restarts within this window
  "min_play_s": 0}                  // stats ignore plays shorter than this
 ```

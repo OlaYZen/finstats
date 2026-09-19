@@ -132,9 +132,15 @@ In the UI (**Settings**, administrators only):
 - **Let other users sign in** — off by default. When on, non-admin Jellyfin users can sign in
   and see *only their own* statistics; IP addresses, other users, file paths, the server log
   and settings stay hidden from them. This is enforced by the server, not the UI.
-- **Session polling** (default 5 s), **library sync** (default every 6 h),
-  **merge window** (default 10 min — a play that resumes on the same device within the window
-  continues the same record instead of creating a new one) and **ignore plays shorter than**.
+- **Follow Jellyfin's library scan** — on by default. finstats never starts a scan on Jellyfin; it
+  only reads. With this on, the (large) library read happens right after Jellyfin's own
+  *Scan Media Library* scheduled task finishes — never on a separate timer and never mid-scan —
+  so Jellyfin's schedule is the only schedule. A weekly safety-net read covers servers that rely
+  on real-time monitoring. Turn it off to use a plain interval instead.
+- **Session polling** (default 5 s), **library read interval** (default 6 h; only used when not
+  following Jellyfin's scan), **merge window** (default 10 min — a play that resumes on the same
+  device within the window continues the same record instead of creating a new one) and
+  **ignore plays shorter than**.
 
 ## How it works
 
