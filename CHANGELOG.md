@@ -6,6 +6,11 @@ binary and is what the **Patch notes** tab in the app shows.
 Format: `## [version] - date`, an optional one-paragraph summary, then `### Added`,
 `### Changed`, `### Fixed` or `### Removed` with one bullet per change.
 
+## [0.8.2] - 2026-09-20
+
+### Changed
+- The recap's year picker is the same switch as every other range picker in finstats (7d · 30d · 90d …), instead of a style of its own.
+
 ## [0.8.1] - 2026-09-19
 
 ### Added
