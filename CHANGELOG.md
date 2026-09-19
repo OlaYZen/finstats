@@ -6,6 +6,14 @@ binary and is what the **Patch notes** tab in the app shows.
 Format: `## [version] - date`, an optional one-paragraph summary, then `### Added`,
 `### Changed`, `### Fixed` or `### Removed` with one bullet per change.
 
+## [0.9.1] - 2026-09-20
+
+### Fixed
+- **People at home were shown as remote.** A device on your own network that reaches Jellyfin through its public name (a reverse proxy, a domain) arrives with your household's public IP, and finstats only recognised private addresses as local. It now learns your public address and counts plays from it as local, for the whole history, not just from now on. It remembers earlier addresses too, since most connections get a new one now and then.
+
+### Added
+- **Settings → Home network.** See the addresses finstats treats as home, add your own (an earlier address, a second home, a VPN exit), or switch the lookup off. To learn your public address finstats asks a plain "what is my IP" service every 15 minutes; it tries several (Amazon, Cloudflare and others), because ad-blocking DNS such as Pi-hole often blocks them, and one of them needs no DNS at all. The request contains nothing about you or your server, and with the switch off finstats talks to nothing but Jellyfin. `FINSTATS_PUBLIC_IP_URL` lets you use a service of your own.
+
 ## [0.9.0] - 2026-09-20
 
 ### Added
