@@ -92,6 +92,7 @@ table { border-collapse: collapse; width: 100%; }
 .brand:hover { text-decoration: none; }
 .brand-mark { display: grid; place-items: center; width: 24px; height: 24px; border-radius: 6px; background: var(--accent-wash); color: var(--accent-hi); }
 .brand-mark-lg { width: 34px; height: 34px; border-radius: 9px; }
+.brand-logo { display: block; flex: none; }
 .brand-name { font-weight: 650; font-size: 15px; letter-spacing: -.01em; }
 
 .search-btn {

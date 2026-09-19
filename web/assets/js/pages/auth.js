@@ -1,14 +1,14 @@
 // /setup (first run) and /login. Submit buttons stay enabled; we validate on
 // submit, show errors next to the field, and only disable while a request runs.
 
-import { h, icon, mount } from '../dom.js';
+import { h, icon, mount, logo } from '../dom.js';
 import { api } from '../api.js';
 import { state, resetCaches } from '../state.js';
 import { navigate } from '../router.js';
 import { setBusy, inlineError } from '../components.js';
 
 function brand() {
-  return h('div', { class: 'auth-brand' }, h('span', { class: 'brand-mark brand-mark-lg' }, icon('activity', 20)), h('span', { class: 'brand-name' }, 'finstats'));
+  return h('div', { class: 'auth-brand' }, logo(34), h('span', { class: 'brand-name' }, 'finstats'));
 }
 
 function field({ id, label, type = 'text', autocomplete, placeholder, inputMode, help }) {

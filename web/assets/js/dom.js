@@ -97,6 +97,11 @@ const ICONS = {
 };
 
 const iconTpl = document.createElement('template');
+/** The finstats logo. One source for favicon, sidebar and sign-in: /assets/logo.svg. */
+export function logo(size = 24) {
+  return h('img', { class: 'brand-logo', src: '/assets/logo.svg', width: size, height: size, alt: '', decoding: 'async' });
+}
+
 export function icon(name, size = 16, cls = '') {
   iconTpl.innerHTML =
     `<svg xmlns="${SVG_NS}" viewBox="0 0 24 24" width="${Number(size)}" height="${Number(size)}" fill="none" ` +

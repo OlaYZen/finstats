@@ -1,7 +1,7 @@
 // App chrome: file-tree style sidebar, Obsidian-style status bar, mobile drawer,
 // scroll-to-top, and the two layouts the router can ask for.
 
-import { h, icon, num, relTime, dateTime, mount } from './dom.js';
+import { h, icon, num, relTime, dateTime, mount, logo } from './dom.js';
 import { api, isAbort } from './api.js';
 import { state, resetCaches, hasUnseenVersion, onVersionSeen, noteRunningVersion, can } from './state.js';
 import { navigate, onRouteChange } from './router.js';
@@ -167,8 +167,7 @@ function buildShell() {
 }
 
 function brandMark() {
-  const m = icon('activity', 16);
-  return h('span', { class: 'brand-mark' }, m);
+  return logo(24);
 }
 
 /** Router hook: returns the element pages render into. */
