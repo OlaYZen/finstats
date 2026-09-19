@@ -6,6 +6,11 @@ binary and is what the **Patch notes** tab in the app shows.
 Format: `## [version] - date`, an optional one-paragraph summary, then `### Added`,
 `### Changed`, `### Fixed` or `### Removed` with one bullet per change.
 
+## [0.4.1] - 2026-09-19
+
+### Fixed
+- The word "null" no longer appears under the dashboard title outside December and January, when there is no recap banner to show.
+
 ## [0.4.0] - 2026-09-19
 
 See what changed without leaving the app.
