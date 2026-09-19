@@ -45,6 +45,29 @@ const SCAN_CHECK_EVERY_S: i64 = 300;
 /// items without the scan task ever running.
 const SAFETY_NET_S: i64 = 7 * 86_400;
 
+/// Write a backup in the background and thin out old ones. Returns false when one is already being written.
+pub fn run_backup(app: &App, automatic: bool) -> bool {
+    const ID: &str = "backup";
+    if !app.tasks.try_start(ID, "Writing backup") {
+        return false;
+    }
+    let app = app.clone();
+    tokio::task::spawn_blocking(move || {
+        let dir = crate::backup::dir(&app.data_dir);
+        let outcome = crate::backup::export(&app.db, &dir, Some((&app.tasks, ID))).map(|made| {
+            let removed = crate::backup::prune(&dir, app.settings().backup_keep.clamp(1, 100) as usize);
+            tracing::info!("{} backup written: {} ({} plays){}", if automatic { "automatic" } else { "manual" }, made.name, made.plays,
+                if removed > 0 { format!("; removed {removed} old") } else { String::new() });
+            (format!("{} plays, {:.1} MB", made.plays, made.size_bytes as f64 / 1e6), serde_json::to_value(&made).ok())
+        });
+        if let Err(e) = &outcome {
+            tracing::error!("backup failed: {e:#}");
+        }
+        app.tasks.finish(ID, outcome);
+    });
+    true
+}
+
 /// finstats only ever *reads* from Jellyfin; it never starts a scan there. By default the
 /// (expensive) library read simply follows Jellyfin's own "Scan Media Library" task.
 pub async fn scheduler(app: App) {
@@ -92,6 +115,19 @@ pub async fn scheduler(app: App) {
             } else {
                 false
             };
+            // Automatic backups: when the newest one on disk is older than the interval. A database
+            // without a single play has nothing worth keeping yet.
+            if settings.backup_every_d > 0 {
+                let dir = crate::backup::dir(&app.data_dir);
+                let newest = crate::backup::newest_at(&dir).unwrap_or(0);
+                if now - newest >= settings.backup_every_d * 86_400 {
+                    let has_plays = app.db.call(|c| Ok(c.query_row("SELECT EXISTS(SELECT 1 FROM playbacks)", [], |r| r.get::<_, bool>(0))?)).await.unwrap_or(false);
+                    if has_plays {
+                        run_backup(&app, true);
+                    }
+                }
+            }
+
             if due && spawn(&app, "sync_libraries") {
                 last_library = now;
                 spawn(&app, "sync_userdata");

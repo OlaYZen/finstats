@@ -70,6 +70,10 @@ pub fn router(app: App) -> Router {
         .route("/tasks/{id}/run", post(run_task))
         // Backups run to hundreds of MB and are streamed to disk, never buffered.
         .route("/import/jellystat", post(import_jellystat).layer(DefaultBodyLimit::disable()))
+        .route("/backups", get(list_backups).post(create_backup))
+        .route("/backups/restore", post(restore_upload).layer(DefaultBodyLimit::disable()))
+        .route("/backups/{name}", get(download_backup).delete(delete_backup))
+        .route("/backups/{name}/restore", post(restore_stored))
         .fallback(|| async { ApiError::not_found("Endpoint") })
         .layer(middleware::from_fn(same_origin));
 
@@ -465,6 +469,129 @@ async fn put_user_permissions(State(app): State<App>, JellyfinAdmin(_): Jellyfin
 }
 
 // ---------------------------------------------------------------- Jellystat import
+
+// ---------------------------------------------------------------- backups
+// Jellyfin administrators only: a backup is everyone's history, and restoring one can bring permissions back.
+
+#[derive(Deserialize)]
+struct RestoreQuery {
+    /// Also restore settings and permissions (default: yes).
+    settings: Option<bool>,
+}
+
+fn backup_path(app: &App, name: &str) -> ApiResult<PathBuf> {
+    if !crate::backup::valid_name(name) {
+        return Err(ApiError::not_found("Backup"));
+    }
+    let path = crate::backup::dir(&app.data_dir).join(name);
+    if path.is_file() { Ok(path) } else { Err(ApiError::not_found("Backup")) }
+}
+
+async fn list_backups(State(app): State<App>, JellyfinAdmin(_): JellyfinAdmin) -> ApiResult {
+    let dir = crate::backup::dir(&app.data_dir);
+    let backups = tokio::task::spawn_blocking(move || crate::backup::list(&dir)).await.map_err(anyhow::Error::from)?;
+    let s = app.settings();
+    let next_at = (s.backup_every_d > 0).then(|| backups.first().and_then(|b| b["created_at"].as_i64()).map(|at| at + s.backup_every_d * 86_400)).flatten();
+    Ok(Json(json!({ "backups": backups, "every_d": s.backup_every_d, "keep": s.backup_keep, "next_at": next_at })))
+}
+
+async fn create_backup(State(app): State<App>, JellyfinAdmin(_): JellyfinAdmin) -> ApiResult<Response> {
+    if !sync::run_backup(&app, false) {
+        return Err(ApiError::new(StatusCode::CONFLICT, "A backup is already being written"));
+    }
+    Ok((StatusCode::ACCEPTED, Json(json!({ "ok": true }))).into_response())
+}
+
+async fn download_backup(State(app): State<App>, JellyfinAdmin(_): JellyfinAdmin, Path(name): Path<String>) -> ApiResult<Response> {
+    let path = backup_path(&app, &name)?;
+    let file = tokio::fs::File::open(&path).await.map_err(anyhow::Error::from)?;
+    let len = file.metadata().await.map_err(anyhow::Error::from)?.len();
+    // Streamed from disk in 64 KB pieces: a large history never has to fit in memory.
+    let stream = futures_util::stream::unfold(file, |mut f| async move {
+        let mut buf = vec![0u8; 64 * 1024];
+        match tokio::io::AsyncReadExt::read(&mut f, &mut buf).await {
+            Ok(0) => None,
+            Ok(n) => { buf.truncate(n); Some((Ok::<_, std::io::Error>(buf), f)) }
+            Err(e) => Some((Err(e), f)),
+        }
+    });
+    Ok(Response::builder()
+        .header(CONTENT_TYPE, "application/gzip")
+        .header("content-length", len)
+        .header("content-disposition", format!("attachment; filename=\"{name}\""))
+        .header(CACHE_CONTROL, "no-store")
+        .body(Body::from_stream(stream))
+        .unwrap())
+}
+
+async fn delete_backup(State(app): State<App>, JellyfinAdmin(_): JellyfinAdmin, Path(name): Path<String>) -> ApiResult {
+    let path = backup_path(&app, &name)?;
+    tokio::fs::remove_file(&path).await.map_err(anyhow::Error::from)?;
+    Ok(Json(json!({ "ok": true })))
+}
+
+/// Run a restore in the background, then load what it may have changed (the settings) into the running app.
+fn spawn_restore(app: &App, path: PathBuf, with_settings: bool, remove_after: bool) {
+    let worker = app.clone();
+    tokio::task::spawn_blocking(move || {
+        let outcome = crate::backup::restore(&worker.db, &path, with_settings, Some((&worker.tasks, "restore")));
+        if remove_after {
+            let _ = std::fs::remove_file(&path);
+        }
+        if outcome.is_ok() {
+            if let Ok(conn) = worker.db.conn() {
+                if let Ok(loaded) = Settings::load(&conn) {
+                    *worker.settings.write().unwrap() = loaded;
+                }
+            }
+            worker.wake.notify_waiters();
+        }
+        worker.tasks.finish(
+            "restore",
+            outcome.map(|r| (format!("Restored {} plays ({} already present)", r.plays_imported, r.plays_skipped), serde_json::to_value(&r).ok())),
+        );
+    });
+}
+
+async fn restore_stored(State(app): State<App>, JellyfinAdmin(_): JellyfinAdmin, Path(name): Path<String>, Query(q): Query<RestoreQuery>) -> ApiResult<Response> {
+    let path = backup_path(&app, &name)?;
+    if !app.tasks.try_start("restore", "Reading backup") {
+        return Err(ApiError::new(StatusCode::CONFLICT, "A restore is already running"));
+    }
+    spawn_restore(&app, path, q.settings.unwrap_or(true), false);
+    Ok((StatusCode::ACCEPTED, Json(json!({ "ok": true }))).into_response())
+}
+
+async fn restore_upload(State(app): State<App>, JellyfinAdmin(_): JellyfinAdmin, Query(q): Query<RestoreQuery>, req: Request) -> ApiResult<Response> {
+    if !app.tasks.try_start("restore", "Receiving backup") {
+        return Err(ApiError::new(StatusCode::CONFLICT, "A restore is already running"));
+    }
+    let path = app.data_dir.join("restore-upload.tmp");
+    let received = async {
+        let mut file = tokio::fs::File::create(&path).await?;
+        let mut stream = req.into_body().into_data_stream();
+        let mut total = 0u64;
+        while let Some(chunk) = stream.next().await {
+            let chunk = chunk.map_err(|e| anyhow::anyhow!("The upload was interrupted: {e}"))?;
+            total += chunk.len() as u64;
+            file.write_all(&chunk).await?;
+        }
+        file.flush().await?;
+        anyhow::Ok(total)
+    }
+    .await;
+    match received {
+        Ok(n) if n > 0 => {}
+        other => {
+            let _ = tokio::fs::remove_file(&path).await;
+            let msg = other.map(|_| "The uploaded file was empty".to_string()).unwrap_or_else(|e| format!("{e:#}"));
+            app.tasks.finish("restore", Err(anyhow::anyhow!(msg.clone())));
+            return Err(ApiError::bad_request(msg));
+        }
+    }
+    spawn_restore(&app, path, q.settings.unwrap_or(true), true);
+    Ok((StatusCode::ACCEPTED, Json(json!({ "ok": true }))).into_response())
+}
 
 async fn import_jellystat(State(app): State<App>, Manager(_): Manager, req: Request) -> ApiResult<Response> {
     if !app.tasks.try_start("import", "Receiving backup") {

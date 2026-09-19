@@ -1,5 +1,6 @@
 mod api;
 mod auth;
+mod backup;
 mod changelog;
 mod collector;
 mod db;
@@ -32,6 +33,8 @@ const USAGE: &str = "finstats — playback statistics for Jellyfin
 USAGE:
     finstats                            Run the server
     finstats import-jellystat <file>    Import a Jellystat backup (.jsonl / .json), then exit
+    finstats backup                     Write a backup into <data dir>/backups, then exit
+    finstats restore <file>             Merge a finstats backup into the database (history, settings, permissions), then exit
     finstats relink                     Re-attach history to renamed items now, then exit (also runs after every sync)
     finstats --version
 
@@ -78,6 +81,17 @@ fn main() -> Result<()> {
                 res.plays_imported, res.plays_skipped, res.users, res.libraries, res.items, res.seasons, res.episodes,
                 started.elapsed().as_secs_f64()
             );
+            return Ok(());
+        }
+        Some("backup") => {
+            let made = backup::export(&db, &backup::dir(&data_dir), None)?;
+            println!("Wrote {} ({} plays, {} rows, {:.1} MB)", backup::dir(&data_dir).join(&made.name).display(), made.plays, made.rows, made.size_bytes as f64 / 1e6);
+            return Ok(());
+        }
+        Some("restore") => {
+            let Some(file) = args.get(1) else { bail!("usage: finstats restore <file>") };
+            let r = backup::restore(&db, std::path::Path::new(file), true, None)?;
+            println!("Restored {} plays ({} already present), {} timeline events, {} other rows; settings restored: {}", r.plays_imported, r.plays_skipped, r.events, r.other_rows, r.settings_restored);
             return Ok(());
         }
         Some("relink") => {

@@ -355,6 +355,7 @@ dependencies = [
  "anyhow",
  "axum",
  "chrono",
+ "flate2",
  "futures-util",
  "hex",
  "mime_guess",
