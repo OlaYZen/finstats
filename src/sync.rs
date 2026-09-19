@@ -230,6 +230,7 @@ pub fn backfill_playbacks(conn: &Connection) -> Result<()> {
          UPDATE playbacks SET runtime_s = (SELECT runtime_s FROM items WHERE items.id = playbacks.item_id)
          WHERE runtime_s IS NULL;",
     )?;
+    crate::relink::relink_orphans(conn)?;
     Ok(())
 }
 
