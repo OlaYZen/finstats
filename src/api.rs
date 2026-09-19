@@ -57,6 +57,7 @@ pub fn router(app: App) -> Router {
         .route("/libraries", get(stats::libraries))
         .route("/libraries/{id}", get(stats::library_detail))
         .route("/items/{id}", get(stats::item_detail))
+        .route("/people/{id}", get(stats::person_detail))
         .route("/search", get(stats::search))
         .route("/events", get(stats::events))
         .route("/img/item/{id}", get(item_image))

@@ -15,7 +15,7 @@ use crate::db::{self, SqlValue};
 use crate::media;
 use crate::state::{ApiError, ApiResult, App};
 
-const BOOL_COLS: [&str; 9] = ["active", "is_admin", "is_disabled", "removed", "has_image", "item_exists", "has_backdrop", "is_local", "is_favorite"];
+const BOOL_COLS: [&str; 11] = ["active", "is_admin", "is_disabled", "removed", "has_image", "item_exists", "has_backdrop", "is_local", "is_favorite", "is_actor", "is_director"];
 const JSON_COLS: [&str; 4] = ["genres", "transcode", "studios", "provider_ids"];
 
 // ---------------------------------------------------------------- plumbing
@@ -919,10 +919,74 @@ pub async fn item_detail(State(app): State<App>, user: AuthUser, Path(id): Path<
             ),
             &pb_args,
         )?;
-        Ok(Some(json!({ "item": item, "totals": totals, "watchers": watchers, "seasons": seasons, "daily": series, "bucket": bucket, "played_by": played_by })))
+        // Cast and crew are kept per film and show; an episode or season answers with its show's.
+        let credited = item.get("series_id").and_then(Value::as_str).filter(|_| !is_series).map(str::to_string).unwrap_or_else(|| id.clone());
+        let people = rows_json(
+            c,
+            "SELECT person_id AS id, name, kind, role, has_image FROM item_people WHERE item_id = ?1 ORDER BY (kind = 'Actor'), sort",
+            &[credited.into()],
+        )?;
+        Ok(Some(json!({ "item": item, "totals": totals, "watchers": watchers, "seasons": seasons, "daily": series, "bucket": bucket, "played_by": played_by, "people": people })))
     })
     .await?;
     out.map(Json).ok_or_else(|| ApiError::not_found("Item"))
+}
+
+/// One actor or director: what they are in, and how much of it was watched (within the caller's scope).
+pub async fn person_detail(State(app): State<App>, user: AuthUser, Path(id): Path<String>, Query(q): Query<FilterQuery>) -> ApiResult {
+    let id = db::norm_id(&id);
+    let out = scoped(&app, &user, &q, move |c, scope| {
+        let person = one_json(
+            c,
+            "SELECT person_id AS id, MAX(name) AS name, MAX(has_image) AS has_image,
+                    MAX(kind = 'Actor') AS is_actor, MAX(kind = 'Director') AS is_director, COUNT(DISTINCT item_id) AS titles
+             FROM item_people WHERE person_id = ?1 GROUP BY person_id",
+            &[id.clone().into()],
+        )?;
+        let Some(person) = person else { return Ok(None) };
+
+        // A person can act in and direct the same title; the subquery keeps a play from counting twice.
+        const TITLE: &str = "COALESCE(p.series_id, p.item_id)";
+        let cond = scope.cond().with(&format!("{TITLE} IN (SELECT item_id FROM item_people WHERE person_id = ?)"), id.clone());
+        let totals = one_json(
+            c,
+            &format!(
+                "SELECT COUNT(*) AS plays, COALESCE(SUM(p.duration_s), 0) AS watch_s, COUNT(DISTINCT p.user_id) AS users,
+                        COUNT(DISTINCT {TITLE}) AS titles_watched, MAX(p.ended_at) AS last_played_at FROM playbacks p {}",
+                cond.sql()
+            ),
+            &cond.args,
+        )?;
+        let mut args: Vec<SqlValue> = vec![id.clone().into()];
+        args.extend(cond.args.iter().cloned());
+        let titles = rows_json(
+            c,
+            &format!(
+                "SELECT i.id, COALESCE(i.name, 'Unknown title') AS name, i.type, i.production_year AS year, COALESCE(i.removed, 1) AS removed,
+                        ip.kinds, ip.role, COALESCE(s.plays, 0) AS plays, COALESCE(s.watch_s, 0) AS watch_s, s.last_played_at
+                 FROM (SELECT item_id, GROUP_CONCAT(kind, ',') AS kinds, MAX(role) AS role FROM item_people WHERE person_id = ? GROUP BY item_id) ip
+                 LEFT JOIN items i ON i.id = ip.item_id
+                 LEFT JOIN (SELECT {TITLE} AS title_id, COUNT(*) AS plays, SUM(p.duration_s) AS watch_s, MAX(p.ended_at) AS last_played_at
+                            FROM playbacks p {} GROUP BY 1) s ON s.title_id = ip.item_id
+                 ORDER BY watch_s DESC, i.production_year DESC, name",
+                cond.sql(),
+            ),
+            &args,
+        )?;
+        let watchers = rows_json(
+            c,
+            &format!(
+                "SELECT p.user_id, COALESCE(u.name, MAX(p.user_name)) AS user_name, COUNT(*) AS plays,
+                        COALESCE(SUM(p.duration_s), 0) AS watch_s, MAX(p.ended_at) AS last_played_at
+                 FROM playbacks p LEFT JOIN users u ON u.id = p.user_id {} GROUP BY p.user_id ORDER BY watch_s DESC LIMIT 50",
+                cond.sql()
+            ),
+            &cond.args,
+        )?;
+        Ok(Some(json!({ "person": person, "totals": totals, "titles": titles, "watchers": watchers })))
+    })
+    .await?;
+    out.map(Json).ok_or_else(|| ApiError::not_found("Person"))
 }
 
 #[derive(Deserialize)]
