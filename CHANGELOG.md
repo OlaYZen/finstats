@@ -14,6 +14,9 @@ See what changed without leaving the app.
 - **Patch notes** tab showing every release, with the version you are running marked.
 - The version in the status bar links to the patch notes, and the tab shows a dot after an update until you have looked.
 
+### Changed
+- Re-attaching history to renamed items is far faster (from 18 seconds to a third of a second with 666 orphaned titles), so start-up stays instant as history grows.
+
 ## [0.3.3] - 2026-09-19
 
 finstats now follows Jellyfin's own schedule instead of keeping a second one.

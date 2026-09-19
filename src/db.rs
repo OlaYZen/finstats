@@ -206,6 +206,11 @@ const MIGRATIONS: &[&str] = &[
     WHERE source = 'jellystat' AND item_type = 'Movie' AND container IS NULL AND runtime_s IS NULL
       AND NOT EXISTS (SELECT 1 FROM items i WHERE i.id = playbacks.item_id);
     "#,
+    // 4 — re-linking renamed items looks titles up by name, once per orphaned item.
+    r#"
+    CREATE INDEX idx_items_type_name ON items(type, name COLLATE NOCASE);
+    CREATE INDEX idx_items_series_episode ON items(series_id, parent_index_number, index_number);
+    "#,
 ];
 
 impl Db {
