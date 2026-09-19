@@ -191,6 +191,37 @@ export function layout(kind) {
 
 onRouteChange((path) => { if (shell) shell.setActive(path); });
 
+// ---- Esc steps back out of a detail page
+// Overlays (modal, palette, dropdown) swallow their own Esc before it gets here.
+let herePath = location.pathname;
+let cameFrom = null;
+onRouteChange(() => {
+  if (location.pathname !== herePath) { cameFrom = herePath; herePath = location.pathname; }
+});
+
+/** Where Esc leads from this page; null on top-level pages. `back` = prefer the real history entry. */
+function escTarget(path) {
+  if (/^\/libraries\/[^/]+/.test(path)) return { up: '/libraries' };
+  if (/^\/users\/[^/]+/.test(path)) return isAdmin() ? { up: '/users' } : null; // for everyone else this is "My stats", a top-level page
+  if (/^\/items\/[^/]+/.test(path)) return { up: '/libraries', back: true };     // reached from anywhere, so return to wherever that was
+  return null;
+}
+
+document.addEventListener('keydown', (e) => {
+  if (e.key !== 'Escape' || e.defaultPrevented || e.metaKey || e.ctrlKey || e.altKey || e.shiftKey || !state.user) return;
+  const drawer = document.querySelector('.drawer-open');
+  if (drawer) { const scrim = document.querySelector('.scrim'); if (scrim) scrim.click(); return; }
+  // Esc belongs to whatever you are using: leave fields and keyboard-driven widgets (charts, rows) alone.
+  const el = document.activeElement;
+  if (el && el !== document.body && !el.matches('a, button, main')) { if (el.matches('input, textarea')) el.blur(); return; }
+  const target = escTarget(location.pathname);
+  if (!target) return;
+  e.preventDefault();
+  // Going back through history restores the list exactly as it was left (scroll position, filters).
+  if (cameFrom !== null && (target.back || cameFrom === target.up)) history.back();
+  else navigate(target.up);
+});
+
 // Global shortcut for the command palette.
 document.addEventListener('keydown', (e) => {
   if ((e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === 'k') {
