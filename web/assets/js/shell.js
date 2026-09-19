@@ -11,7 +11,6 @@ import { openPalette } from './palette.js';
 let shell = null; // {el, content, navLinks, destroy, userId}
 let bare = null;
 
-const isMac = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
 
 function navItems() {
   const me = state.user;
@@ -59,8 +58,8 @@ function buildShell() {
     return a;
   });
 
-  const searchBtn = h('button', { type: 'button', class: 'search-btn', onClick: () => openPalette(), 'aria-keyshortcuts': isMac ? 'Meta+K' : 'Control+K' },
-    icon('search', 14), h('span', null, 'Search…'), h('kbd', null, isMac ? '⌘K' : 'Ctrl K'));
+  const searchBtn = h('button', { type: 'button', class: 'search-btn', onClick: () => openPalette(), 'aria-keyshortcuts': 'Control+Space' },
+    icon('search', 14), h('span', null, 'Search…'), h('kbd', null, 'Ctrl Space'));
 
   const logout = h('button', { type: 'button', class: 'icon-btn', 'aria-label': 'Sign out', title: 'Sign out' }, icon('logout', 15));
   logout.addEventListener('click', () => signOut(logout));
@@ -224,7 +223,8 @@ document.addEventListener('keydown', (e) => {
 
 // Global shortcut for the command palette.
 document.addEventListener('keydown', (e) => {
-  if ((e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === 'k') {
+  // Ctrl+Space. `code` rather than `key`, so it is the same physical shortcut on every keyboard layout.
+  if (e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey && e.code === 'Space') {
     if (!state.user) return;
     e.preventDefault();
     openPalette();

@@ -1,4 +1,4 @@
-// Command palette (Ctrl/⌘+K): jump to a page, a user, or anything in the library.
+// Command palette (Ctrl+Space): jump to a page, a user, or anything in the library.
 
 import { h, icon, debounce, mount } from './dom.js';
 import { api, isAbort } from './api.js';
