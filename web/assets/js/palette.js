@@ -55,7 +55,8 @@ export function openPalette() {
     input.setAttribute('aria-activedescendant', 'pal-' + active);
   }
 
-  const pageRows = (q) => pages.filter((p) => !q || p.label.toLowerCase().includes(q))
+  // every typed word has to be in the label, in any order
+  const pageRows = (q) => pages.filter((p) => !q || q.split(/\s+/).filter(Boolean).every((w) => p.label.toLowerCase().includes(w)))
     .map((p) => ({ label: p.label, href: p.href, thumb: h('span', { class: 'palette-icon' }, icon(p.icon, 15)) }));
 
   const typeName = { Movie: 'Movie', Series: 'Series', MusicAlbum: 'Album', Audio: 'Track', Episode: 'Episode' };

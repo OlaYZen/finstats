@@ -476,8 +476,9 @@ pub async fn activity(State(app): State<App>, user: AuthUser, Query(q): Query<Ac
         if let Some(id) = q.series_id.filter(|s| !s.is_empty()) {
             cond.add("p.series_id = ?", db::norm_id(&id));
         }
-        if let Some(text) = q.q.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
-            let like = format!("%{}%", text.replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_"));
+        // Word by word: "alya opera" finds plays of Alya… on Opera. Every word must be somewhere in the row.
+        for word in q.q.as_deref().unwrap_or_default().split_whitespace().take(8) {
+            let like = format!("%{}%", word.replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_"));
             let mut fields = vec!["p.item_name", "p.series_name", "p.user_name", "p.client", "p.device_name"];
             if scope.perms.see_network {
                 fields.push("p.remote_ip");
@@ -931,29 +932,46 @@ pub struct SearchQuery {
 }
 
 pub async fn search(State(app): State<App>, user: AuthUser, Query(q): Query<SearchQuery>) -> ApiResult {
-    let text = q.q.unwrap_or_default().trim().to_string();
-    if text.is_empty() {
+    let Some(query) = crate::fuzzy::Query::new(q.q.as_deref().unwrap_or_default()) else {
         return Ok(Json(json!({ "items": [], "users": [] })));
-    }
-    let limit = q.limit.unwrap_or(12).clamp(1, 50);
+    };
+    let limit = q.limit.unwrap_or(12).clamp(1, 50) as usize;
     let see_everyone = user.perms.see_everyone;
     let out = app
         .db
         .call(move |c| {
-            let esc = text.replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_");
-            let (contains, prefix) = (format!("%{esc}%"), format!("{esc}%"));
-            let items = rows_json(
+            // Matching is done here rather than with LIKE: word by word, any order, accents and typos
+            // forgiven. A library's worth of titles is a few thousand short strings, which is nothing.
+            let mut scored: Vec<(i32, i32, Map<String, Value>)> = rows_json(
                 c,
-                &format!(
-                    "{ITEM_CARD} WHERE i.removed = 0 AND i.type IN ('Movie', 'Series', 'MusicAlbum', 'Audio') AND i.name LIKE ?1 ESCAPE '\\'
-                     ORDER BY (i.name LIKE ?2 ESCAPE '\\') DESC,
-                              CASE i.type WHEN 'Series' THEN 0 WHEN 'Movie' THEN 1 WHEN 'MusicAlbum' THEN 2 ELSE 3 END,
-                              i.name COLLATE NOCASE LIMIT {limit}"
-                ),
-                &[contains.clone().into(), prefix.into()],
-            )?;
+                &format!("{ITEM_CARD} WHERE i.removed = 0 AND i.type IN ('Movie', 'Series', 'MusicAlbum', 'Audio')"),
+                &[],
+            )?
+            .into_iter()
+            .filter_map(|row| {
+                let name = row.get("name").and_then(Value::as_str).unwrap_or_default();
+                let kind = match row.get("type").and_then(Value::as_str) {
+                    Some("Series") => 0,
+                    Some("Movie") => 1,
+                    Some("MusicAlbum") => 2,
+                    _ => 3,
+                };
+                // Music is also found by its artist, films and shows by title only.
+                let by_title = query.score(name);
+                let by_artist = if kind >= 2 { row.get("sub").and_then(Value::as_str).and_then(|a| query.score(&format!("{a} {name}"))).map(|s| s - 150) } else { None };
+                by_title.max(by_artist).map(|s| (s, kind, row))
+            })
+            .collect();
+            scored.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)).then_with(|| a.2["name"].as_str().cmp(&b.2["name"].as_str())));
+            let items: Vec<Value> = scored.into_iter().take(limit).map(|(_, _, row)| Value::Object(row)).collect();
+
             let users = if see_everyone {
-                rows_json(c, "SELECT id, name FROM users WHERE name LIKE ?1 ESCAPE '\\' ORDER BY removed, name COLLATE NOCASE LIMIT 8", &[contains.into()])?
+                let mut found: Vec<(i32, Map<String, Value>)> = rows_json(c, "SELECT id, name FROM users ORDER BY removed, name COLLATE NOCASE", &[])?
+                    .into_iter()
+                    .filter_map(|u| query.score(u.get("name").and_then(Value::as_str).unwrap_or_default()).map(|s| (s, u)))
+                    .collect();
+                found.sort_by(|a, b| b.0.cmp(&a.0));
+                found.into_iter().take(8).map(|(_, u)| Value::Object(u)).collect()
             } else {
                 vec![]
             };
@@ -1028,8 +1046,8 @@ pub async fn events(State(app): State<App>, ServerViewer(_): ServerViewer, Query
                 clauses.push("e.type = ?".into());
                 args.push(t.into());
             }
-            if let Some(text) = q.q.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
-                let like = format!("%{}%", text.replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_"));
+            for word in q.q.as_deref().unwrap_or_default().split_whitespace().take(8) {
+                let like = format!("%{}%", word.replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_"));
                 clauses.push("(e.name LIKE ? ESCAPE '\\' OR e.short_overview LIKE ? ESCAPE '\\' OR e.overview LIKE ? ESCAPE '\\')".into());
                 args.extend([like.clone().into(), like.clone().into(), like.into()]);
             }

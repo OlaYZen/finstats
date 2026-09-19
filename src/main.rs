@@ -3,6 +3,7 @@ mod auth;
 mod changelog;
 mod collector;
 mod db;
+mod fuzzy;
 mod groups;
 mod import;
 mod jellyfin;
