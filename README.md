@@ -172,6 +172,17 @@ Jellyfin ──/Sessions every 5 s──▶ collector ──▶ SQLite ◀──
 - Writes are refused when the `Origin` header doesn't match; a strict Content-Security-Policy
   is sent with every response; the UI loads nothing from third parties (fonts are bundled).
 
+## Contributing safely
+
+The database (`data/finstats.db`) contains your users, their IP addresses and your Jellyfin
+API key, and Jellystat backups contain your whole viewing history. Both are ignored by git and
+by the Docker build. For a second lock, enable the bundled hook once per clone — it refuses
+to commit databases, backups, `.env` files or anything over 2 MB, even when force-added:
+
+```sh
+git config core.hooksPath .githooks
+```
+
 ## Building from source
 
 ```sh
