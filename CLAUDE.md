@@ -84,7 +84,8 @@ asks Jellyfin to exclude virtual items, and season 0 is skipped). "Seen" merges 
 play ≥ 80%, Jellyfin's played flag (`user_items`), a manual mark (`manual_seen`, written via `POST /api/me/seen` for
 the caller only — finstats never writes to Jellyfin). Streaks are all-time and share `recap::longest_run`.
 
-**Recap (`recap.rs`)** is strictly personal (even admins only get their own), excludes Live TV item types, and
+**Recap (`recap.rs`)** is one person's year: the caller's own, or, for a Jellyfin administrator only (`is_admin`, not a
+permission), the user in `user_id`. There is deliberately no whole-server edition. It excludes Live TV item types and
 defaults to the year that is "ready": the current year in December, otherwise the previous one.
 
 **Auth (`auth.rs`).** Login forwards credentials to Jellyfin's `AuthenticateByName`, immediately logs that Jellyfin
@@ -96,7 +97,7 @@ all; Jellyfin admins always get `Perms::ALL`. Grants only add, there are no deni
 signed in), `ServerViewer`, `Manager`, and `JellyfinAdmin` — the only one allowed to edit permissions, and
 `put_settings` refuses the access keys from anyone else, so a manager cannot self-promote. In `stats.rs` decide by
 the specific permission (`scope.perms.see_network` for IPs, `see_server` for paths, `see_everyone` for whose rows),
-never by `is_admin`. The recap ignores permissions and is always the caller's own. The UI mirrors this with
+never by `is_admin`. The recap ignores permissions: own for everyone, any one user for Jellyfin administrators. The UI mirrors this with
 `can('perm')` from `state.js`; it is cosmetic — every rule is enforced server-side. `api.rs` adds an Origin check on writes and a strict CSP
 (`style-src 'self'` — the UI must not use inline `<style>`/`style=""`; `el.style.x` via JS is fine).
 

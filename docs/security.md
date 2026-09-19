@@ -24,8 +24,8 @@ All of it is enforced by the server on every request, not by hiding things in th
 is read fresh each time, so taking a permission away works immediately — including locking
 someone out. Only a Jellyfin administrator can change permissions: someone who may *manage*
 finstats still cannot open sign-in to everyone, change the defaults or grant anything, so nobody
-can promote themselves. The year recap is personal for everyone, administrators included, and no
-permission changes that.
+can promote themselves. The year recap is personal: you get your own. A Jellyfin administrator can open another
+person's; no permission grants that to anyone else, and there is no whole-server recap.
 
 **Talking to Jellyfin.** During setup finstats creates its own API key, named `finstats`, which
 you can revoke at any time under Dashboard → API Keys. It only reads: it never modifies your

@@ -425,3 +425,11 @@ caller only (1–5000 ids; non-episodes are ignored). Marks live in finstats alo
 and `seen: false` only removes manual marks, never a recorded play.
 
 `Play` rows were already carrying `position_s` and `runtime_s`; the Activity table now shows them as the stop position.
+
+---
+
+# v0.6.1 — Recap for administrators
+
+`GET /api/recap?year=&user_id=` — `user_id` is honoured for **Jellyfin administrators** only and selects one other
+user's recap (`scope` then names them). Everyone else always gets their own, whatever permissions they hold
+(`see_everyone` included); the parameter is ignored rather than refused. There is no whole-server recap.

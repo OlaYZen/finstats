@@ -72,14 +72,15 @@ music and genres, the month-by-month story of the year, and a viewing personalit
 weekend warrior, binge watcher and more. Plus the records worth bragging about: biggest binge,
 longest daily streak, most rewatched title, the oldest film you watched.
 
-Each person sees only their own. Even administrators.
+Each person sees only their own. Administrators can open another person's recap; nobody else can,
+whatever permissions they hold, and there is no recap of the whole server.
 
 ### Private by design
 - **Sign in with your Jellyfin account.** No new passwords, and finstats never stores yours.
 - **You decide who sees what.** Let family and friends sign in if you like. By default they get
   their own statistics and recap and nothing else. From there you grant more, per person or for
   everyone: other people's activity, network details like IP addresses, the server pages, or
-  managing finstats itself. The recap always stays personal.
+  managing finstats itself. No permission opens other people's recaps.
 - **Nothing leaves your network.** No telemetry, no external services, no fonts or scripts loaded
   from the internet. Posters are fetched from your own Jellyfin.
 - **Read-only.** finstats never changes anything on your Jellyfin server and never starts a library scan.
