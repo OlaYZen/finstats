@@ -305,6 +305,8 @@ async fn run_task(State(app): State<App>, Admin(_): Admin, Path(id): Path<String
         "sync_users" => "sync_users",
         "sync_libraries" => "sync_libraries",
         "sync_events" => "sync_events",
+        "sync_server" => "sync_server",
+        "sync_userdata" => "sync_userdata",
         _ => return Err(ApiError::not_found("Task")),
     };
     if !sync::spawn(&app, id) {

@@ -30,6 +30,8 @@ pub fn spawn(app: &App, id: &'static str) -> bool {
             "sync_users" => sync_users(&app, &jf).await,
             "sync_libraries" => sync_libraries(&app, &jf).await,
             "sync_events" => sync_events(&app, &jf).await,
+            "sync_server" => sync_server(&app, &jf).await,
+            "sync_userdata" => sync_userdata(&app, &jf).await,
             other => Err(anyhow!("unknown task {other}")),
         };
         app.tasks.finish(id, outcome.map(|m| (m, None)));
@@ -51,11 +53,14 @@ pub async fn scheduler(app: App) {
                 spawn(&app, "sync_users");
                 spawn(&app, "sync_events");
                 spawn(&app, "sync_libraries");
+                spawn(&app, "sync_server");
+                spawn(&app, "sync_userdata");
             } else if now - last_light >= 900 {
                 // Users and the activity log are tiny; keep them fresher than the library.
                 last_light = now;
                 spawn(&app, "sync_users");
                 spawn(&app, "sync_events");
+                spawn(&app, "sync_server");
             }
         }
         tokio::select! {
@@ -142,13 +147,24 @@ pub fn upsert_item(conn: &Connection, library_id: &str, it: &Value, now: i64) ->
     let source = &it["MediaSources"][0];
     let streams = Streams::extract(&source["MediaStreams"], &Value::Null);
     let genres = it["Genres"].as_array().filter(|g| !g.is_empty()).map(|g| Value::Array(g.clone()).to_string());
+    let provider_ids = it["ProviderIds"].as_object().filter(|p| !p.is_empty()).map(|_| it["ProviderIds"].to_string());
+    let studios = it["Studios"]
+        .as_array()
+        .map(|a| a.iter().filter_map(|x| x["Name"].as_str()).collect::<Vec<_>>())
+        .filter(|a| !a.is_empty())
+        .map(|a| json!(a).to_string());
+    let framerate = source["MediaStreams"]
+        .as_array()
+        .and_then(|a| a.iter().find(|x| x["Type"].as_str() == Some("Video")))
+        .and_then(|v| v["AverageFrameRate"].as_f64().or_else(|| v["RealFrameRate"].as_f64()))
+        .map(|f| (f * 1000.0).round() / 1000.0);
     conn.prepare_cached(
         "INSERT INTO items(id, library_id, type, name, series_id, season_id, series_name, index_number, parent_index_number,
             album, album_artist, runtime_s, production_year, premiere_date, date_created, community_rating, official_rating,
             genres, overview, image_tag, backdrop_tag, container, path, size_bytes, bitrate,
-            video_codec, width, height, video_range, audio_codec, audio_channels, removed, updated_at)
+            video_codec, width, height, video_range, audio_codec, audio_channels, provider_ids, studios, bit_depth, framerate, removed, updated_at)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23,
-            ?24, ?25, ?26, ?27, ?28, ?29, ?30, ?31, 0, ?32)
+            ?24, ?25, ?26, ?27, ?28, ?29, ?30, ?31, ?33, ?34, ?35, ?36, 0, ?32)
          ON CONFLICT(id) DO UPDATE SET library_id = excluded.library_id, type = excluded.type, name = excluded.name,
             series_id = excluded.series_id, season_id = excluded.season_id, series_name = excluded.series_name,
             index_number = excluded.index_number, parent_index_number = excluded.parent_index_number,
@@ -160,7 +176,8 @@ pub fn upsert_item(conn: &Connection, library_id: &str, it: &Value, now: i64) ->
             path = excluded.path, size_bytes = excluded.size_bytes, bitrate = excluded.bitrate,
             video_codec = excluded.video_codec, width = excluded.width, height = excluded.height,
             video_range = excluded.video_range, audio_codec = excluded.audio_codec,
-            audio_channels = excluded.audio_channels, removed = 0, updated_at = excluded.updated_at",
+            audio_channels = excluded.audio_channels, provider_ids = excluded.provider_ids, studios = excluded.studios,
+            bit_depth = excluded.bit_depth, framerate = excluded.framerate, removed = 0, updated_at = excluded.updated_at",
     )?
     .execute(params![
         norm_id(id),
@@ -195,6 +212,10 @@ pub fn upsert_item(conn: &Connection, library_id: &str, it: &Value, now: i64) ->
         streams.audio_codec,
         streams.audio_channels,
         now,
+        provider_ids,
+        studios,
+        streams.bit_depth,
+        framerate,
     ])?;
     Ok(())
 }
@@ -356,4 +377,153 @@ async fn sync_events(app: &App, jf: &Jellyfin) -> Result<String> {
         }
     }
     Ok(format!("{added} new entries"))
+}
+
+// ---------------------------------------------------------------- server details & devices
+
+fn folder(label: &str, kind: &str, f: &Value) -> Option<Value> {
+    let (free, used) = (f["FreeSpace"].as_i64()?, f["UsedSpace"].as_i64()?);
+    (free >= 0 && used >= 0 && free + used > 0).then(|| json!({ "label": label, "path": f["Path"], "free_bytes": free, "used_bytes": used, "kind": kind }))
+}
+
+async fn sync_server(app: &App, jf: &Jellyfin) -> Result<String> {
+    const ID: &str = "sync_server";
+    app.tasks.update(ID, "Reading server details", None);
+    let info = jf.system_info().await?;
+    let storage_raw = jf.storage().await;
+    let plugins = jf.plugins().await.unwrap_or_default();
+    let tasks = jf.scheduled_tasks().await.unwrap_or_default();
+    app.tasks.update(ID, "Reading devices", Some(0.6));
+    let devices = jf.devices().await.unwrap_or_default();
+
+    let mut storage: Vec<Value> = vec![];
+    if let Some(st) = &storage_raw {
+        for lib in st["Libraries"].as_array().map(Vec::as_slice).unwrap_or_default() {
+            let name = lib["Name"].as_str().unwrap_or("Library");
+            storage.extend(lib["Folders"].as_array().map(Vec::as_slice).unwrap_or_default().iter().filter_map(|f| folder(name, "library", f)));
+        }
+        for (key, label) in [("ProgramDataFolder", "Program data"), ("CacheFolder", "Cache"), ("TranscodingTempFolder", "Transcodes"), ("InternalMetadataFolder", "Metadata"), ("LogFolder", "Logs")] {
+            storage.extend(folder(label, "system", &st[key]));
+        }
+    }
+    let snapshot = json!({
+        "fetched_at": db::now(),
+        "info": {
+            "server_name": info["ServerName"], "version": info["Version"],
+            "operating_system": opt_str(&info["OperatingSystemDisplayName"]).or_else(|| opt_str(&info["OperatingSystem"])),
+            "architecture": info["SystemArchitecture"],
+            "has_update_available": info["HasUpdateAvailable"].as_bool().unwrap_or(false),
+            "has_pending_restart": info["HasPendingRestart"].as_bool().unwrap_or(false),
+            "transcoding_temp_path": info["TranscodingTempPath"], "cache_path": info["CachePath"],
+            "program_data_path": info["ProgramDataPath"], "log_path": info["LogPath"],
+            "encoder_location": info["EncoderLocation"],
+        },
+        "storage": storage,
+        "plugins": plugins.iter().map(|p| json!({ "name": p["Name"], "version": p["Version"], "status": p["Status"], "description": p["Description"] })).collect::<Vec<_>>(),
+        "scheduled_tasks": tasks.iter().map(|t| {
+            let last = &t["LastExecutionResult"];
+            let (start, end) = (last["StartTimeUtc"].as_str().and_then(parse_ts), last["EndTimeUtc"].as_str().and_then(parse_ts));
+            json!({
+                "name": t["Name"], "category": t["Category"], "state": t["State"],
+                "last_result": last["Status"], "last_run_at": end.or(start),
+                "last_duration_s": start.zip(end).map(|(s, e)| (e - s).max(0)),
+            })
+        }).collect::<Vec<_>>(),
+    });
+
+    let device_count = devices.len();
+    app.db
+        .call(move |c| {
+            let now = db::now();
+            let tx = c.transaction()?;
+            db::set_setting(&tx, "server_info", &snapshot.to_string())?;
+            {
+                let mut stmt = tx.prepare(
+                    "INSERT INTO devices(device_id, user_id, device_name, client, app_version, last_user_name, first_seen, last_seen)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?7)
+                     ON CONFLICT(device_id, user_id) DO UPDATE SET device_name = excluded.device_name, client = excluded.client,
+                        app_version = excluded.app_version, last_user_name = excluded.last_user_name,
+                        last_seen = MAX(devices.last_seen, excluded.last_seen)",
+                )?;
+                for d in &devices {
+                    let (Some(id), Some(user)) = (d["Id"].as_str(), d["LastUserId"].as_str()) else { continue };
+                    stmt.execute(params![
+                        id,
+                        norm_id(user),
+                        opt_str(&d["CustomName"]).or_else(|| opt_str(&d["Name"])),
+                        opt_str(&d["AppName"]),
+                        opt_str(&d["AppVersion"]),
+                        opt_str(&d["LastUserName"]),
+                        d["DateLastActivity"].as_str().and_then(parse_ts).unwrap_or(now),
+                    ])?;
+                }
+            }
+            tx.commit()?;
+            Ok(())
+        })
+        .await?;
+    Ok(format!("{device_count} devices, {} plugins", plugins.len()))
+}
+
+// ---------------------------------------------------------------- per-user played & favourite flags
+
+/// Jellyfin remembers what each user has finished or favourited, including everything from
+/// before finstats existed. That is what makes "never watched" trustworthy.
+async fn sync_userdata(app: &App, jf: &Jellyfin) -> Result<String> {
+    const ID: &str = "sync_userdata";
+    let users: Vec<(String, String)> = app
+        .db
+        .call(|c| {
+            let mut stmt = c.prepare("SELECT id, name FROM users WHERE removed = 0 ORDER BY name")?;
+            let rows = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?.collect::<Result<_, _>>()?;
+            Ok(rows)
+        })
+        .await?;
+    let mut total = 0usize;
+    let count = users.len().max(1);
+    for (n, (user_id, name)) in users.into_iter().enumerate() {
+        app.tasks.update(ID, format!("Reading what {name} has watched"), Some(n as f64 / count as f64));
+        let mut rows: Vec<Value> = vec![];
+        for (filter, types) in [("IsPlayed", "Movie,Episode"), ("IsFavorite", "Movie,Series,Episode")] {
+            let mut start = 0;
+            loop {
+                let page = jf.user_items_page(&user_id, filter, types, start, 1000).await?;
+                let got = page.len();
+                rows.extend(page);
+                start += got;
+                if got < 1000 {
+                    break;
+                }
+            }
+        }
+        total += rows.len();
+        let uid = user_id.clone();
+        app.db
+            .call(move |c| {
+                let tx = c.transaction()?;
+                tx.execute("DELETE FROM user_items WHERE user_id = ?1", [&uid])?;
+                {
+                    let mut stmt = tx.prepare(
+                        "INSERT INTO user_items(user_id, item_id, played, is_favorite, play_count, last_played_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+                         ON CONFLICT(user_id, item_id) DO UPDATE SET played = MAX(played, excluded.played), is_favorite = MAX(is_favorite, excluded.is_favorite)",
+                    )?;
+                    for it in &rows {
+                        let Some(id) = it["Id"].as_str() else { continue };
+                        let ud = &it["UserData"];
+                        stmt.execute(params![
+                            uid,
+                            norm_id(id),
+                            ud["Played"].as_bool().unwrap_or(false),
+                            ud["IsFavorite"].as_bool().unwrap_or(false),
+                            ud["PlayCount"].as_i64().unwrap_or(0),
+                            ud["LastPlayedDate"].as_str().and_then(parse_ts),
+                        ])?;
+                    }
+                }
+                tx.commit()?;
+                Ok(())
+            })
+            .await?;
+    }
+    Ok(format!("{total} played or favourite items"))
 }

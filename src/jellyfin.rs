@@ -251,7 +251,7 @@ impl Jellyfin {
                 "IncludeItemTypes",
                 "Movie,Series,Season,Episode,Audio,MusicAlbum,MusicVideo,Video,Book,AudioBook".into(),
             ),
-            ("Fields", "Genres,DateCreated,MediaSources,Path,Overview,OriginalTitle".into()),
+            ("Fields", "Genres,DateCreated,MediaSources,Path,Overview,OriginalTitle,ProviderIds,Studios".into()),
             ("EnableUserData", "false".into()),
             ("EnableImageTypes", "Primary,Backdrop".into()),
             ("ImageTypeLimit", "1".into()),
@@ -272,6 +272,58 @@ impl Jellyfin {
             _ => vec![],
         };
         Ok((items, total))
+    }
+
+    async fn get_array(&self, path: &str, query: &[(&str, String)]) -> Result<Vec<Value>> {
+        match self.get_json(path, query).await? {
+            Value::Array(a) => Ok(a),
+            mut v => match v["Items"].take() {
+                Value::Array(a) => Ok(a),
+                _ => bail!("unexpected response for {path}"),
+            },
+        }
+    }
+
+    /// Every device that has ever signed in, not just the ones with a session right now.
+    pub async fn devices(&self) -> Result<Vec<Value>> {
+        self.get_array("/Devices", &[]).await
+    }
+
+    pub async fn plugins(&self) -> Result<Vec<Value>> {
+        self.get_array("/Plugins", &[]).await
+    }
+
+    pub async fn scheduled_tasks(&self) -> Result<Vec<Value>> {
+        self.get_array("/ScheduledTasks", &[("isHidden", "false".into())]).await
+    }
+
+    /// Disk usage per library and system folder. Only exists on Jellyfin 10.11+.
+    pub async fn storage(&self) -> Option<Value> {
+        self.get_json("/System/Info/Storage", &[]).await.ok()
+    }
+
+    /// One page of a user's items matching a Jellyfin filter (`IsPlayed`, `IsFavorite`), with their UserData.
+    pub async fn user_items_page(&self, user_id: &str, filter: &str, types: &str, start: usize, limit: usize) -> Result<Vec<Value>> {
+        let q = [
+            ("userId", user_id.to_string()),
+            ("Recursive", "true".into()),
+            ("Filters", filter.to_string()),
+            ("IncludeItemTypes", types.to_string()),
+            ("EnableUserData", "true".into()),
+            ("EnableImages", "false".into()),
+            ("EnableTotalRecordCount", "false".into()),
+            ("StartIndex", start.to_string()),
+            ("Limit", limit.to_string()),
+        ];
+        let resp = self.get("/Items").query(&q).timeout(Duration::from_secs(120)).send().await?;
+        if !resp.status().is_success() {
+            bail!("Jellyfin answered {} for a user's items", resp.status());
+        }
+        let mut v: Value = resp.json().await?;
+        Ok(match v["Items"].take() {
+            Value::Array(a) => a,
+            _ => vec![],
+        })
     }
 
     pub async fn activity_log(&self, start: usize, limit: usize, min_date: Option<&str>) -> Result<(Vec<Value>, usize)> {
