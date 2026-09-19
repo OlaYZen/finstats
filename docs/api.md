@@ -465,3 +465,12 @@ filter only that person's groups)
 people are playing the same title right now, having started within `group_window_s` or being within
 `max(group_window_s, 30)` seconds of the same position; absent otherwise. It is computed before the list is narrowed
 to the caller, so someone without `see_everyone` still sees who they are watching with.
+
+---
+
+# v0.7.5 — Forgiving search
+
+`GET /api/search?q=` matches word by word instead of by exact phrase: every word of `q` has to be found in the title
+(any order; case, accents, punctuation and a leading article ignored; one slip allowed in words of 4–7 letters, two in
+longer ones; music also matches on its artist). Results are ranked, best first. The `q` filters of `/api/activity` and
+`/api/events` are word-by-word as well: each word must occur in at least one searched column.

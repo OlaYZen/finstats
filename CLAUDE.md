@@ -87,6 +87,11 @@ second-longest stay in a session. Running streams are grouped separately by `mar
 different users, starts within the window *or* positions within `max(window, 30)` s), before `/api/now-playing` narrows
 the list to the caller.
 
+**Search (`fuzzy.rs`).** `/api/search` scores every library title in Rust instead of using `LIKE`: normalised (case,
+accents, punctuation, leading article), every typed word must match some word of the title (exact > prefix > substring
+> typo; typos only for words of 4+ letters, with swapped letters as one slip). ~70 ms over 5.5k titles; the palette
+debounces. The Activity and Server-log `q` filters stay in SQL but are word-by-word too.
+
 **Profiles (`profile.rs`).** Show progress counts only episodes that exist as files (`path`/`size_bytes` set; the sync
 asks Jellyfin to exclude virtual items, and season 0 is skipped). "Seen" merges three sources in order: a recorded
 play ≥ 80%, Jellyfin's played flag (`user_items`), a manual mark (`manual_seen`, written via `POST /api/me/seen` for
