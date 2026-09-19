@@ -718,7 +718,9 @@ pub async fn user_detail(State(app): State<App>, user: AuthUser, Path(id): Path<
 fn library_rows(conn: &Connection, scope: &Scope, only: Option<&str>) -> Result<Vec<Value>> {
     let cond = scope.cond();
     let mut args = cond.args.clone();
-    let mut filter = String::new();
+    // A library that was deleted in Jellyfin and never had a single play is just noise in the list.
+    // (It stays reachable by id, and one with history stays listed, marked as removed.)
+    let mut filter = "WHERE (l.removed = 0 OR EXISTS (SELECT 1 FROM playbacks x WHERE x.library_id = l.id))".to_string();
     if let Some(id) = only {
         filter = "WHERE l.id = ?".into();
         args.push(id.to_string().into());
