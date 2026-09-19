@@ -195,16 +195,16 @@ export function insightTiles(ins) {
   return tiles.length ? h('div', { class: 'tiles tiles-quiet' }, tiles) : null;
 }
 
-/** Genres as a radar (the shape of someone's taste) or as the ranked list (the actual numbers). The choice is remembered. */
+/** Genres as the ranked list (the actual numbers, the default) or as a radar (the shape of someone's taste). The choice is remembered. */
 export function genresCard(genres, { sub = 'By watch time' } = {}) {
   const body = h('div', { class: 'genres-body' });
-  let view = store.get('finstats.genresView', 'radar') === 'list' ? 'list' : 'radar';
+  let view = store.get('finstats.genresView', 'list') === 'radar' ? 'radar' : 'list';
   const paint = () => mount(body, view === 'radar'
     ? radarChart(genres, { ariaLabel: 'Genres by watch time', empty: 'No genre information for these plays yet.' })
     : bucketList(genres, { empty: 'No genre information for these plays yet.' }));
   paint();
   return card({ title: 'Genres', sub, body,
-    actions: segmented({ label: 'Genres view', value: view, size: 'sm', options: [{ value: 'radar', label: 'Radar' }, { value: 'list', label: 'List' }],
+    actions: segmented({ label: 'Genres view', value: view, size: 'sm', options: [{ value: 'list', label: 'List' }, { value: 'radar', label: 'Radar' }],
       onChange: (v) => { view = v; store.set('finstats.genresView', v); paint(); } }) });
 }
 
