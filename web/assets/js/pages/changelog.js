@@ -48,19 +48,50 @@ function release(r, current) {
     }));
 }
 
+/** Releases of one minor series (0.7.0 … 0.7.3) fold into one group, newest series first. */
+function series(releases) {
+  const groups = [];
+  for (const r of releases) {
+    const key = String(r.version).split('.').slice(0, 2).join('.');
+    const last = groups[groups.length - 1];
+    if (last && last.key === key) last.releases.push(r); else groups.push({ key, releases: [r] });
+  }
+  return groups;
+}
+
+function group(g, current, open) {
+  const newest = g.releases[0];
+  const oldest = g.releases[g.releases.length - 1];
+  const running = g.releases.some((r) => r.version === current);
+  const n = g.releases.length;
+  const dates = newest.date && oldest.date && newest.date !== oldest.date ? `${longDate(oldest.date)} – ${longDate(newest.date)}` : longDate(newest.date);
+  // The x.y.0 release says what the series was about; fall back to the newest summary.
+  const about = (oldest.summary || newest.summary || '');
+  return h('details', { class: ['cl-series', running && 'is-current'], open: !!open },
+    h('summary', { class: 'cl-series-head' },
+      icon('chevronRight', 14, 'cl-chev'),
+      h('span', { class: 'cl-series-name mono' }, `v${g.key}`),
+      h('span', { class: 'cl-series-range mono' }, n > 1 ? `${oldest.version} – ${newest.version}` : newest.version),
+      running ? h('span', { class: 'chip cl-running' }, icon('check', 12), 'Running now') : null,
+      about ? h('span', { class: 'cl-series-about' }, inline(about)) : null,
+      h('span', { class: 'cl-series-meta' }, `${n} ${n === 1 ? 'release' : 'releases'}`, dates ? ` · ${dates}` : '')),
+    h('div', { class: 'cl-series-body' }, g.releases.map((r) => release(r, current))));
+}
+
 export default function changelogPage(ctx) {
   ctx.title('Patch notes');
   const view = h('div', { class: 'cl-list' });
   ctx.root.append(pageHeader('Patch notes', 'What changed in finstats, newest first'), view);
   dataView({
     container: view, signal: ctx.signal,
-    skeleton: () => [sk.block(180), sk.block(140), sk.block(140)],
+    skeleton: () => [sk.block(180), sk.block(56), sk.block(56)],
     fetch: () => api.get('/changelog', null, { signal: ctx.signal }),
     render: (d) => {
       markVersionSeen(d.current);
       const releases = d.releases || [];
       if (!releases.length) return emptyState('No patch notes yet.', 'This build was made without a changelog.');
-      return releases.map((r) => release(r, d.current));
+      // Only the newest series starts open; everything older is one click away.
+      return series(releases).map((g, i) => group(g, d.current, i === 0));
     },
   }).load();
 }

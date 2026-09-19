@@ -1042,3 +1042,26 @@ button.ep[aria-disabled="true"]:hover { filter: none; outline: 0; }
 
 .chip-group { display: inline-flex; align-items: center; gap: 5px; color: var(--text); background: var(--accent-wash); border-color: transparent; }
 .chip-group .icon { color: var(--accent-hi); }
+
+/* ------------------------------------------------------------ patch notes: one fold per minor series */
+.cl-series { background: var(--bg-2); border: 1px solid var(--border-soft); border-radius: var(--radius); min-width: 0; }
+.cl-series.is-current { border-color: color-mix(in srgb, var(--accent) 55%, var(--border-soft)); }
+.cl-series-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; padding: 13px 18px; cursor: pointer; list-style: none; border-radius: var(--radius); }
+.cl-series-head::-webkit-details-marker { display: none; }
+.cl-series-head:hover { background: var(--hover); }
+.cl-series[open] > .cl-series-head { border-bottom: 1px solid var(--border-soft); border-radius: var(--radius) var(--radius) 0 0; }
+.cl-chev { align-self: center; color: var(--text-faint); transition: transform var(--ease); flex: none; }
+.cl-series[open] > .cl-series-head .cl-chev { transform: rotate(90deg); }
+.cl-series-name { font-size: 17px; font-weight: 650; letter-spacing: -0.01em; color: #f0f0f0; }
+.cl-series-range { color: var(--text-faint); font-size: 12px; }
+.cl-series-head .cl-running { align-self: center; }
+.cl-series-about { flex: 1 1 260px; min-width: 0; color: var(--text-muted); font-size: 13.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cl-series-meta { margin-left: auto; color: var(--text-faint); font-size: 12.5px; white-space: nowrap; }
+.cl-series-body { padding: 4px 18px 8px; }
+/* inside a fold the releases are sections, not cards of their own */
+.cl-series-body .cl-release { padding: 14px 0 12px; background: none; border: 0; border-radius: 0; }
+.cl-series-body .cl-release + .cl-release { border-top: 1px solid var(--border-soft); }
+.cl-series-body .cl-version { font-size: 14.5px; }
+@media (max-width: 560px) { .cl-series-meta { margin-left: 0; flex-basis: 100%; } .cl-series-about { flex-basis: 100%; white-space: normal; } }
+/* the release inside already says so */
+.cl-series[open] > .cl-series-head .cl-running { display: none; }
