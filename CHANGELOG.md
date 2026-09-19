@@ -6,6 +6,20 @@ binary and is what the **Patch notes** tab in the app shows.
 Format: `## [version] - date`, an optional one-paragraph summary, then `### Added`,
 `### Changed`, `### Fixed` or `### Removed` with one bullet per change.
 
+## [0.5.0] - 2026-09-19
+
+You decide who sees what.
+
+### Added
+- **Permissions.** Under Settings → Access, grant people more than their own statistics, for everyone at once or person by person: **see everyone's activity** (other people's statistics and history, the Users page, every live stream), **see network details** (IP addresses, device ids, local or remote), **see the server** (the Server page, the server log, failed sign-ins, file paths) and **manage finstats** (settings, tasks, import, deleting plays).
+- **Sign in, per person.** Let just a few people in without opening finstats to every Jellyfin user.
+- Changes apply immediately, including taking access away, and everything is enforced by the server rather than by hiding buttons.
+
+### Changed
+- Jellyfin administrators still have everything, and only they can change permissions. Someone who may manage finstats cannot grant anything, to themselves or anyone else.
+- The year recap stays personal whatever is granted.
+- Nothing changes for existing installs until you grant something: people who could sign in before still see only their own statistics.
+
 ## [0.4.5] - 2026-09-19
 
 ### Changed
