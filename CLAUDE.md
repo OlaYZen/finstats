@@ -83,7 +83,9 @@ serde_urlencoded then hands numbers over as strings and every numeric filter 400
 different users starting within `group_window_s` (default 60 — real data shows a third of genuine groups start 6–60 s
 apart) and overlapping ≥ 2 min share `playbacks.group_id` (= lowest play id in the group). `detect()` re-runs per item
 when a play ends, fully after import/start-up, and fully when the setting changes. "Time together" is the
-second-longest stay in a session.
+second-longest stay in a session. Running streams are grouped separately by `mark_live` (same title,
+different users, starts within the window *or* positions within `max(window, 30)` s), before `/api/now-playing` narrows
+the list to the caller.
 
 **Profiles (`profile.rs`).** Show progress counts only episodes that exist as files (`path`/`size_bytes` set; the sync
 asks Jellyfin to exclude virtual items, and season 0 is skipped). "Seen" merges three sources in order: a recorded

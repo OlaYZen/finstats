@@ -460,3 +460,8 @@ filter only that person's groups)
 }
 ```
 `GET/PUT /api/settings` gains `"group_window_s": 60`.
+
+`Session` (from `GET /api/now-playing`) gains `"group": {"size": 2, "with": [{"user_id","user_name"}]}` when other
+people are playing the same title right now, having started within `group_window_s` or being within
+`max(group_window_s, 30)` seconds of the same position; absent otherwise. It is computed before the list is narrowed
+to the caller, so someone without `see_everyone` still sees who they are watching with.
