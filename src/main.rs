@@ -7,6 +7,7 @@ mod import;
 mod jellyfin;
 mod media;
 mod playback;
+mod profile;
 mod recap;
 mod relink;
 mod state;

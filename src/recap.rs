@@ -365,12 +365,22 @@ fn records(c: &Connection, w: &Window) -> Result<Value> {
         .iter()
         .filter_map(|r| NaiveDate::parse_from_str(r["d"].as_str()?, "%Y-%m-%d").ok())
         .collect();
+    let longest_streak = longest_run(&days).filter(|(len, _, _)| *len >= 2).map(|(len, from, to)| json!({ "days": len, "from": from.to_string(), "to": to.to_string() }));
+
+    Ok(json!({
+        "biggest_day": biggest_day, "biggest_binge": biggest_binge, "longest_streak": longest_streak,
+        "longest_play": longest_play, "most_rewatched": most_rewatched, "first_play": first_play, "oldest_title": oldest_title,
+    }))
+}
+
+/// The longest run of consecutive days in a set: (length, first day, last day).
+pub fn longest_run(days: &BTreeSet<NaiveDate>) -> Option<(i64, NaiveDate, NaiveDate)> {
     let mut best: Option<(i64, NaiveDate, NaiveDate)> = None;
     let mut run: Option<(NaiveDate, NaiveDate)> = None;
     for d in days {
         run = match run {
-            Some((start, prev)) if d == prev + chrono::Duration::days(1) => Some((start, d)),
-            _ => Some((d, d)),
+            Some((start, prev)) if *d == prev + chrono::Duration::days(1) => Some((start, *d)),
+            _ => Some((*d, *d)),
         };
         if let Some((start, end)) = run {
             let len = (end - start).num_days() + 1;
@@ -379,12 +389,7 @@ fn records(c: &Connection, w: &Window) -> Result<Value> {
             }
         }
     }
-    let longest_streak = best.filter(|(len, _, _)| *len >= 2).map(|(len, from, to)| json!({ "days": len, "from": from.to_string(), "to": to.to_string() }));
-
-    Ok(json!({
-        "biggest_day": biggest_day, "biggest_binge": biggest_binge, "longest_streak": longest_streak,
-        "longest_play": longest_play, "most_rewatched": most_rewatched, "first_play": first_play, "oldest_title": oldest_title,
-    }))
+    best
 }
 
 fn discovery(c: &Connection, w: &Window) -> Result<Value> {

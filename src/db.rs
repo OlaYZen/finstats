@@ -219,6 +219,15 @@ const MIGRATIONS: &[&str] = &[
         updated_at  INTEGER NOT NULL
     ) WITHOUT ROWID;
     "#,
+    // 6 — episodes a user marked as seen by hand, for what was watched while nothing was recording
+    r#"
+    CREATE TABLE manual_seen (
+        user_id    TEXT NOT NULL,
+        item_id    TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        PRIMARY KEY (user_id, item_id)
+    ) WITHOUT ROWID;
+    "#,
 ];
 
 impl Db {

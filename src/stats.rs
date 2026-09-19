@@ -709,6 +709,8 @@ pub async fn user_detail(State(app): State<App>, user: AuthUser, Path(id): Path<
             "methods": buckets(c, &cond, "p.play_method", "", 8)?,
             "genres": genre_buckets(c, &cond)?,
             "jellyfin": jellyfin_flags(c, &id)?,
+            // Streaks are about the whole history, whatever time range the page is showing.
+            "streaks": crate::profile::streaks(c, &id, scope.min_play_s)?,
             "devices": devices, "ips": ips,
         })))
     })
