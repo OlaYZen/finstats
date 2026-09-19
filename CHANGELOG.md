@@ -6,6 +6,11 @@ binary and is what the **Patch notes** tab in the app shows.
 Format: `## [version] - date`, an optional one-paragraph summary, then `### Added`,
 `### Changed`, `### Fixed` or `### Removed` with one bullet per change.
 
+## [0.7.8] - 2026-09-19
+
+### Added
+- **A radar view for Genres.** The Genres card, on the dashboard and on profiles, can now be shown as a radar: one spoke per genre, so the shape of what gets watched is visible at a glance. Switch between **Radar** and **List** in the card's corner; your choice is remembered. Hovering a point (or using the arrow keys) shows the genre's watch time and share, and the list is still there for reading exact numbers.
+
 ## [0.7.7] - 2026-09-19
 
 ### Fixed
