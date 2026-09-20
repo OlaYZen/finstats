@@ -245,6 +245,21 @@ kbd {
 }
 @keyframes spin { to { transform: rotate(360deg); } }
 
+/* ---- dashboard shelf: recently added, scrolling sideways inside itself */
+.shelf-section[hidden] { display: none; }
+.shelf-arrows { display: inline-flex; gap: 2px; }
+.shelf-arrows[hidden] { display: none; }
+.shelf-arrows .icon-btn[aria-disabled="true"] { opacity: .35; cursor: default; }
+.shelf { list-style: none; margin: 0; padding: 3px 3px 10px; display: grid; grid-auto-flow: column; grid-auto-columns: 132px; gap: 16px; overflow-x: auto; overscroll-behavior-x: contain; }
+.shelf:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: var(--radius-sm); }
+.shelf > li { min-width: 0; }
+.shelf-card { display: flex; flex-direction: column; gap: 2px; color: var(--text); }
+.shelf-card:hover { text-decoration: none; }
+.shelf-card:hover .poster, .shelf-card:focus-visible .poster { outline: 2px solid var(--accent); outline-offset: 1px; }
+.shelf-when { margin-top: 7px; font: 11px var(--mono); color: var(--accent-hi); }
+.shelf-name { font-size: 13px; font-weight: 500; line-height: 1.3; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
+.shelf-sub { font-size: 11.5px; color: var(--text-faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
 /* ---- timeline: a trail of stops. Rows alternate direction (the row is rtl, its cards are not), a bend joins
    each row to the next; below 620px (.is-line, set from JS) it is one straight line down the left. */
 .content > .entity-tabs { margin-top: 14px; }
@@ -885,6 +900,7 @@ a.chip-link:hover { border-color: var(--accent); color: var(--text); text-decora
 @media (max-width: 420px) {
   .np { flex-direction: row; }
   .poster-np { width: 56px; }
+  .shelf { grid-auto-columns: 112px; gap: 12px; }
   .statusbar .sb-item:nth-child(3) { display: none; }
 }
 
