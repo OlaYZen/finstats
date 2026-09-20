@@ -7,6 +7,15 @@ Format: `## [version] - date`, a one-paragraph summary (required for an `x.y.0` 
 headline of that series in the app; optional otherwise), then `### Added`,
 `### Changed`, `### Fixed` or `### Removed` with one bullet per change.
 
+## [1.0.4] - 2026-09-20
+
+### Fixed
+- In a play's details, the copy button next to a long **Device ID** had dropped onto a line of its own. It sits beside the ID again.
+- On the Playback page, the last column of **Which clients transcode** was cut off ("Transc…"). The column headers got wider when tables became sortable and no longer fitted the card; the two-word headers now wrap instead.
+
+### Changed
+- The screenshots in the README are current again (they still showed version 0.5.0).
+
 ## [1.0.3] - 2026-09-20
 
 ### Added
