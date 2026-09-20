@@ -7,6 +7,11 @@ Format: `## [version] - date`, a one-paragraph summary (required for an `x.y.0` 
 headline of that series in the app; optional otherwise), then `### Added`,
 `### Changed`, `### Fixed` or `### Removed` with one bullet per change.
 
+## [1.2.1] - 2026-09-20
+
+### Changed
+- The pictures in the README are retaken with this version, and there is a new one of the **Security** page with its map and an impossible-travel alert. Nothing changes in the app itself.
+
 ## [1.2.0] - 2026-09-20
 
 See where people watch from. A new Security page puts plays, sign-ins and live streams on a world map and raises an alert when an account is somewhere it cannot be.
