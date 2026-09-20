@@ -22,7 +22,7 @@ use tower_http::compression::predicate::{DefaultPredicate, NotForContentType, Pr
 use crate::auth::{self, AuthUser, JellyfinAdmin, Manager};
 use crate::state::{ApiError, ApiResult, App, Settings};
 use crate::db::rusqlite::OptionalExtension;
-use crate::{changelog, db, groups, import, profile, recap, recent, stats, sync, timeline};
+use crate::{changelog, db, groups, import, profile, recap, recent, security, stats, sync, timeline};
 
 #[derive(RustEmbed)]
 #[folder = "$CARGO_MANIFEST_DIR/web"]
@@ -63,6 +63,12 @@ pub fn router(app: App) -> Router {
         .route("/people/{id}", get(stats::person_detail))
         .route("/search", get(stats::search))
         .route("/events", get(stats::events))
+        .route("/security", get(security::overview))
+        .route("/security/alerts", get(security::alerts))
+        .route("/security/alerts/resolve-all", post(security::resolve_all))
+        .route("/security/alerts/{id}/resolve", post(security::resolve))
+        .route("/security/alerts/{id}/reopen", post(security::reopen))
+        .route("/security/database", post(security::download_database))
         .route("/img/item/{id}", get(item_image))
         .route("/img/user/{id}", get(user_image))
         .route("/settings", get(get_settings).put(put_settings))
@@ -291,6 +297,7 @@ async fn settings_response(app: &App) -> ApiResult {
     if let Some(obj) = v.as_object_mut() {
         obj.insert("known_home_addresses".into(), json!(known));
         obj.insert("public_ip_services".into(), json!(crate::network::services()));
+        obj.insert("geoip".into(), security::status_json(app));
     }
     Ok(Json(v))
 }
@@ -319,7 +326,10 @@ async fn put_settings(State(app): State<App>, Manager(user): Manager, Json(patch
     let regroup = (next.group_window_s != app.settings().group_window_s).then_some(next.group_window_s);
     let before = app.settings();
     let homes = (next.home_addresses != before.home_addresses).then(|| next.home_addresses.clone());
+    let homes_changed = homes.is_some();
     let lookup_switched_on = next.public_ip_lookup && !before.public_ip_lookup;
+    let geoip_switched_on = next.geoip_download && !before.geoip_download;
+    let rules_changed = (next.travel_speed_kmh, next.travel_min_km) != (before.travel_speed_kmh, before.travel_min_km);
     app.db
         .call(move |c| {
             db::set_setting(c, "settings", &raw)?;
@@ -339,6 +349,12 @@ async fn put_settings(State(app): State<App>, Manager(user): Manager, Json(patch
     app.wake.notify_waiters();
     if lookup_switched_on {
         crate::network::refresh(&app).await;
+    }
+    if geoip_switched_on {
+        crate::geo::refresh(&app).await;
+    }
+    if rules_changed || homes_changed {
+        security::check(&app, None).await;
     }
     settings_response(&app).await
 }

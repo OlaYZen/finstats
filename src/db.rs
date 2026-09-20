@@ -12,7 +12,7 @@ pub struct Db {
     pool: Pool,
 }
 
-const MIGRATIONS: &[&str] = &[
+pub(crate) const MIGRATIONS: &[&str] = &[
     // 1 — initial schema
     r#"
     CREATE TABLE settings (
@@ -264,6 +264,43 @@ const MIGRATIONS: &[&str] = &[
     // 10 — "recently added" walks the library newest first and stops after a few dozen rows
     r#"
     CREATE INDEX idx_items_added ON items(date_created DESC) WHERE removed = 0 AND date_created IS NOT NULL;
+    "#,
+    // 11 — where people watch from: the address of a sign-in (NULL = not looked at yet, '' = none in the
+    //      text), a place per address from the local geolocation database, and what looked wrong
+    r#"
+    ALTER TABLE server_events ADD COLUMN remote_ip TEXT;
+    CREATE INDEX idx_events_ip ON server_events(type, date) WHERE remote_ip <> '';
+    CREATE INDEX idx_pb_ip ON playbacks(remote_ip) WHERE remote_ip IS NOT NULL;
+
+    CREATE TABLE ip_locations (
+        ip           TEXT PRIMARY KEY,        -- as written in playbacks / server_events
+        country_code TEXT,                    -- all NULL: a public address the database does not know
+        country      TEXT,
+        region       TEXT,
+        city         TEXT,
+        latitude     REAL,
+        longitude    REAL,
+        timezone     TEXT,
+        looked_up_at INTEGER NOT NULL
+    ) WITHOUT ROWID;
+
+    CREATE TABLE security_alerts (
+        id          INTEGER PRIMARY KEY,
+        kind        TEXT NOT NULL,            -- impossible_travel | new_country
+        severity    TEXT NOT NULL,            -- high | medium
+        user_id     TEXT NOT NULL,
+        user_name   TEXT NOT NULL,
+        at          INTEGER NOT NULL,         -- when it happened, not when it was noticed
+        dedupe      TEXT NOT NULL UNIQUE,     -- a rescan never reports the same thing twice
+        details     TEXT NOT NULL,            -- JSON
+        created_at  INTEGER NOT NULL,
+        resolved_at INTEGER,
+        resolved_by TEXT,
+        note        TEXT,
+        muted       INTEGER NOT NULL DEFAULT 0 -- "these two places are fine for this person"
+    );
+    CREATE INDEX idx_alerts_open ON security_alerts(resolved_at, at);
+    CREATE INDEX idx_alerts_user ON security_alerts(user_id, at);
     "#,
 ];
 

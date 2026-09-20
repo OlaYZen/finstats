@@ -5,6 +5,7 @@ mod changelog;
 mod collector;
 mod db;
 mod fuzzy;
+mod geo;
 mod groups;
 mod import;
 mod jellyfin;
@@ -15,6 +16,7 @@ mod profile;
 mod recap;
 mod recent;
 mod relink;
+mod security;
 mod state;
 mod stats;
 mod sync;
@@ -44,6 +46,7 @@ ENVIRONMENT:
     FINSTATS_DATA_DIR      Where the database and caches live   (default: ./data)
     FINSTATS_BIND          Address to listen on                  (default: 0.0.0.0:8080)
     FINSTATS_TRUST_PROXY   Set to 1 behind a reverse proxy to read X-Forwarded-For
+    FINSTATS_GEOIP_DB      A city database (.mmdb) to place addresses with (default: newest in <data dir>/geoip)
     JELLYFIN_URL           Optional: skip the setup wizard…
     JELLYFIN_API_KEY       …together with an API key
     TZ                     Timezone used for \"per day\" and \"hour of day\" statistics
@@ -192,8 +195,14 @@ async fn serve(db: db::Db, data_dir: PathBuf) -> Result<()> {
         live: RwLock::new(vec![]),
         collector: RwLock::new(CollectorStatus::default()),
         login_attempts: Mutex::new(Default::default()),
+        geo: Default::default(),
         wake: Notify::new(),
     });
+
+    // Before the collector: a play that begins in the first second is looked at like any other.
+    if geo::load(&app) {
+        security::check(&app, None).await;
+    }
 
     tokio::spawn(collector::run(app.clone()));
     tokio::spawn(sync::scheduler(app.clone()));

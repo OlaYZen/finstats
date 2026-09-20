@@ -38,7 +38,7 @@ const SUFFIX: &str = ".jsonl.gz";
 
 /// In the order they are written, which is also the order they must be read in: a timeline row
 /// needs its play to exist.
-const TABLES: [&str; 7] = ["playbacks", "playback_events", "manual_seen", "user_permissions", "home_addresses", "server_events", "devices"];
+const TABLES: [&str; 8] = ["playbacks", "playback_events", "manual_seen", "user_permissions", "home_addresses", "server_events", "devices", "security_alerts"];
 
 pub fn dir(data_dir: &Path) -> PathBuf {
     data_dir.join("backups")
@@ -298,6 +298,9 @@ pub fn restore(db: &Db, path: &Path, with_settings: bool, tasks: Option<(&Tasks,
                     res.other_rows += 1;
                 }
             }
+            // Its own ids mean nothing here; `dedupe` keeps an alert this database already has from doubling.
+            "security_alerts" if insert_row(&tx, table, &known["security_alerts"], row, &["id"], "INSERT OR IGNORE")? => res.other_rows += 1,
+            "security_alerts" => {}
             _ => {} // a table from a newer finstats
         }
         if n % 5000 == 0 {

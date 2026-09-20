@@ -28,6 +28,8 @@ pub struct AppState {
     pub live: RwLock<Vec<Value>>,
     pub collector: RwLock<CollectorStatus>,
     pub login_attempts: Mutex<HashMap<IpAddr, (u32, i64)>>,
+    /// The geolocation database, when there is one.
+    pub geo: crate::geo::Geo,
     /// Wakes background loops when configuration or settings change.
     pub wake: Notify,
 }
@@ -69,11 +71,17 @@ pub struct Settings {
     pub backup_every_d: i64,
     /// How many backups to keep; the oldest go first.
     pub backup_keep: i64,
+    /// Fetch DB-IP's free city database and replace it monthly. Off: only a file the owner puts there is used.
+    pub geoip_download: bool,
+    /// Faster than this between two sightings is impossible travel…
+    pub travel_speed_kmh: i64,
+    /// …when they are at least this far apart. City databases are often a few hundred km off.
+    pub travel_min_km: i64,
 }
 
 impl Default for Settings {
     fn default() -> Self {
-        Self { follow_jellyfin_scan: true, allow_user_login: false, default_permissions: vec![], active_interval_s: 1, idle_interval_s: 5, sync_interval_h: 6, merge_window_s: 600, min_play_s: 0, group_window_s: 60, public_ip_lookup: true, home_addresses: vec![], backup_every_d: 7, backup_keep: 5 }
+        Self { follow_jellyfin_scan: true, allow_user_login: false, default_permissions: vec![], active_interval_s: 1, idle_interval_s: 5, sync_interval_h: 6, merge_window_s: 600, min_play_s: 0, group_window_s: 60, public_ip_lookup: true, home_addresses: vec![], backup_every_d: 7, backup_keep: 5, geoip_download: false, travel_speed_kmh: 900, travel_min_km: 500 }
     }
 }
 
@@ -100,6 +108,8 @@ impl Settings {
         }
         check("backup_every_d", self.backup_every_d, 0, 365)?;
         check("backup_keep", self.backup_keep, 1, 100)?;
+        check("travel_speed_kmh", self.travel_speed_kmh, 100, 5_000)?;
+        check("travel_min_km", self.travel_min_km, 50, 5_000)?;
         check("active_interval_s", self.active_interval_s, 1, 60)?;
         check("idle_interval_s", self.idle_interval_s, 1, 60)?;
         check("sync_interval_h", self.sync_interval_h, 1, 168)?;
@@ -153,7 +163,7 @@ pub struct TaskState {
 #[derive(Clone)]
 pub struct Tasks(Arc<Mutex<BTreeMap<&'static str, TaskState>>>);
 
-pub const TASK_IDS: [&str; 8] = ["sync_users", "sync_libraries", "sync_events", "sync_server", "sync_userdata", "import", "backup", "restore"];
+pub const TASK_IDS: [&str; 9] = ["sync_users", "sync_libraries", "sync_events", "sync_server", "sync_userdata", "import", "backup", "restore", "geoip"];
 
 impl Tasks {
     pub fn new() -> Self {

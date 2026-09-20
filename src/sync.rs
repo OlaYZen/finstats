@@ -29,7 +29,12 @@ pub fn spawn(app: &App, id: &'static str) -> bool {
         let outcome = match id {
             "sync_users" => sync_users(&app, &jf).await,
             "sync_libraries" => sync_libraries(&app, &jf).await,
-            "sync_events" => sync_events(&app, &jf).await,
+            "sync_events" => {
+                let done = sync_events(&app, &jf).await;
+                // New sign-ins are new sightings.
+                crate::security::check(&app, None).await;
+                done
+            }
             "sync_server" => sync_server(&app, &jf).await,
             "sync_userdata" => sync_userdata(&app, &jf).await,
             other => Err(anyhow!("unknown task {other}")),
@@ -87,6 +92,7 @@ pub async fn scheduler(app: App) {
                 last_light = now;
                 refresh_server_info(&app).await;
                 crate::network::refresh(&app).await;
+                crate::geo::refresh(&app).await;
                 spawn(&app, "sync_users");
                 spawn(&app, "sync_events");
                 spawn(&app, "sync_server");
@@ -480,8 +486,8 @@ async fn sync_events(app: &App, jf: &Jellyfin) -> Result<String> {
                 let mut n = 0;
                 {
                     let mut stmt = tx.prepare(
-                        "INSERT OR IGNORE INTO server_events(id, date, name, overview, short_overview, type, severity, user_id, item_id)
-                         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                        "INSERT OR IGNORE INTO server_events(id, date, name, overview, short_overview, type, severity, user_id, item_id, remote_ip)
+                         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
                     )?;
                     for e in &entries {
                         let (Some(id), Some(date)) = (e["Id"].as_i64(), e["Date"].as_str().and_then(parse_ts)) else { continue };
@@ -496,6 +502,7 @@ async fn sync_events(app: &App, jf: &Jellyfin) -> Result<String> {
                             opt_str(&e["Severity"]),
                             user,
                             e["ItemId"].as_str().map(norm_id),
+                            e["ShortOverview"].as_str().and_then(crate::security::event_ip).unwrap_or_default(),
                         ])?;
                     }
                 }

@@ -628,3 +628,57 @@ ids (absent = all); ids that are not ids and cursors that are not cursors are a 
 ```
 Newest first. Episodes of one show added on the same local day are one entry, however many seasons they span, so a season pack
 or a whole imported show takes one place. Series, seasons and single tracks are never entries; removed items are left out.
+
+---
+
+# v1.2 — Security: places, impossible travel
+
+Addresses get a place (country, city, a city-centre coordinate) from a city database read locally (`<data dir>/geoip/*.mmdb` or
+`FINSTATS_GEOIP_DB`); nothing is asked of anyone per lookup. Everything here needs **both** `see_network` and `see_everyone`
+(`403` otherwise); the writes also need `manage`. Without a database the reads still answer, with `"database": null` and empty lists.
+
+`GET /api/security?days=&user_id=`
+```jsonc
+{ "database": {"kind": "DBIP-City-Lite", "built_at": 0, "dbip": true, "file": "dbip-city-lite-2026-09.mmdb"} | null,
+  "can_manage": true, "home_known": true, "open_alerts": 2, "addresses_without_place": 0, "days": 30,
+  "places": [ {"label": "Paris, France", "home": false,        // home: every play from the home network, placed where its public address is
+               "city", "region", "country", "country_code": "FR", "latitude": 48.85, "longitude": 2.35,
+               "plays": 3, "watch_s": 0, "sign_ins": 1, "addresses": 1, "last_seen": 0,
+               "users": [{"id", "name", "plays", "sign_ins"}]} ],
+  "countries": [{"code": "FR", "name": "France", "plays": 3, "users": 1}],
+  "failed": [ {"label", "country_code", "latitude", "longitude", "attempts": 9, "last_at": 0, "events": ["Failed login attempt from admin"]} ],
+                                                               // failed sign-ins from outside: only with `see_server`, never with `user_id`
+  "now_playing": [ {"user_id", "user_name", "item_name", "series_name", "device_name", "home": true, "place", "latitude", "longitude"} ] }
+```
+Places count plays in the window plus successful sign-ins (`AuthenticationSucceeded` in Jellyfin's activity log).
+
+`GET /api/security/alerts?status=open|resolved|all&user_id=&page=&per_page=` (default `open`, 25 per page, at most 100)
+```jsonc
+{ "total": 3, "open": 2, "page": 1, "per_page": 25,
+  "rows": [ {"id": 1, "kind": "impossible_travel" | "new_country", "severity": "high" | "medium",
+             "user_id", "user_name", "has_image", "at": 0,
+             "resolved_at": 0 | null, "resolved_by": "alice" | "finstats" | null, "note": "…" | null, "muted": false,
+             "details": {
+               // impossible_travel
+               "from": {"place", "country_code", "latitude", "longitude", "at", "until", "what", "ip", "home"}, "to": {…},
+               "pair": "home|40.7,-74.0", "distance_km": 5570, "gap_s": 1200, "overlap": false, "speed_kmh": 16711 | null,
+               // new_country
+               "to": {…}, "country": "France", "country_code": "FR", "known": 1 } } ] }
+```
+A *sighting* is a play (for as long as it ran) or a sign-in / new session in the activity log. `impossible_travel`: two sightings of one
+person at least `travel_min_km` apart that overlap (`overlap`, no speed) or would need more than `travel_speed_kmh`; one alert per pair
+of places per day. `new_country`: the first sighting in a country once the person has a history. Alerts found more than 30 days after
+the fact (an import, the first database) are filed as resolved by `finstats`. Alerts are part of backups.
+
+- `POST /api/security/alerts/{id}/resolve` `{ "note": "…"?, "mute": false }` → `{ "ok": true, "also_resolved": 0 }`. `mute` (impossible travel
+  only) also resolves the open alerts for the same two places and stops that pair from reporting for this person again.
+- `POST /api/security/alerts/{id}/reopen` → `{ "ok": true }` (clears the note and the mute).
+- `POST /api/security/alerts/resolve-all` → `{ "ok": true, "resolved": 5 }`.
+- `POST /api/security/database` (`manage`) → `202`; downloads DB-IP's free city database as task `geoip` (`409` while it runs, `400` when
+  the file is set with `FINSTATS_GEOIP_DB`).
+
+`GET/PUT /api/settings` gain `"geoip_download": false` (fetch that file now and monthly), `"travel_speed_kmh": 900` (100..5000) and
+`"travel_min_km": 500` (50..5000). Read-only in the response:
+```jsonc
+"geoip": {"database": {…} | null, "folder": "/data/geoip", "from_env": false, "source": "https://download.db-ip.com/free/dbip-city-lite-YYYY-MM.mmdb.gz"}
+```

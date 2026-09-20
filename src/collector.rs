@@ -335,6 +335,9 @@ async fn tick(
                 rec.start_position_s = start_position;
             }
             tracing::info!("{} started {} on {}", rec.user_name, rec.item_name, rec.device_name.as_deref().unwrap_or("unknown device"));
+            // A new sighting: is this account somewhere it cannot be?
+            let (checker, who) = (app.clone(), rec.user_id.clone());
+            tokio::spawn(async move { crate::security::check(&checker, Some(who)).await });
             tracked.insert(
                 key,
                 Tracked { row_id, rec, watched, paused, is_paused, last_tick: tick_at, last_persist: tick_at, transcode_progress },
