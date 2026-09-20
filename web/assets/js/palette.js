@@ -1,4 +1,4 @@
-// Command palette (Ctrl+Space): jump to a page, a user, or anything in the library.
+// Command palette (Ctrl+Space): jump to a page, a user, anything in the library, or someone who is in it.
 
 import { h, icon, debounce, mount } from './dom.js';
 import { api, isAbort } from './api.js';
@@ -18,7 +18,7 @@ export function openPalette() {
   let abort = null;
   let lastQuery = '';
 
-  const input = h('input', { class: 'palette-input', type: 'text', placeholder: 'Search movies, shows, users, pages…', autocomplete: 'off',
+  const input = h('input', { class: 'palette-input', type: 'text', placeholder: 'Search movies, shows, actors, users, pages…', autocomplete: 'off',
     role: 'combobox', 'aria-expanded': 'true', 'aria-controls': 'palette-list', 'aria-autocomplete': 'list', 'aria-label': 'Search' });
   const list = h('ul', { class: 'palette-list', id: 'palette-list', role: 'listbox' });
   const hint = h('div', { class: 'palette-foot' },
@@ -61,6 +61,10 @@ export function openPalette() {
 
   const typeName = { Movie: 'Movie', Series: 'Series', MusicAlbum: 'Album', Audio: 'Track', Episode: 'Episode' };
 
+  // "Actor · 12 titles", "Director · 1 title", "Actor and director · 4 titles"
+  const credit = (p) => [p.is_actor && p.is_director ? 'Actor and director' : p.is_director ? 'Director' : 'Actor',
+    p.titles ? `${p.titles} ${p.titles === 1 ? 'title' : 'titles'}` : null].filter(Boolean).join(' · ');
+
   const search = debounce(async (q) => {
     if (abort) abort.abort();
     abort = new AbortController();
@@ -73,6 +77,8 @@ export function openPalette() {
         { title: 'Users', rows: (data.users || []).map((u) => ({ label: u.name, href: `/users/${u.id}`, thumb: avatar(u.id, u.name, { size: 24 }) })) },
         { title: 'Library', rows: (data.items || []).map((it) => ({ label: it.name, href: `/items/${it.id}`,
           sub: [typeName[it.type] || it.type, it.sub || it.year].filter(Boolean).join(' · '), thumb: poster(it.image_item_id || it.id, it.name, { w: 120, cls: 'poster-xs' }) })) },
+        { title: 'Cast and crew', rows: (data.people || []).map((p) => ({ label: p.name, href: `/people/${p.id}`, sub: credit(p),
+          thumb: poster(p.has_image ? p.id : null, p.name, { w: 120, cls: 'poster-xs' }) })) },
       ], `Nothing matches “${q}”.`);
     } catch (e) {
       if (isAbort(e) || e.status === 401) return;
