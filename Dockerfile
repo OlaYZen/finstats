@@ -23,16 +23,19 @@ LABEL org.opencontainers.image.title="finstats" \
       org.opencontainers.image.source="https://github.com/OlaYZen/finstats" \
       org.opencontainers.image.licenses="GPL-3.0-only"
 # tzdata: "plays per day" and the hour-of-day heatmap follow the TZ variable.
-RUN apk add --no-cache tzdata \
+# su-exec: the entrypoint drops from root to the finstats user with it.
+RUN apk add --no-cache tzdata su-exec \
     && addgroup -g 1000 finstats && adduser -D -u 1000 -G finstats finstats \
     && mkdir /data && chown finstats:finstats /data
 COPY --from=build /src/target/release/finstats /usr/local/bin/finstats
+COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 
-USER finstats
+# No USER line on purpose: the entrypoint starts as root only to make /data writable (Docker creates a
+# missing bind-mount folder as root), then runs finstats as PUID:PGID, 1000:1000 unless told otherwise.
 ENV FINSTATS_DATA_DIR=/data \
     FINSTATS_BIND=0.0.0.0:8080
 VOLUME /data
 EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s \
     CMD wget -qO /dev/null http://127.0.0.1:8080/api/status || exit 1
-ENTRYPOINT ["finstats"]
+ENTRYPOINT ["docker-entrypoint.sh"]

@@ -47,6 +47,26 @@ ENVIRONMENT:
     TZ                     Timezone used for \"per day\" and \"hour of day\" statistics
     RUST_LOG               Log filter                            (default: finstats=info)";
 
+/// SQLite's own complaint about a directory it may not write to is "unable to open database file",
+/// and it arrives after the pool has waited half a minute. Say what is wrong, at once.
+fn ensure_writable(data_dir: &std::path::Path) -> Result<()> {
+    let probe = data_dir.join(format!(".finstats-write-test-{}", std::process::id()));
+    match std::fs::write(&probe, b"") {
+        Ok(()) => {
+            let _ = std::fs::remove_file(&probe);
+            Ok(())
+        }
+        Err(e) => bail!(
+            "finstats cannot write to its data directory {dir} ({e}).\n\n\
+             It belongs to another user. This usually happens when Docker created the folder itself, as root.\n\
+             Fix it with:   sudo chown -R 1000:1000 <your data folder>\n\
+             or let the container start as root (no --user / user: setting): it then fixes this by itself\n\
+             and drops to an unprivileged user before finstats runs. PUID and PGID choose that user.",
+            dir = data_dir.display()
+        ),
+    }
+}
+
 fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
     match args.first().map(String::as_str) {
@@ -68,6 +88,7 @@ fn main() -> Result<()> {
 
     let data_dir = PathBuf::from(std::env::var("FINSTATS_DATA_DIR").unwrap_or_else(|_| "data".into()));
     std::fs::create_dir_all(&data_dir).with_context(|| format!("creating data directory {}", data_dir.display()))?;
+    ensure_writable(&data_dir)?;
     let db = db::Db::open(&data_dir.join("finstats.db"))?;
 
     match args.first().map(String::as_str) {
