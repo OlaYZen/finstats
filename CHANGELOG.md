@@ -7,6 +7,21 @@ Format: `## [version] - date`, a one-paragraph summary (required for an `x.y.0` 
 headline of that series in the app; optional otherwise), then `### Added`,
 `### Changed`, `### Fixed` or `### Removed` with one bullet per change.
 
+## [1.3.0] - 2026-09-20
+
+Sonarr, Radarr and Seerr, on one page. The new **Pipeline** page says who asked for what, what is about to air and what is arriving right now — and, because finstats knows what people actually watch, whether the thing somebody asked for was ever played.
+
+### Added
+- **Connections** under Settings, for Jellyfin administrators: **Sonarr**, **Radarr** and **Seerr** (or Jellyseerr/Overseerr). Several of a kind is normal — a 4K Radarr, an anime Sonarr — and each connection is tested before it is saved, so a mistyped key is found at once instead of in a log next week. Your download client needs no setup of its own: Sonarr and Radarr already talk to it, and finstats reads what they know.
+- **Requests**: who asked for what, how long it took to arrive, and whether they ever watched it. Tiles for how many titles are waiting and what the typical wait is, a chart of how that has changed month by month, and two lists that answer the questions people actually ask: what arrived weeks ago and was never played, and who asks for the most.
+- **Upcoming**: new episodes and film releases from Sonarr and Radarr as an agenda by day, marked with whether *you* watch that show and, for people who may see everyone, who else does. A show counts as watched when somebody has played an episode of it in the last four months. The dashboard gets a "Coming up" row, a profile "Coming up" for the shows that person watches, and a title page says what is next for it.
+- **Downloads**: the live queue of every Sonarr and Radarr — what it is, how far along, how fast, what went wrong on import — with the person who asked for it next to it. A season pack is one line, however many episodes it holds, and what needs attention is on top. Below it: what came in over a week, a month or a year, by indexer, quality and download client, and which downloads failed. The dashboard shows the same list, shortened.
+- A new permission, **See what is downloading**. Without it, people still see how far their *own* request has got: how far along and how long is left, and nothing else — no release names, no speeds, no other downloads. Other people's requests need *See everyone's activity*, as before.
+
+### Changed
+- finstats still only ever reads: it sends `GET` to these services and nothing else, so there is no code in it that could approve a request, start a search, or add, pause or remove a download.
+- API keys for these services are stored in finstats' own database, are never sent back to the browser, never written to a log, and are never part of a backup. finstats follows no redirect to a service, so a key cannot travel somewhere you did not enter, and certificates are verified unless you switch that off for one connection.
+
 ## [1.2.2] - 2026-09-20
 
 ### Added
