@@ -19,6 +19,7 @@ import playback, { prefetchPlayback } from './pages/playback.js';
 import recapPage, { prefetchRecap } from './pages/recap.js';
 import events, { prefetchEvents } from './pages/events.js';
 import serverPage, { prefetchServer } from './pages/server.js';
+import securityPage, { prefetchSecurity } from './pages/security.js';
 import settings from './pages/settings.js';
 import changelogPage, { prefetchChangelog } from './pages/changelog.js';
 import { setupPage, loginPage } from './pages/auth.js';
@@ -39,6 +40,7 @@ route('/people/:id', personPage, { prefetch: prefetchPerson });
 route('/playback', playback, { prefetch: prefetchPlayback });
 route('/server', serverPage, { perm: 'see_server', prefetch: prefetchServer });
 route('/events', events, { perm: 'see_server', prefetch: prefetchEvents });
+route('/security', securityPage, { perm: 'see_network', prefetch: prefetchSecurity });
 route('/settings', settings, { perm: 'manage' });
 route('/changelog', changelogPage, { prefetch: prefetchChangelog });
 route('*', (ctx) => {

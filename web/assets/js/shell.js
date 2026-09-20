@@ -24,6 +24,7 @@ function navItems() {
     { href: '/playback', label: 'Playback', icon: 'sliders' },
     can('see_server') ? { href: '/server', label: 'Server', icon: 'server' } : null,
     can('see_server') ? { href: '/events', label: 'Server log', icon: 'log' } : null,
+    can('see_network') && can('see_everyone') ? { href: '/security', label: 'Security', icon: 'shield' } : null,
     can('manage') ? { href: '/settings', label: 'Settings', icon: 'settings' } : null,
     { href: '/changelog', label: 'Patch notes', icon: 'tag', dot: hasUnseenVersion },
   ].filter(Boolean);

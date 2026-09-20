@@ -13,6 +13,7 @@ const TASK_LABEL = {
   import: ['Jellystat import', 'Runs when you upload a backup below'],
   backup: ['Backup', 'Writes a finstats backup. Runs by itself on the schedule under Backups'],
   restore: ['Restore', 'Runs when you restore a finstats backup under Backups'],
+  geoip: ['Geolocation database', 'Downloads the city database the Security page places addresses with. Started under Security below'],
 };
 /** "in 6 days" — relTime only looks backwards. */
 function untilText(ts) {
@@ -51,6 +52,7 @@ export default function settings(ctx) {
   const accessSlot = h('div', null, sk.rows(1));
   const collectSlot = h('div', null, sk.rows(3));
   const networkSlot = h('div', { class: 'net-stack' }, sk.rows(2));
+  const securitySlot = h('div', { class: 'net-stack' }, sk.rows(2));
   const tasksSlot = h('div', null, sk.rows(3));
   const importSlot = h('div');
   const dbSlot = h('div', null, sk.rows(1));
@@ -62,6 +64,7 @@ export default function settings(ctx) {
       card({ title: 'Access', sub: 'Who can use finstats and what they can see', body: accessSlot }),
       card({ title: 'Collection', sub: 'How finstats gathers data from Jellyfin', body: collectSlot }),
       card({ title: 'Home network', sub: 'Which plays count as local and which as remote', body: networkSlot }),
+      card({ title: 'Security', sub: 'Where addresses are, and what counts as impossible travel', body: securitySlot, id: 'security' }),
       card({ title: 'Tasks', body: tasksSlot }),
       isAdmin() ? card({ title: 'Backups', sub: 'Your history, settings and permissions in one file, to keep safe or to move to another finstats', body: backupsSlot, id: 'backups' }) : null,
       card({ title: 'Import from Jellystat', sub: 'Bring your playback history with you', body: importSlot, id: 'import' }),
@@ -72,7 +75,7 @@ export default function settings(ctx) {
   async function loadSettings() {
     try {
       settingsData = await api.get('/settings', null, { signal: ctx.signal });
-      renderAccess(); renderCollect(); renderNetwork(); renderConn(); loadBackups();
+      renderAccess(); renderCollect(); renderNetwork(); renderSecurity(); renderConn(); loadBackups();
     } catch (e) {
       if (isAbort(e) || e.status === 401) return;
       mount(accessSlot, errorState(e, loadSettings)); mount(collectSlot, ''); mount(networkSlot, ''); mount(connSlot, '');
@@ -198,7 +201,8 @@ export default function settings(ctx) {
     { key: 'min_play_s', label: 'Ignore plays shorter than', unit: 'seconds', min: 0, max: 3600, help: 'Short plays stay in the database but are left out of stats. 0 counts everything.' },
   ];
 
-  function renderCollect() {
+  /** A form of whole-number settings, checked here and saved in one request. */
+  function numberForm(FIELDS, errId) {
     const inputs = {};
     const errs = {};
     const rows = FIELDS.map((f) => {
@@ -240,9 +244,14 @@ export default function settings(ctx) {
         note.replaceChildren(icon('check', 13), 'Saved');
         clearTimeout(noteTimer); noteTimer = setTimeout(() => note.replaceChildren(), 2000);
       } catch (err) {
-        mount(formErr, inlineError('collect-err', `Couldn’t save: ${err.message}`));
+        mount(formErr, inlineError(errId, `Couldn’t save: ${err.message}`));
       } finally { setBusy(save, false); }
     });
+    return form;
+  }
+
+  function renderCollect() {
+    const form = numberForm(FIELDS, 'collect-err');
     mount(collectSlot, toggleRow({ key: 'follow_jellyfin_scan', label: 'Follow Jellyfin’s library scan',
       help: 'finstats never starts a scan on Jellyfin. With this on, it re-reads your library only after Jellyfin’s own “Scan Media Library” task has finished, so Jellyfin’s schedule is the only schedule.' }), form);
   }
@@ -408,9 +417,44 @@ export default function settings(ctx) {
 
     mount(networkSlot,
       toggleRow({ key: 'public_ip_lookup', label: 'Recognise my own public address', onSaved: renderNetwork,
-        help: `A device at home that reaches Jellyfin through its public name shows up with your household’s public IP, which would otherwise look remote. With this on, finstats asks a public “what is my IP” service (${services.join(', ') || 'none configured'}) every 15 minutes and counts plays from that address as local. It remembers earlier addresses, since they change. The request contains nothing about you or your server; switch it off and finstats makes no outside requests at all.` }),
+        help: `A device at home that reaches Jellyfin through its public name shows up with your household’s public IP, which would otherwise look remote. With this on, finstats asks a public “what is my IP” service (${services.join(', ') || 'none configured'}) every 15 minutes and counts plays from that address as local. It remembers earlier addresses, since they change. The request contains nothing about you or your server. With this and the geolocation download under Security both off, finstats makes no outside requests at all.` }),
       h('div', { class: 'field' }, h('div', { class: 'setting-label' }, 'Known home addresses'), list),
       form);
+  }
+
+  // ------------------------------------------------------------ security (geolocation)
+  const TRAVEL_FIELDS = [
+    { key: 'travel_speed_kmh', label: 'Impossible travel is faster than', unit: 'km/h', min: 100, max: 5000, help: 'Two sightings of one person that would need more than this speed raise an alert. 900 is a little above an airliner. 100–5,000.' },
+    { key: 'travel_min_km', label: 'Only between places at least', unit: 'km apart', min: 50, max: 5000, help: 'City databases are often a few hundred kilometres off, and a phone on mobile data is frequently “in” the capital. Closer places than this never raise an alert. 50–5,000.' },
+  ];
+  let geoWasRunning = false, geoSig = 'null';
+
+  function renderSecurity() {
+    if (!settingsData) return;
+    const g = settingsData.geoip || {}, dbInfo = g.database;
+    const t = ((tasksData && tasksData.tasks) || []).find((x) => x.id === 'geoip');
+    const running = !!t && t.state === 'running';
+    const status = dbInfo
+      ? h('p', { class: 'help' }, h('strong', null, dbInfo.kind), `, built ${dateTime(dbInfo.built_at).split(',')[0]}`, dbInfo.file ? [' · ', h('span', { class: 'mono' }, dbInfo.file)] : null)
+      : h('p', { class: 'help' }, 'None yet. The Security page stays empty until there is one.');
+    const err = h('div');
+    const get = h('button', { type: 'button', class: 'btn', disabled: running || g.from_env }, icon('upload', 13, 'flip-v'), running ? (t.message || 'Downloading…') : dbInfo ? 'Download the newest now' : 'Download now (about 60 MB)');
+    get.addEventListener('click', async () => {
+      mount(err, '');
+      setBusy(get, true, 'Starting…');
+      try { await api.post('/security/database'); setPollInterval(1000); await loadTasks(); }
+      catch (e) { setBusy(get, false); mount(err, inlineError('geoip-err', e.message)); }
+    });
+    if (t && t.state === 'error') mount(err, inlineError('geoip-err', t.error || 'The download failed.'));
+    mount(securitySlot,
+      h('div', { class: 'field' }, h('div', { class: 'setting-label' }, 'Geolocation database'), status,
+        h('p', { class: 'help' }, g.from_env ? 'The file is set with FINSTATS_GEOIP_DB; replace that file to update it.'
+          : ['Addresses are looked up in a file on this machine, never over the network. finstats uses the newest ', h('span', { class: 'mono' }, '.mmdb'), ' city database in ', h('span', { class: 'mono' }, g.folder || 'the geoip folder'),
+            ': DB-IP’s free one, MaxMind’s GeoLite2-City, or any other in that format.']),
+        h('div', { class: 'form-actions' }, get), err),
+      g.from_env ? null : toggleRow({ key: 'geoip_download', label: 'Keep the database up to date', onSaved: renderSecurity,
+        help: 'Downloads DB-IP’s free “IP to City Lite” file (about 60 MB, licensed CC BY 4.0) from download.db-ip.com now and once a month. The request is a plain file download and contains nothing about you or your server. Off, finstats only uses a file you put there yourself.' }),
+      numberForm(TRAVEL_FIELDS, 'travel-err'));
   }
 
   // ------------------------------------------------------------ tasks
@@ -433,6 +477,11 @@ export default function settings(ctx) {
     if (imp && imp.state === 'running') sawImportRunning = true;
     setPollInterval(imp && imp.state === 'running' || upload.doneAt && Date.now() - upload.doneAt < 15000 ? 1000 : anyRunning ? 2000 : 10000);
     renderTasks(tasks); renderConn(); renderDb(); renderImport(); watchBackupTasks(tasks);
+    const geo = tasks.find((x) => x.id === 'geoip'), geoRunning = !!geo && geo.state === 'running';
+    // Only when something changed: a re-render would wipe a number somebody is typing.
+    const geoNow = JSON.stringify(geo ? [geo.state, geo.message, geo.error] : null);
+    if (geoWasRunning && !geoRunning) loadSettings(); else if (geoNow !== geoSig) renderSecurity();
+    geoWasRunning = geoRunning; geoSig = geoNow;
   }
 
   let tasksSig = '';
