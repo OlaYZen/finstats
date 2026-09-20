@@ -63,6 +63,24 @@ the speed it would have taken; the first time someone shows up in a new country 
 VPN or a holiday as fine and it stays quiet. Addresses are looked up in a database file on your own
 machine and the map is drawn by finstats itself, so no address or coordinate is sent anywhere.
 
+### What is coming in
+
+<img src="docs/screenshots/pipeline.png" alt="Pipeline page: requests from Seerr with how long each took and whether it was watched, the upcoming calendar, and the live download list" width="100%">
+
+finstats can also watch the rest of your setup, read-only: **Sonarr**, **Radarr**, **Seerr** and your torrent client
+(**qBittorrent**, **Transmission** or **Deluge**), several of a kind if you have them. The **Pipeline** page then answers
+the questions statistics alone cannot:
+
+- **Was it worth getting?** Every request with who asked, how long it took to arrive, and whether they ever watched it —
+  plus the list nobody likes to see: what arrived weeks ago and has never been played.
+- **What is coming?** A calendar of new episodes and film releases, marked with who is actually watching that show, so a
+  Friday episode of something three people follow stands out from one nobody has touched in a year.
+- **What is arriving right now?** The live queue with speeds, progress and what went wrong on import, joined from Sonarr,
+  Radarr and the client, plus what came in over the last week, month or year, by indexer, quality and client.
+
+Your own requests are yours to see; other people's need a permission, and the download queue another. Keys and passwords
+are stored in finstats' own database, are never shown again, and are never part of a backup.
+
 ### Every play, down to the pause button
 
 <img align="right" src="docs/screenshots/timeline.png" alt="Play details with a timeline: started, paused, resumed, subtitles switched, skipped ahead, stopped" width="46%">

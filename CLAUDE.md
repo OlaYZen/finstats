@@ -37,6 +37,9 @@ docker build -t finstats:latest .        # local image; the published one is ghc
 Jellyfin ──/Sessions 1 s / 5 s idle─▶ collector ──▶ SQLite ◀── stats / recap API ◀── embedded SPA (web/)
          ──/Users /Items /Devices /System/* (scheduler)──▶ sync ──┘        ▲
 Jellystat backup ──▶ import ─────────────────────────────────────┘   relink (after sync/import/start-up)
+Sonarr/Radarr ──calendar, history (15 min)──┐
+Seerr ──requests (5 min)────────────────────┼──▶ SQLite ──▶ pipeline API ◀── /pipeline
+Sonarr/Radarr queues + torrent clients ─────┴──▶ in-memory snapshot (5 s watched / 60 s) ──▶ /api/downloads
 ```
 
 **State & DB access.** `state.rs` holds `AppState` (shared via `Arc` as `App`): DB handle, Jellyfin config,
@@ -167,6 +170,26 @@ resolved. `scan` runs when a play begins (that user), after the log sync, at sta
 `see_everyone`, writes also `manage`; failed sign-ins additionally `see_server`. The map (`worldmap.js`) is hand-drawn SVG over
 `web/assets/geo/world.json` (Natural Earth, pre-projected by `tools/make-world-map.py`; Mercator, because an equal-area projection leans the north and the owner read it as a tilted map; the formula there and in `worldmap.js` must
 match). No tiles, no map service. The plain wheel scrolls the page; Ctrl+wheel, the buttons and the keys zoom.
+
+**Pipeline: the services around Jellyfin (`services.rs`, `arr.rs`, `seerr.rs`, `torrents.rs`, `downloads.rs`, `pipeline.rs`, `/pipeline`).**
+Connections (Sonarr, Radarr, Seerr, qBittorrent, Transmission, Deluge; several of a kind) live in `services`, secrets and all, and are
+`JellyfinAdmin`-only. They get **their own HTTP clients that follow no redirect**: reqwest drops `Authorization`/`Cookie` across hosts but not
+`X-Api-Key`, and a 307 replays a POST body. `Service` is neither `Serialize` nor `Debug`; its JSON is hand-built with `has_secret`; errors name a
+status and a kind of failure, never an upstream body. The torrent clients must speak POST, so read-only is enforced by the constant
+`torrents::ALLOWED` (a test rejects any word that changes something; `web.connect` is deliberately absent). An id is never reused and pointing a
+connection at another host/port/base path forgets its rows. Certificates are verified unless the owner switches that off per connection.
+Tasks: `sync_upcoming` + `sync_grabs` (15 min), `sync_requests` (5 min), all through `services::spawn`; `api::RUNNABLE` is the one way in and a
+test holds it against `TASK_IDS`. `item_external` turns `items.provider_ids` into indexed rows — **one id may belong to several items** (HD and 4K),
+so joins go id → every item → plays, unlike `relink.rs`, which refuses ambiguity because it rewrites history. Film releases are stored as a *day*
+(Radarr's midnight UTC is the evening before west of Greenwich); episodes keep their moment. Seerr is read newest-modified-first with an overlap
+on *its* clock, plus a re-read of everything still open (a media status change does not touch the request), and only a whole listing may set
+`removed_at` (Seerr purges; the history must not shrink). Users link by `jellyfinUserId`, then Jellyfin user name — never a display name or e-mail.
+`downloads.rs` is the only live part: its own loop and `Notify`, 5 s while a page says `?live=1` and 60 s otherwise, no DB work per tick, the
+snapshot in memory only, unfinished torrents only. `merge()` joins queue records and torrents by lower-cased hash: a season pack is one row, a
+usenet record has no torrent, a stranger torrent is listed as such. Scoping goes through `stats::pinned_user`: own requests for everyone, others'
+need `see_everyone` (and then no follower *counts* either — on a small server a number is a name), the queue needs `see_downloads`, while own-request
+progress (`state`, `progress`, `eta_s` and nothing else) is always allowed. The poster proxy `/img/arr/{service}/{media}` serves only ids finstats
+itself has listed. None of these tables are in `backup::TABLES`: they are re-readable, and `services` holds secrets.
 
 **Backups (`backup.rs`).** gzip JSON Lines, one row per line tagged with its table, matched *by column name* both ways so files move
 between versions; a new table that holds something Jellyfin cannot give back must be added to `backup::TABLES`. Secrets (Jellyfin
