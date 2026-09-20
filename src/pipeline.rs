@@ -468,6 +468,74 @@ pub fn request_for_item(conn: &Connection, item_id: &str, everyone: bool, caller
     Ok(conn.prepare(&sql)?.query_map(params![min_play, seen.who, item_id], |r| request_json(r, seen.everyone))?.next().transpose()?)
 }
 
+// ---------------------------------------------------------------- what came in, over time
+
+#[derive(Deserialize)]
+pub struct HistoryQuery {
+    days: Option<i64>,
+}
+
+/// Everything about the download history: how much arrived per day, what failed, and where it came from.
+/// Behind `see_downloads`, like the live queue: indexer names and release titles are the same kind of thing.
+pub async fn download_history(State(app): State<App>, crate::auth::DownloadsViewer(_): crate::auth::DownloadsViewer, Query(q): Query<HistoryQuery>) -> ApiResult {
+    let days = q.days.unwrap_or(30).clamp(1, 3650);
+    let out = app
+        .db
+        .call(move |c| {
+            let since: i64 = c.query_row("SELECT CAST(strftime('%s', date('now', 'localtime', ?1), 'utc') AS INTEGER)", [format!("-{} days", days - 1)], |r| r.get(0))?;
+            let totals = crate::stats::one_json(
+                c,
+                "SELECT COALESCE(SUM(event = 'imported'), 0) AS imported, COALESCE(SUM(event = 'grabbed'), 0) AS grabbed, COALESCE(SUM(event = 'failed'), 0) AS failed,
+                        COALESCE(SUM(CASE WHEN event = 'imported' THEN size_bytes END), 0) AS size_bytes
+                 FROM grabs WHERE at >= ?1",
+                &[since.into()],
+            )?
+            .unwrap_or_default();
+            // Gap-free days, like every other chart here.
+            let rows = crate::stats::rows_json(
+                c,
+                "SELECT date(at, 'unixepoch', 'localtime') AS day, COALESCE(SUM(event = 'imported'), 0) AS imported,
+                        COALESCE(SUM(CASE WHEN event = 'imported' THEN size_bytes END), 0) AS size_bytes, COALESCE(SUM(event = 'failed'), 0) AS failed
+                 FROM grabs WHERE at >= ?1 GROUP BY day",
+                &[since.into()],
+            )?;
+            let found: HashMap<String, Value> = rows.into_iter().filter_map(|r| Some((r.get("day")?.as_str()?.to_string(), Value::Object(r)))).collect();
+            let first: String = c.query_row("SELECT date(?1, 'unixepoch', 'localtime')", [since], |r| r.get(0))?;
+            let mut daily = vec![];
+            let mut day = chrono::NaiveDate::parse_from_str(&first, "%Y-%m-%d").unwrap_or_default();
+            let today: String = c.query_row("SELECT date('now', 'localtime')", [], |r| r.get(0))?;
+            let last = chrono::NaiveDate::parse_from_str(&today, "%Y-%m-%d").unwrap_or_default();
+            while day <= last {
+                let key = day.format("%Y-%m-%d").to_string();
+                daily.push(found.get(&key).cloned().unwrap_or_else(|| json!({ "day": key, "imported": 0, "size_bytes": 0, "failed": 0 })));
+                day += chrono::Duration::days(1);
+            }
+            let bucket = |expr: &str| -> Result<Vec<Value>> {
+                Ok(crate::stats::rows_json(
+                    c,
+                    &format!(
+                        "SELECT {expr} AS name, COUNT(*) AS count, COALESCE(SUM(size_bytes), 0) AS size_bytes FROM grabs
+                         WHERE at >= ?1 AND event = 'imported' AND {expr} IS NOT NULL AND {expr} <> '' GROUP BY 1 ORDER BY count DESC, name LIMIT 12"
+                    ),
+                    &[since.into()],
+                )?
+                .into_iter()
+                .map(Value::Object)
+                .collect())
+            };
+            let failures = crate::stats::rows_json(
+                c,
+                "SELECT at, COALESCE(title, source) AS title, source, indexer, media_type FROM grabs WHERE at >= ?1 AND event = 'failed' ORDER BY at DESC LIMIT 20",
+                &[since.into()],
+            )?;
+            Ok(json!({ "days": days, "totals": totals, "daily": daily,
+                       "indexers": bucket("indexer")?, "quality": bucket("quality")?, "clients": bucket("client")?, "protocols": bucket("protocol")?,
+                       "failures": failures.into_iter().map(Value::Object).collect::<Vec<_>>() }))
+        })
+        .await?;
+    Ok(Json(out))
+}
+
 /// Is this poster one the caller could have been shown: on the calendar (which is everyone's), or on a request
 /// they may see? Otherwise the proxy would let anyone walk through everything Sonarr and Radarr know by counting upwards.
 pub fn poster_is_listed(conn: &Connection, service_id: i64, media_id: i64, user: &AuthUser) -> Result<bool> {

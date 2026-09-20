@@ -825,3 +825,15 @@ A season pack is one row, however many episodes it holds. A usenet download has 
 queue is that title — and nothing else: no release name, no client, no speed, no other download.
 
 `GET/PUT /api/permissions` gain `see_downloads`.
+
+`GET /api/downloads/history?days=30` (1..3650, `see_downloads`) — Sonarr's and Radarr's own history, read every 15 minutes (task
+`sync_grabs`; the first read goes back a year, afterwards only what is new). Only `grabbed`, `imported` and `failed` events are kept;
+renames, deletions and ignores say nothing about what arrived.
+```jsonc
+{ "days": 30,
+  "totals": {"imported": 144, "grabbed": 154, "failed": 10, "size_bytes": 0},
+  "daily": [{"day": "2026-09-20", "imported": 3, "size_bytes": 0, "failed": 1}],       // gap-free local days
+  "indexers": [{"name": "A Tracker", "count": 64, "size_bytes": 0}],                   // imports only, at most 12 each
+  "quality": [...], "clients": [...], "protocols": [...],
+  "failures": [{"at": 0, "title": "Low Orbit", "source": "Low.Orbit.S03E08.1080p", "indexer": "A Tracker", "media_type": "tv"}] }
+```

@@ -363,7 +363,7 @@ pub async fn record(app: &App, id: i64, outcome: std::result::Result<Option<Stri
 }
 
 /// The tasks that read from these services. `sync::spawn` has its own list, and insists on a Jellyfin connection.
-pub const TASKS: [&str; 2] = ["sync_upcoming", "sync_requests"];
+pub const TASKS: [&str; 3] = ["sync_upcoming", "sync_requests", "sync_grabs"];
 
 /// Runs a task unless it is already running (or is not one of ours). Returns false in that case.
 pub fn spawn(app: &App, id: &str) -> bool {
@@ -376,6 +376,7 @@ pub fn spawn(app: &App, id: &str) -> bool {
         let outcome = match id {
             "sync_upcoming" => crate::arr::sync_upcoming(&app).await,
             "sync_requests" => crate::seerr::sync_requests(&app).await,
+            "sync_grabs" => crate::arr::sync_grabs(&app).await,
             other => Err(anyhow!("unknown task {other}")),
         };
         app.tasks.finish(id, outcome.map(|m| (m, None)));

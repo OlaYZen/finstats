@@ -409,6 +409,30 @@ pub(crate) const MIGRATIONS: &[&str] = &[
     CREATE INDEX idx_requests_when ON requests(requested_at);
     CREATE INDEX idx_requests_item ON requests(item_id);
     "#,
+    // 16 — what actually came in: Sonarr's and Radarr's history, the grabbed / imported / failed events.
+    //      One row per event, kept by the id the instance gave it, so reading twice changes nothing.
+    r#"
+    CREATE TABLE grabs (
+        service_id  INTEGER NOT NULL REFERENCES services(id) ON DELETE CASCADE,
+        history_id  INTEGER NOT NULL,
+        event       TEXT NOT NULL,              -- grabbed | imported | failed
+        at          INTEGER NOT NULL,
+        media_type  TEXT NOT NULL,              -- tv | movie
+        title       TEXT,                       -- the show or film
+        source      TEXT,                       -- what the release was called
+        season      INTEGER,
+        tvdb_id     INTEGER,
+        tmdb_id     INTEGER,
+        size_bytes  INTEGER,
+        quality     TEXT,
+        indexer     TEXT,
+        protocol    TEXT,
+        client      TEXT,
+        download_id TEXT,
+        PRIMARY KEY (service_id, history_id)
+    ) WITHOUT ROWID;
+    CREATE INDEX idx_grabs_at ON grabs(at);
+    "#,
 ];
 
 impl Db {

@@ -76,6 +76,7 @@ pub fn router(app: App) -> Router {
         .route("/requests", get(pipeline::requests))
         .route("/requests/summary", get(pipeline::requests_summary))
         .route("/downloads", get(crate::downloads::downloads))
+        .route("/downloads/history", get(pipeline::download_history))
         .route("/settings", get(get_settings).put(put_settings))
         .route("/permissions", get(get_permissions))
         .route("/permissions/defaults", axum::routing::put(put_default_permissions))
@@ -411,7 +412,7 @@ async fn get_tasks(State(app): State<App>, Manager(_): Manager) -> ApiResult {
 
 /// Every task that can be started by hand. `Tasks::try_start` panics on an id it does not know, so a test
 /// holds this list against `TASK_IDS`.
-const RUNNABLE: [&str; 7] = ["sync_users", "sync_libraries", "sync_events", "sync_server", "sync_userdata", "sync_upcoming", "sync_requests"];
+const RUNNABLE: [&str; 8] = ["sync_users", "sync_libraries", "sync_events", "sync_server", "sync_userdata", "sync_upcoming", "sync_requests", "sync_grabs"];
 
 async fn run_task(State(app): State<App>, Manager(_): Manager, Path(id): Path<String>) -> ApiResult<Response> {
     let Some(id) = RUNNABLE.into_iter().find(|t| *t == id) else { return Err(ApiError::not_found("Task")) };

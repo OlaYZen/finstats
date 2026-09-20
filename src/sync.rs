@@ -104,6 +104,7 @@ pub async fn scheduler(app: App) {
                 crate::services::check_all(&app).await;
                 if !crate::services::enabled(&app, crate::services::Kind::is_arr).is_empty() {
                     crate::services::spawn(&app, "sync_upcoming");
+                    crate::services::spawn(&app, "sync_grabs");
                 }
                 spawn(&app, "sync_users");
                 spawn(&app, "sync_events");
