@@ -7,6 +7,17 @@ Format: `## [version] - date`, a one-paragraph summary (required for an `x.y.0` 
 headline of that series in the app; optional otherwise), then `### Added`,
 `### Changed`, `### Fixed` or `### Removed` with one bullet per change.
 
+## [1.1.1] - 2026-09-20
+
+### Added
+- **Pages open at once.** A moment after finstats has loaded, it quietly fetches what the pages you are likely to open next need: the dashboard, your profile and timeline, Activity, Users, Libraries and each library, Playback, the server pages, the recap and the most active people. Opening one of them then shows it immediately instead of a loading skeleton, and it still refreshes behind the scenes, so nothing you see is older than before.
+- Films, shows and cast members are not fetched in advance, as there are thousands of them. Instead, resting the pointer on a link (or touching it, or reaching it with the keyboard) fetches that one page, so it is usually there by the time you have clicked.
+- This stays out of the way: it waits until the page you opened has finished loading, works through the list one page at a time while the browser is idle, pauses in a background tab, and does nothing on a data-saver or very slow connection. Everything is forgotten when you sign out.
+- A small **Repo** link with the GitHub mark in the status bar, next to the version, opens the project on GitHub.
+
+### Fixed
+- The **Timeline** forgot which libraries were switched off when the page was reloaded or opened from a bookmark, although the choice was in the address.
+
 ## [1.1.0] - 2026-09-20
 
 A timeline of everything you have watched. Every profile has a new **Timeline** tab: your watching as one trail from today back to the first play finstats knows about, with an evening of episodes folded into a single stop. On a wide screen the trail winds across the page like a snake, three stops to a row; on a phone it is one straight line.
