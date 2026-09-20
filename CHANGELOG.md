@@ -7,6 +7,11 @@ Format: `## [version] - date`, a one-paragraph summary (required for an `x.y.0` 
 headline of that series in the app; optional otherwise), then `### Added`,
 `### Changed`, `### Fixed` or `### Removed` with one bullet per change.
 
+## [1.0.5] - 2026-09-20
+
+### Added
+- **Downgrade protection.** The database now remembers the newest finstats version that has opened it, and an older version refuses to start on it instead of quietly working on data it does not fully understand. The message says what to do: run the newer version again, or start the older one on an empty data folder and restore a backup. Updating works as before. Versions up to 1.0.4 were released before this check existed, so it protects from 1.0.5 onwards.
+
 ## [1.0.4] - 2026-09-20
 
 ### Fixed
