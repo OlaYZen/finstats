@@ -1,6 +1,6 @@
 // Larger blocks shared by several pages.
 
-import { h, icon, num, compact, bytes, duration, durationExact, clock, bitrate, humanize, episodeCode, store, mount, relTime, dateTime, dayLabelLong } from './dom.js';
+import { h, icon, num, compact, bytes, duration, durationExact, clock, bitrate, humanize, episodeCode, store, mount, relTime, dateTime, dayLabelLong, languageName } from './dom.js';
 import { columnsChart, columnsTable, heatmap, heatmapTable, sparkline, bucketList, libBucketList, simpleColumns, simpleColumnsTable, radarChart } from './charts.js';
 import { card, chartCard, segmented, statTile, poster, avatar, methodBadge, facts } from './components.js';
 import { rangeLong, can } from './state.js';
@@ -294,6 +294,9 @@ export function libraryInsights(d, { scoped = false } = {}) {
       b('Containers', 'All files', d.containers, upper),
       b('Audio codecs', 'First audio track', d.audio_codecs, upper),
       b('Genres', 'Movies and series', d.genres, undefined, 'Titles')),
+    (d.audio_languages && d.audio_languages.length) || (d.subtitle_languages && d.subtitle_languages.length) ? h('div', { class: 'grid-2' },
+      b('Audio languages', 'Video files with a track in the language; a dubbed file counts once for each', d.audio_languages, languageName),
+      b('Subtitle languages', 'Video files with subtitles in the language', d.subtitle_languages, languageName)) : null,
     h('div', { class: 'grid-2' },
       chartCard({ title: 'By decade', sub: 'Titles by release year',
         chart: () => simpleColumns({ rows: decades, unit: ['title', 'titles'], ariaLabel: 'Titles per decade' }),

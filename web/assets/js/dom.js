@@ -237,6 +237,23 @@ export function episodeCode(season, episode) {
   return (season != null ? 'S' + p(season) : '') + (episode != null ? 'E' + p(episode) : '');
 }
 
+// Jellyfin reports ISO 639-2 codes, and for some languages the "bibliographic" one (ger, fre) that browsers do not know.
+const LANG_B = { ger: 'deu', fre: 'fra', chi: 'zho', dut: 'nld', cze: 'ces', gre: 'ell', rum: 'ron', per: 'fas', slo: 'slk', ice: 'isl', mac: 'mkd',
+  may: 'msa', alb: 'sqi', arm: 'hye', baq: 'eus', bur: 'mya', geo: 'kat', tib: 'bod', wel: 'cym' };
+let langNames;
+/** "jpn" → "Japanese". An unknown code is shown as it is; a track without a language is "Unknown". */
+export function languageName(code) {
+  const c = String(code || '').trim().toLowerCase();
+  if (!c || c === 'und' || c === 'unk' || c === 'zxx' || c === 'mis') return 'Unknown';
+  if (c === 'other') return 'Other';
+  try {
+    if (langNames === undefined) langNames = typeof Intl.DisplayNames === 'function' ? new Intl.DisplayNames(['en'], { type: 'language', fallback: 'none' }) : null;
+    const name = langNames && langNames.of(LANG_B[c] || c);
+    if (name) return name;
+  } catch { /* not a well-formed code */ }
+  return c.toUpperCase();
+}
+
 export const METHOD_LABEL = { DirectPlay: 'Direct play', DirectStream: 'Direct stream', Transcode: 'Transcode' };
 export const methodLabel = (m) => METHOD_LABEL[m] || m || 'Unknown';
 

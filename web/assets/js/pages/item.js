@@ -1,4 +1,4 @@
-import { h, icon, num, bytes, bitrate, duration, durationExact, durEl, relEl, dateTime, episodeCode, compact, safeHttps } from '../dom.js';
+import { h, icon, num, bytes, bitrate, duration, durationExact, durEl, relEl, dateTime, episodeCode, compact, safeHttps, languageName } from '../dom.js';
 import { api, imgItem } from '../api.js';
 import { readDays, saveDays, can } from '../state.js';
 import { replaceQuery } from '../router.js';
@@ -56,6 +56,7 @@ export default function itemPage(ctx) {
           h('div', { class: 'chips' }, meta),
           it.genres && it.genres.length ? h('p', { class: 'item-genres' }, it.genres.join(' · ')) : null,
           Array.isArray(it.studios) && it.studios.length ? h('p', { class: 'item-studios' }, it.studios.slice(0, 4).join(' · ')) : null,
+          languageLines(it),
           externalLinks(it.external),
           it.overview ? h('p', { class: 'item-overview' }, it.overview) : null,
           it.library_id ? h('p', { class: 'item-lib' }, 'In ', h('a', { href: `/libraries/${it.library_id}` }, it.library_name || 'library'),
@@ -92,6 +93,24 @@ export default function itemPage(ctx) {
   filtersSlot.append(filterBar({ days, onDays: (v) => { days = v; saveDays(v); replaceQuery({ days }); dv.load(); } }));
   ctx.root.append(filtersSlot, view);
   dv.load();
+}
+
+/**
+ * Which languages it can be played in. For a file: its tracks. For a show or a season: each language with how many
+ * episodes have it, because a dub that stops after season one is exactly what people want to know before starting.
+ */
+function languageLines(it) {
+  const cov = it.language_coverage;
+  const line = (label, list) => (list && list.length ? h('p', { class: 'item-langs' }, h('span', { class: 'item-langs-label' }, label), list) : null);
+  const box = (...lines) => (lines.some(Boolean) ? h('div', { class: 'item-langs-box' }, lines) : null);
+  const join = (nodes) => nodes.flatMap((n, i) => (i ? [' · ', n] : [n]));
+  if (cov && cov.episodes) {
+    const each = (rows) => join((rows || []).map((r) => h('span', { class: r.episodes < cov.episodes ? 'lang-partial' : null },
+      languageName(r.code), r.episodes < cov.episodes ? h('span', { class: 'muted' }, ` (${num(r.episodes)} of ${num(cov.episodes)} episodes)`) : null)));
+    return box(line('Audio', each(cov.audio)), line('Subtitles', each(cov.subtitles)));
+  }
+  const names = (codes) => join((Array.isArray(codes) ? codes : []).map((c) => h('span', null, languageName(c))));
+  return box(line('Audio', names(it.audio_languages)), line('Subtitles', names(it.subtitle_languages)));
 }
 
 /** Directors first, then the billed cast. Each one opens that person's page. */
@@ -133,6 +152,7 @@ function watchers(rows) {
 }
 
 function seasons(list) {
+  const withAudio = list.some((sn) => sn.episodes.some((e) => Array.isArray(e.audio_languages) && e.audio_languages.length));
   return h('div', { class: 'seasons' }, list.map((sn, i) => {
     const plays = sn.episodes.reduce((a, e) => a + (e.plays || 0), 0);
     const max = Math.max(1, ...sn.episodes.map((e) => e.plays || 0));
@@ -140,10 +160,11 @@ function seasons(list) {
       h('summary', null, icon('chevronRight', 14), h('span', { class: 'season-name' }, sn.name || `Season ${sn.season_number}`),
         h('span', { class: 'season-meta mono' }, `${num(sn.episodes.length)} ep · ${num(plays)} ${plays === 1 ? 'play' : 'plays'}`)),
       plainTable(h('table', { class: 'table table-dense episodes' },
-        h('thead', null, h('tr', null, h('th', null, '#'), h('th', null, 'Episode'), h('th', { 'data-nosort': '' }, h('span', { class: 'sr-only' }, 'Share')), h('th', { class: 'r' }, 'Plays'), h('th', { class: 'r' }, 'Watch time'))),
+        h('thead', null, h('tr', null, h('th', null, '#'), h('th', null, 'Episode'), withAudio ? h('th', null, 'Audio') : null, h('th', { 'data-nosort': '' }, h('span', { class: 'sr-only' }, 'Share')), h('th', { class: 'r' }, 'Plays'), h('th', { class: 'r' }, 'Watch time'))),
         h('tbody', null, sn.episodes.map((e) => h('tr', null,
           h('td', { class: 'mono muted ep-num' }, e.episode_number != null ? String(e.episode_number) : '–'),
           h('td', null, h('a', { href: `/items/${e.id}` }, e.name)),
+          withAudio ? h('td', { class: 'ep-langs', title: (e.audio_languages || []).map(languageName).join(', ') }, (e.audio_languages || []).map(languageName).join(' · ') || h('span', { class: 'muted' }, '–')) : null,
           h('td', { class: 'bucket-bar' }, h('span', { class: 'bucket-track' }, e.plays ? h('span', { class: 'bucket-fill', style: { width: Math.max(2, (e.plays / max) * 100) + '%' } }) : null)),
           h('td', { class: 'mono r' }, e.plays ? num(e.plays) : h('span', { class: 'muted' }, '0')),
           h('td', { class: 'mono r' }, e.watch_s ? duration(e.watch_s) : h('span', { class: 'muted' }, '–'))))))));
