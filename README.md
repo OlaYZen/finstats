@@ -44,6 +44,9 @@ directly or transcodes, and why. A status bar keeps the essentials in sight on e
 - **Which apps cause transcoding?** Every client, split by direct play, remux and transcode, with the reasons Jellyfin reports.
 - **How much leaves the house?** Local versus remote plays and an estimate of data streamed. finstats knows your
   household's public address, so a phone on the Wi-Fi that goes through your public name still counts as home.
+- **Is that really them?** The **Security** page puts every play and sign-in on a world map, shows failed sign-ins from
+  outside, and raises an alert for *impossible travel* (home at eight, another continent twenty minutes later, or two
+  places at once) and for the first time someone shows up in a new country. Mark a VPN or a holiday as fine and it stays quiet.
 - **Do people finish what they start?** See how far viewers get before they stop.
 - **Want it in a different order?** Every table sorts by any column with a click, and long ones can be filtered as you type.
 - **What is my library made of?** Resolutions, codecs, HDR, size per decade, what was added when —
@@ -101,9 +104,10 @@ whatever permissions they hold, and there is no recap of the whole server.
   managing finstats itself. No permission opens other people's recaps.
 - **Nothing about you leaves your network.** No telemetry, no accounts, no fonts or scripts loaded
   from the internet. Posters are fetched from your own Jellyfin. The one outside request finstats
-  makes is a plain "what is my IP" lookup, so that people watching at home through your public
+  makes by default is a plain "what is my IP" lookup, so that people watching at home through your public
   address are not counted as remote. It carries no information about you or your server, and one
-  switch in Settings turns it off.
+  switch in Settings turns it off. The Security map needs a geolocation database; downloading it is
+  off until you ask for it, and addresses are always looked up on your own machine.
 - **Read-only.** finstats never changes anything on your Jellyfin server and never starts a library scan.
 
 ## Get started
@@ -182,6 +186,7 @@ Everything works out of the box. If you want to tune it, **Settings** in the app
 | **Check every…** | How often finstats looks at what is playing: every second while someone is watching, every 5 seconds while nobody is. |
 | **Treat a restart as the same play** | A stream that stops and resumes within 10 minutes counts as one viewing. |
 | **Home network** | Which plays count as local. Private addresses always do; with *Recognise my own public address* on (the default), so does your household's public IP, looked up every 15 minutes and remembered as it changes. You can add more addresses by hand. |
+| **Security** | The city database that places addresses: download DB-IP's free one with a click and keep it fresh monthly, or drop your own `.mmdb` into `data/geoip/`. Also how fast (900 km/h) and how far apart (500 km) two sightings must be to count as impossible travel. |
 | **Count it as watching together within** | How close together different people must start the same title to count as a group. Default 60 seconds. |
 | **Ignore plays shorter than** | Leave accidental clicks out of the statistics. |
 
@@ -197,6 +202,7 @@ Everything works out of the box. If you want to tune it, **Settings** in the app
 | `FINSTATS_TRUST_PROXY` | off | Set to `1` behind a reverse proxy so sign-in rate limiting sees real client addresses. |
 | `JELLYFIN_URL` + `JELLYFIN_API_KEY` | – | Skip the setup wizard. Set both or neither. |
 | `FINSTATS_PUBLIC_IP_URL` | – | Your own "what is my IP" service (any URL answering with the caller's address as plain text), used instead of the built-in ones. |
+| `FINSTATS_GEOIP_DB` | – | A city database (`.mmdb`, MaxMind format) to place addresses with, instead of the newest file in `data/geoip/`. |
 | `RUST_LOG` | `finstats=info` | Log detail, e.g. `finstats=debug`. |
 
 </details>

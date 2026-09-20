@@ -29,7 +29,7 @@ docker build -t finstats:latest .        # local image; the published one is ghc
   would rewrite every file. Match the surrounding style by hand.
 - Debug builds read `web/` from disk at runtime (rust-embed), so UI edits only need a browser refresh.
   Release builds embed it — rebuild to see UI changes. `CHANGELOG.md` is `include_str!`'d, so it always needs a rebuild.
-- Env: `FINSTATS_DATA_DIR`, `FINSTATS_BIND`, `FINSTATS_TRUST_PROXY`, `FINSTATS_PUBLIC_IP_URL`, `JELLYFIN_URL` + `JELLYFIN_API_KEY` (skip the wizard), `TZ`, `RUST_LOG`.
+- Env: `FINSTATS_DATA_DIR`, `FINSTATS_BIND`, `FINSTATS_TRUST_PROXY`, `FINSTATS_PUBLIC_IP_URL`, `FINSTATS_GEOIP_DB`, `JELLYFIN_URL` + `JELLYFIN_API_KEY` (skip the wizard), `TZ`, `RUST_LOG`.
 
 ## Architecture
 
@@ -143,10 +143,24 @@ never by `is_admin`. The recap ignores permissions: own for everyone, any one us
 (`style-src 'self'` — the UI must not use inline `<style>`/`style=""`; `el.style.x` via JS is fine).
 
 **Local vs remote (`network.rs`).** `is_local` = private range (`db::is_local_ip`) or a row in `home_addresses`: this network's own
-public IP, looked up with the light syncs from a plain-text service (the only non-Jellyfin request finstats makes; setting
+public IP, looked up with the light syncs from a plain-text service (the only non-Jellyfin request finstats makes by default; setting
 `public_ip_lookup`, override `FINSTATS_PUBLIC_IP_URL`), plus the manual `home_addresses` setting. Always go through
 `network::classify(conn, ip)`; after the set changes call `network::reclassify`, which re-decides the whole history. The lookup
 must stay anonymous (no version, no ids in the request) and the docs' privacy claims must stay true to it.
+
+**Security (`geo.rs`, `security.rs`, `/security`).** `geo.rs` reads a MaxMind-format city database through a memory map (`Geo` in `AppState`,
+swapped whole when a newer file appears): `FINSTATS_GEOIP_DB`, else the newest `.mmdb` in `<data>/geoip/`. Lookups never leave the machine; the
+only network use is the opt-in download of DB-IP's monthly file (`geoip_download`, off by default, task `geoip`), which must stay as anonymous
+as the public-IP lookup, and the docs' privacy claims must stay true to both. Every distinct address gets one row in `ip_locations`, keyed by the
+spelling stored in `playbacks`/`server_events` (an all-NULL row = looked up, no place); a changed database empties the table and places everything
+again (`refresh_all`). `server_events.remote_ip` is parsed from the log text by `event_ip` (first word that is an address, because the label
+follows the server's language; `''` = none). Plays from the home network are placed where the home's public address is (`home_place`).
+Alerts come from the pure `detect()` over one person's whole history, so a rescan finds the same ones and `dedupe` keeps them single: travel is
+keyed by the later sighting, a pair of places reports once a day, a muted pair never, and anything found more than 30 days late is filed as
+resolved. `scan` runs when a play begins (that user), after the log sync, at start-up and when the rules change. Reads need `see_network` **and**
+`see_everyone`, writes also `manage`; failed sign-ins additionally `see_server`. The map (`worldmap.js`) is hand-drawn SVG over
+`web/assets/geo/world.json` (Natural Earth, pre-projected by `tools/make-world-map.py`; Mercator, because an equal-area projection leans the north and the owner read it as a tilted map; the formula there and in `worldmap.js` must
+match). No tiles, no map service. The plain wheel scrolls the page; Ctrl+wheel, the buttons and the keys zoom.
 
 **Backups (`backup.rs`).** gzip JSON Lines, one row per line tagged with its table, matched *by column name* both ways so files move
 between versions; a new table that holds something Jellyfin cannot give back must be added to `backup::TABLES`. Secrets (Jellyfin
