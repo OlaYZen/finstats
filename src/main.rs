@@ -17,6 +17,7 @@ mod relink;
 mod state;
 mod stats;
 mod sync;
+mod timeline;
 
 use std::net::SocketAddr;
 use std::path::PathBuf;

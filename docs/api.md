@@ -589,3 +589,23 @@ Restoring merges: a play already present (same `source_id`, or same user, item a
 restored plays are never `active`, and groups, local/remote and library links are worked out again afterwards.
 CLI: `finstats backup`, `finstats restore <file>`.
 
+# v1.1 — Timeline
+
+`GET /api/users/{id}/timeline?before=&limit=24&libraries=` — own id, or anyone's with `see_everyone` (`403` otherwise; `404`
+for an unknown user). All time, newest first; `min_play_s` applies.
+```jsonc
+{
+  "user": {"id", "name", "has_image"},
+  "libraries": [{"id", "name", "collection_type"}],   // the ones this person has played from, for the filter
+  "next": "1789675170.3245" | null,                    // pass as `before` for the next page; null = the history ends here
+  "stops": [ {"kind": "season"|"album"|"item", "type": "Episode", "id": "<series, track or item id>", "name": "The Rookery",
+              "sub": "Season 2" | "<year>" | "<album artist>" | null, "image_item_id",   // the season's poster if it has one, else the show's
+              "from": 0, "to": 0,                        // start of the oldest play, end of the newest
+              "plays": 4, "titles": 4, "watch_s": 5520, "active": false,   // titles = different episodes/tracks; active = still playing
+              "episode_from": 1, "episode_to": 4} ]    // only when the episodes are an unbroken run, else null
+}
+```
+A stop is a run of plays that follow each other and belong together: episodes of one season of one show, tracks of one album,
+or one title played again. Anything else in between starts a new stop, so a show can appear many times. A page never ends in
+the middle of a stop, and the stops are the same whatever `limit` (1..60) is. `libraries` is a comma-separated list of library
+ids (absent = all); ids that are not ids and cursors that are not cursors are a `400`.
