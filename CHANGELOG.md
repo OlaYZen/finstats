@@ -7,6 +7,14 @@ Format: `## [version] - date`, a one-paragraph summary (required for an `x.y.0` 
 headline of that series in the app; optional otherwise), then `### Added`,
 `### Changed`, `### Fixed` or `### Removed` with one bullet per change.
 
+## [1.2.2] - 2026-09-20
+
+### Added
+- **Languages on every title.** A film or episode now lists the languages of all its audio tracks and subtitles ("Audio: Japanese · English"), so you can see at a glance whether there is a dub.
+- **How far a dub goes.** A show or a season says how many of its episodes have each language ("English: 13 of 26 episodes"), and the episode list has an **Audio** column, so a dub that stops after season one is visible before you start watching.
+- **Audio languages** and **Subtitle languages** on the library pages: how many of your files can be played in each language.
+- finstats re-reads your library once after this update to pick the languages up. It does not say "dubbed" by itself, because Jellyfin does not tell it a title's original language; it shows the languages and leaves the conclusion to you. A track without a language tag is listed as "Unknown".
+
 ## [1.2.1] - 2026-09-20
 
 ### Changed
