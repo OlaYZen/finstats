@@ -7,6 +7,14 @@ Format: `## [version] - date`, a one-paragraph summary (required for an `x.y.0` 
 headline of that series in the app; optional otherwise), then `### Added`,
 `### Changed`, `### Fixed` or `### Removed` with one bullet per change.
 
+## [1.1.2] - 2026-09-20
+
+### Added
+- **Recently added** on the dashboard, above the Activity chart: the 30 newest arrivals in your libraries as a row of posters you can scroll sideways, with arrows on a computer. Each says when it arrived and what it is: a film, an album, or "Season 4 · 3 episodes" of a show. A single new episode says which one it is, and the poster is the season's own when it has one.
+- The row moves the way you expect: **Shift + mouse wheel** and the arrow keys one poster at a time, Page Up/Down a screenful, Home and End to either end, plus swiping and the arrows. The plain wheel still scrolls the page.
+- New episodes of the same show that arrive on the same day share one entry, and a whole show added at once is one entry too ("3 seasons · 60 episodes"), so one big import does not push everything else off the list.
+- The row is the same whatever time range or person the dashboard is filtered to, since it is about the library and not about plays. It hides itself while the library is empty.
+
 ## [1.1.1] - 2026-09-20
 
 ### Added
