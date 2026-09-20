@@ -262,8 +262,10 @@ cargo test
 docker build -t finstats:dev .          # your own image instead of the published one
 ```
 
-Found a bug or have an idea? [Open an issue](https://github.com/OlaYZen/finstats/issues).
+Found a bug or have an idea? [Open an issue](https://github.com/OlaYZen/finstats/issues/new/choose); found a security
+problem? [Report it privately](SECURITY.md).
 
+- [Contributing](CONTRIBUTING.md) — reporting bugs, what fits the project, running it from source or in a local Docker setup, the rules for a change, pull requests
 - [HTTP API](docs/api.md) — the contract the web UI is built on
 - [How Jellystat data is interpreted](docs/jellystat-import.md)
 - [Security model](docs/security.md)
