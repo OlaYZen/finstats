@@ -609,3 +609,20 @@ A stop is a run of plays that follow each other and belong together: episodes of
 or one title played again. Anything else in between starts a new stop, so a show can appear many times. A page never ends in
 the middle of a stop, and the stops are the same whatever `limit` (1..60) is. `libraries` is a comma-separated list of library
 ids (absent = all); ids that are not ids and cursors that are not cursors are a `400`.
+
+# v1.1.2 — Recently added
+
+`GET /api/library/recent?limit=30` (1..60) — for everyone signed in: the library is the same for all, nothing here is about plays.
+```jsonc
+{ "items": [
+  {"kind": "episodes", "type": "Episode", "id": "<series id>", "name": "The Rookery", "sub": "Season 4" | "3 seasons" | "Specials" | null,
+   "image_item_id",                       // the season's poster when it is one season with a poster, else the show's
+   "added_at": 0,                         // the newest of them
+   "episodes": 3, "seasons": 1,
+   "episode_number": 7 | null, "episode_name": "…" | null},   // only when it is a single episode
+  {"kind": "item", "type": "Movie" | "MusicAlbum" | "Video" | "MusicVideo" | "Book" | "AudioBook", "id", "name",
+   "sub": "<album artist>" | "<year>" | null, "image_item_id", "added_at": 0}
+] }
+```
+Newest first. Episodes of one show added on the same local day are one entry, however many seasons they span, so a season pack
+or a whole imported show takes one place. Series, seasons and single tracks are never entries; removed items are left out.

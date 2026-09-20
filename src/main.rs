@@ -13,6 +13,7 @@ mod network;
 mod playback;
 mod profile;
 mod recap;
+mod recent;
 mod relink;
 mod state;
 mod stats;

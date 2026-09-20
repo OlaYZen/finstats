@@ -22,7 +22,7 @@ use tower_http::compression::predicate::{DefaultPredicate, NotForContentType, Pr
 use crate::auth::{self, AuthUser, JellyfinAdmin, Manager};
 use crate::state::{ApiError, ApiResult, App, Settings};
 use crate::db::rusqlite::OptionalExtension;
-use crate::{changelog, db, groups, import, profile, recap, stats, sync, timeline};
+use crate::{changelog, db, groups, import, profile, recap, recent, stats, sync, timeline};
 
 #[derive(RustEmbed)]
 #[folder = "$CARGO_MANIFEST_DIR/web"]
@@ -45,6 +45,7 @@ pub fn router(app: App) -> Router {
         .route("/stats/insights", get(stats::insights))
         .route("/stats/groups", get(groups::groups))
         .route("/library/insights", get(stats::library_insights))
+        .route("/library/recent", get(recent::recently_added))
         .route("/server", get(stats::server))
         .route("/recap", get(recap::recap))
         .route("/changelog", get(changelog::changelog))

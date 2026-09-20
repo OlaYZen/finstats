@@ -261,6 +261,10 @@ const MIGRATIONS: &[&str] = &[
         last_seen  INTEGER NOT NULL
     ) WITHOUT ROWID;
     "#,
+    // 10 — "recently added" walks the library newest first and stops after a few dozen rows
+    r#"
+    CREATE INDEX idx_items_added ON items(date_created DESC) WHERE removed = 0 AND date_created IS NOT NULL;
+    "#,
 ];
 
 impl Db {
