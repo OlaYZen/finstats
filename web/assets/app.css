@@ -245,6 +245,64 @@ kbd {
 }
 @keyframes spin { to { transform: rotate(360deg); } }
 
+/* ---- timeline: a trail of stops. Rows alternate direction (the row is rtl, its cards are not), a bend joins
+   each row to the next; below 620px (.is-line, set from JS) it is one straight line down the left. */
+.content > .entity-tabs { margin-top: 14px; }
+.entity-tabs .seg-btn { text-decoration: none; display: inline-flex; align-items: center; }
+.trail-filter { margin-bottom: 8px; }
+.trail-filter-label { color: var(--text-faint); font-size: 12px; }
+.chip-toggle { cursor: pointer; font: inherit; font-size: 12px; }
+.chip-toggle[aria-pressed="true"] { border-color: color-mix(in srgb, var(--accent) 60%, var(--border)); background: var(--accent-wash); color: var(--text); }
+.chip-toggle[aria-pressed="false"] { color: var(--text-faint); }
+.trail { --y: 22px; --gap: 26px; --bend: 34px; --line: #4a4a4a; --dot: var(--series-4); padding: 8px var(--bend) 0; }
+.trail-row { position: relative; display: grid; grid-template-columns: repeat(var(--cols, 3), minmax(0, 1fr)); margin-bottom: var(--gap); }
+.trail-row.is-rev { direction: rtl; }
+.trail-row:not(:last-child)::after {
+  content: ""; position: absolute; top: var(--y); inset-inline-end: calc(-1 * var(--bend)); width: var(--bend); height: calc(100% + var(--gap) + 2px);
+  border: 2px solid var(--line); border-inline-start: 0; border-start-end-radius: 20px; border-end-end-radius: 20px; pointer-events: none;
+}
+.stop { position: relative; direction: ltr; min-width: 0; padding: calc(var(--y) + 24px) 10px 0; }
+.stop.is-movie { --dot: var(--series-1); }
+.stop.is-episode { --dot: var(--series-2); }
+.stop.is-audio { --dot: var(--series-3); }
+.stop::before { content: ""; position: absolute; top: var(--y); left: 0; right: 0; height: 2px; background: var(--line); }
+.trail:not(.is-line) .trail-row:not(.is-rev) > .stop.is-first::before, .trail:not(.is-line) .trail-row.is-rev > .stop.is-last::before { left: 50%; }
+.trail:not(.is-line) .trail-row:not(.is-rev) > .stop.is-last::before, .trail:not(.is-line) .trail-row.is-rev > .stop.is-first::before { right: 50%; }
+.stop.is-first.is-last::before { display: none; }
+.stop::after { content: ""; position: absolute; top: var(--y); left: calc(50% - 1px); width: 2px; height: 24px; background: var(--line); }
+.stop-node { position: absolute; z-index: 1; top: calc(var(--y) + 1px); left: 50%; width: 12px; height: 12px; margin: -6px 0 0 -6px; border-radius: 50%; background: var(--bg); border: 3px solid var(--dot); }
+.stop-month { position: absolute; z-index: 1; top: calc(var(--y) + 1px); left: 50%; transform: translate(-50%, -50%); padding: 2px 10px; border-radius: 99px; background: var(--bg); border: 1px solid var(--dot);
+  color: var(--text); font: 600 11px/1.5 var(--mono); letter-spacing: .04em; text-transform: uppercase; white-space: nowrap; }
+.stop-card { position: relative; display: flex; gap: 12px; align-items: flex-start; height: 100%; padding: 10px; border: 1px solid var(--border-soft); border-radius: var(--radius); background: var(--bg-2); color: inherit; text-decoration: none; transition: border-color var(--ease), background var(--ease); }
+.stop-card:hover { border-color: var(--dot); background: var(--hover); }
+.stop-card:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.stop-text { display: flex; flex-direction: column; gap: 3px; min-width: 0; flex: 1; align-self: stretch; }
+.stop-name { font-weight: 600; font-size: 14.5px; line-height: 1.3; color: var(--text); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
+.stop-sub { color: var(--text-muted); font-size: 13px; }
+.stop-what { color: var(--text-muted); font-size: 12.5px; }
+.stop-when { margin-top: auto; padding-top: 8px; display: flex; justify-content: space-between; gap: 8px; flex-wrap: wrap; color: var(--text-faint); font: 11.5px var(--mono); }
+.stop-dur { color: var(--text-muted); }
+.stop-now { color: var(--good); }
+.trail-foot { display: flex; justify-content: center; padding: 4px 0 24px; }
+.trail-end { color: var(--text-faint); font-size: 12.5px; }
+.trail-sk { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 26px 20px; padding-top: 40px; }
+.trail-sk-stop { height: 148px; border-radius: var(--radius); }
+
+.trail.is-line { --bend: 0px; --gap: 14px; padding: 4px 0 0; }
+.trail.is-line .trail-row::after { display: none; }
+.trail.is-line .stop { padding: 0 0 0 34px; }
+.trail.is-line .stop.has-month { padding-top: 34px; }
+.trail.is-line .stop::before { top: 0; bottom: calc(-1 * var(--gap)); left: 10px; right: auto; width: 2px; height: auto; }
+.trail.is-line .stop.is-first::before { top: 28px; }
+.trail.is-line .stop.is-first.has-month::before { top: 12px; }
+.trail.is-line .stop.is-last::before { bottom: auto; height: 28px; }
+.trail.is-line .stop.is-last.has-month::before { height: 62px; }
+.trail.is-line .stop.is-first.is-last::before { display: none; }
+.trail.is-line .stop::after { top: 27px; left: 11px; width: 23px; height: 2px; }
+.trail.is-line .stop.has-month::after { top: 61px; }
+.trail.is-line .stop-node { top: 28px; left: 11px; }
+.trail.is-line .stop-month { top: 12px; left: 0; transform: translateY(-50%); }
+
 /* segmented control */
 .seg { display: inline-flex; padding: 2px; gap: 2px; background: var(--bg-sunken); border: 1px solid var(--border-soft); border-radius: 7px; max-width: 100%; overflow-x: auto; }
 .seg-btn {
@@ -252,7 +310,7 @@ kbd {
   font-size: 12.5px; font-weight: 500; white-space: nowrap; transition: background var(--ease), color var(--ease);
 }
 .seg-btn:hover { color: var(--text); }
-.seg-btn[aria-checked="true"] { background: var(--hover); color: var(--text); box-shadow: inset 0 0 0 1px var(--border); }
+.seg-btn[aria-checked="true"], .seg-btn[aria-current="page"] { background: var(--hover); color: var(--text); box-shadow: inset 0 0 0 1px var(--border); }
 .seg-sm .seg-btn { padding: 2px 9px; min-height: 22px; font-size: 12px; }
 
 .filters { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }

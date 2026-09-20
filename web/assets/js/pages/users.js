@@ -42,6 +42,13 @@ export function usersPage(ctx) {
   dv.load();
 }
 
+/** Overview | Timeline, under a person's header. Links, so each view has its own address. */
+export function userTabs(id, current) {
+  const tab = (key, label, href) => h('a', { class: 'seg-btn', href, 'aria-current': key === current ? 'page' : null }, label);
+  return h('nav', { class: 'seg entity-tabs', 'aria-label': 'Profile sections' },
+    tab('overview', 'Overview', `/users/${id}`), tab('timeline', 'Timeline', `/users/${id}/timeline`));
+}
+
 // ---------------------------------------------------------------- /users/:id
 export function userPage(ctx) {
   const id = ctx.params.id;
@@ -102,7 +109,7 @@ export function userPage(ctx) {
 
   // Streaks and show progress cover all time and load on their own. The streaks sit under the header;
   // the shows card is slotted into the page further down (the same node on every re-render).
-  ctx.root.append(headerSlot, allTime.tiles, filterBar({ days, onDays: (v) => { days = v; saveDays(v); replaceQuery({ days }); dv.load(); } }), view);
+  ctx.root.append(headerSlot, userTabs(id, 'overview'), allTime.tiles, filterBar({ days, onDays: (v) => { days = v; saveDays(v); replaceQuery({ days }); dv.load(); } }), view);
   headerSlot.append(h('header', { class: 'page-header entity-header' }, h('span', { class: 'sk', style: { width: '56px', height: '56px', borderRadius: '50%' } }), h('div', null, sk.line('180px', 26))));
   dv.load();
 }

@@ -17,7 +17,7 @@ function navItems() {
   return [
     { href: '/', label: 'Dashboard', icon: 'home', exact: true },
     { href: '/recap', label: 'Recap', icon: 'recap' },
-    { href: `/users/${me.id}`, label: 'My profile', icon: 'user', exact: true },
+    { href: `/users/${me.id}`, label: 'My profile', icon: 'user' },
     { href: '/activity', label: 'Activity', icon: 'activity' },
     can('see_everyone') ? { href: '/users', label: 'Users', icon: 'users', not: `/users/${me.id}` } : null,
     { href: '/libraries', label: 'Libraries', icon: 'library', also: ['/items'] },
@@ -151,7 +151,7 @@ function buildShell() {
       setDrawer(false);
       for (const a of navLinks) {
         const n = a._item;
-        const on = n.exact ? path === n.href : path === n.not ? false : path === n.href || path.startsWith(n.href + '/') || (n.also || []).some((p) => path.startsWith(p));
+        const on = n.exact ? path === n.href : n.not && (path === n.not || path.startsWith(n.not + '/')) ? false : path === n.href || path.startsWith(n.href + '/') || (n.also || []).some((p) => path.startsWith(p));
         a.classList.toggle('is-active', on);
         if (on) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current');
       }
@@ -201,6 +201,7 @@ onRouteChange(() => {
 /** Where Esc leads from this page; null on top-level pages. `back` = prefer the real history entry. */
 function escTarget(path) {
   if (/^\/libraries\/[^/]+/.test(path)) return { up: '/libraries' };
+  if (/^\/users\/[^/]+\/timeline$/.test(path)) return { up: path.replace(/\/timeline$/, '') };
   if (/^\/users\/[^/]+/.test(path)) return can('see_everyone') && path !== `/users/${state.user.id}` ? { up: '/users' } : null; // your own profile is a top-level page
   if (/^\/items\/[^/]+/.test(path)) return { up: '/libraries', back: true };     // reached from anywhere, so return to wherever that was
   if (/^\/people\/[^/]+/.test(path)) return { up: '/libraries', back: true };
