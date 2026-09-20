@@ -8,14 +8,16 @@ import { pageHeader, card, chartCard, dataView, sk, emptyState, segmented, userC
 import { dataTable } from '../tables.js';
 import { simpleColumns, simpleColumnsTable } from '../charts.js';
 import { loadUpcoming, agenda, upcomingPoster } from '../upcoming.js';
+import { loadDownloads, downloadsList, nothingDownloading } from '../downloads.js';
 import { api } from '../api.js';
 
 const TABS = [
   { key: 'requests', label: 'Requests', feature: 'requests', sub: 'Who asked for what, how long it took, and whether it was ever watched' },
   { key: 'upcoming', label: 'Upcoming', feature: 'upcoming', sub: 'What Sonarr and Radarr expect, and who is waiting for it' },
+  { key: 'downloads', label: 'Downloads', feature: 'downloads', perm: 'see_downloads', sub: 'What is arriving right now' },
 ];
 const features = () => (state.user && state.user.features) || {};
-export const pipelineTabs = () => TABS.filter((t) => features()[t.feature]);
+export const pipelineTabs = () => TABS.filter((t) => features()[t.feature] && (!t.perm || can(t.perm)));
 export const hasPipeline = () => pipelineTabs().length > 0;
 
 const SPANS = [{ value: 7, label: '7 days' }, { value: 14, label: '14 days' }, { value: 30, label: '30 days' }, { value: 90, label: '90 days' }];
@@ -30,7 +32,7 @@ export const prefetchPipeline = ({ query, signal }) => {
   const tab = tabOf(query);
   if (tab === 'upcoming') return [() => loadUpcoming(upcomingScope(query), signal)];
   if (tab === 'requests') return [() => loadRequests(requestScope(query), signal)];
-  return [];
+  return [];   // the downloads tab is live: asking for it in advance would keep three services busy for a page nobody opened
 };
 
 function tabBar(current) {
@@ -210,6 +212,29 @@ function upcomingTab(ctx, root) {
   dv.load();
 }
 
+function downloadsTab(ctx, root) {
+  const view = h('div');
+  let failed = null;
+  const dv = dataView({
+    container: view, signal: ctx.signal,
+    skeleton: () => sk.cardBlock(240),
+    fetch: () => loadDownloads(ctx.signal),
+    render: (d) => {
+      failed = null;
+      if (nothingDownloading(d) && !(d.problems || []).length) {
+        return emptyState('Nothing is downloading', d.sources ? 'Sonarr, Radarr and your torrent client have nothing on the go.' : 'Connect a torrent client, or Sonarr and Radarr, to see what is arriving.');
+      }
+      return card({ cls: 'card-flush dl-card', body: h('div', { class: 'dl-wrap' }, downloadsList(d)) });
+    },
+  });
+  root.append(view);
+  dv.load();
+  // A live list: it is polled while this page is open, and only then.
+  ctx.every(async () => {
+    try { await dv.load(); failed = null; } catch (e) { if (!failed) failed = e; }
+  }, 5000, { visibleOnly: true });
+}
+
 export default function pipelinePage(ctx) {
   ctx.title('Pipeline');
   const tabs = pipelineTabs();
@@ -226,4 +251,5 @@ export default function pipelinePage(ctx) {
   ctx.root.append(...[pageHeader('Pipeline', tab.sub), tabBar(current)].filter(Boolean));
   if (current === 'upcoming') upcomingTab(ctx, ctx.root);
   else if (current === 'requests') requestsTab(ctx, ctx.root);
+  else if (current === 'downloads') downloadsTab(ctx, ctx.root);
 }

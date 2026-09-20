@@ -7,10 +7,12 @@ import { activityCard, heatmapCard, overviewTiles, nowPlayingView, insightTiles,
 import { openPlayModal } from '../playmodal.js';
 import { recapBanner } from './recap.js';
 import { loadUpcoming, entryCard } from '../upcoming.js';
+import { loadDownloads, downloadsList, nothingDownloading } from '../downloads.js';
 import { groupsCard } from '../widgets.js';
 
 // Coming up: the same loader for the card and the prefetcher. Nothing is asked when no Sonarr or Radarr is connected.
 const hasComing = () => !!(state.user && state.user.features && state.user.features.upcoming);
+const hasDownloads = () => !!(state.user && state.user.features && state.user.features.downloads && can('see_downloads'));
 const loadComing = (signal) => soft(loadUpcoming({ days: 7 }, signal));
 
 /** Everything the filter row scopes. Shared with the prefetcher, so both ask for exactly the same URLs. */
@@ -79,6 +81,24 @@ export default function dashboard(ctx) {
     },
   }).load();
 
+  // ---- downloading now: live, and only for people who may see it. Polled while this page is open.
+  const dlBody = h('div');
+  const dlCard = card({ title: 'Downloading now', sub: 'From Sonarr, Radarr and your torrent client', cls: 'dl-card',
+    actions: h('a', { class: 'btn btn-ghost btn-sm', href: '/pipeline?tab=downloads' }, 'All downloads'), body: dlBody });
+  dlCard.hidden = true;
+  if (hasDownloads()) {
+    const dlView = dataView({
+      container: dlBody, signal: ctx.signal, skeleton: () => null,
+      fetch: () => loadDownloads(ctx.signal),
+      render: (d) => {
+        dlCard.hidden = nothingDownloading(d);
+        return nothingDownloading(d) ? null : downloadsList(d, { limit: 5 });
+      },
+    });
+    dlView.load();
+    ctx.every(() => dlView.load(), 5000, { visibleOnly: true });
+  }
+
   // ---- coming up: what Sonarr and Radarr expect this week. About the calendar, not about plays: no filter applies. Hides
   // itself when nothing is connected or nothing is due.
   const comingBody = h('div');
@@ -111,12 +131,13 @@ export default function dashboard(ctx) {
         return [emptyState('No plays recorded yet',
           can('manage') ? 'finstats is now watching your Jellyfin server — new plays show up here as they happen. You can also bring in your history from Jellystat.'
                 : 'Your plays show up here as they happen.',
-          can('manage') ? h('a', { class: 'btn btn-primary', href: '/settings#import' }, icon('upload', 14), 'Import from Jellystat') : null), shelfCard, comingCard];
+          can('manage') ? h('a', { class: 'btn btn-primary', href: '/settings#import' }, icon('upload', 14), 'Import from Jellystat') : null), dlCard, shelfCard, comingCard];
       }
       const usersMode = admin && !userId;
       return [
         overviewTiles({ totals: overview.totals, previous: overview.previous, daily: overview.daily, days, scoped: !admin || !!userId }),
         insightTiles(insights),
+        dlCard,
         shelfCard,
         comingCard,
         activityCard({ daily: overview.daily, bucket: overview.bucket }),

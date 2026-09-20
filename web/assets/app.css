@@ -1409,3 +1409,28 @@ span.shelf-card { cursor: default; }
 .req-title-name { font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .req-title-sub { font-size: 11.5px; color: var(--text-faint); }
 .table.requests td { vertical-align: middle; }
+
+/* ---------------------------------------------------------------- pipeline: downloads */
+.dl-card[hidden] { display: none; }
+.dl-wrap { padding: 0 16px 8px; }
+.dl-totals { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 18px; padding: 10px 0; font-size: 12.5px; color: var(--text-muted); border-bottom: 1px solid var(--border-soft); }
+.dl-totals .sev { white-space: nowrap; }
+.dl-when { margin-left: auto; }
+.dl-list { display: flex; flex-direction: column; }
+.dl-row { display: flex; align-items: flex-start; gap: 12px; padding: 11px 0; min-width: 0; }
+.dl-row + .dl-row { border-top: 1px solid var(--border-soft); }
+.dl-row .poster-sm { width: 34px; }
+.dl-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.dl-line { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dl-title { font-weight: 550; color: var(--text); }
+.dl-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 3px 14px; font-size: 12.5px; color: var(--text-muted); }
+.dl-meta .icon, .dl-who .icon { flex: none; }
+.dl-down .icon { color: var(--series-2); }
+.dl-up .icon { color: var(--series-1); }
+.dl-who { display: inline-flex; align-items: center; gap: 5px; }
+.dl-error { display: flex; align-items: flex-start; gap: 6px; font-size: 12.5px; color: var(--critical-text); }
+.dl-error .icon { margin-top: 2px; flex: none; }
+.dl-release { font-size: 11.5px; color: var(--text-faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dl-bar { display: block; height: 5px; border-radius: 3px; background: var(--bg-sunken); overflow: hidden; }
+.dl-fill { display: block; height: 100%; background: var(--accent); border-radius: 3px; transition: width 400ms ease; }
+@media (prefers-reduced-motion: reduce) { .dl-fill { transition: none; } }
