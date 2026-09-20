@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use r2d2_sqlite::SqliteConnectionManager;
 pub use r2d2_sqlite::rusqlite;
 use rusqlite::{Connection, OptionalExtension, params};
@@ -281,7 +281,10 @@ impl Db {
             .build(manager)
             .context("opening database")?;
         let db = Db { pool };
+        let running = env!("CARGO_PKG_VERSION");
+        refuse_downgrade(&*db.conn()?, running)?;
         db.migrate()?;
+        record_version(&*db.conn()?, running)?;
         Ok(db)
     }
 
@@ -317,6 +320,51 @@ impl Db {
     pub fn conn(&self) -> Result<r2d2::PooledConnection<SqliteConnectionManager>> {
         self.pool.get().context("database pool exhausted")
     }
+}
+
+/// Settings key: the newest finstats version that has opened this database.
+const VERSION_KEY: &str = "app_version";
+
+/// `1.2.3` as a comparable triple; a pre-release or build suffix (`-rc.1`, `+abc`) is ignored.
+fn parse_version(v: &str) -> Option<(u64, u64, u64)> {
+    let mut parts = v.trim().split(['-', '+']).next()?.split('.').map(|p| p.parse::<u64>().ok());
+    let triple = (parts.next()??, parts.next()??, parts.next()??);
+    parts.next().is_none().then_some(triple)
+}
+
+/// A database only moves forward. An older finstats knows nothing about the tables and columns a newer one added,
+/// would skip the migrations without a word and write rows the newer one then misreads, so it refuses to start
+/// instead. Checked before anything is written; a stored version nobody can read counts as newer.
+fn refuse_downgrade(conn: &Connection, running: &str) -> Result<()> {
+    let schema: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
+    if schema == 0 {
+        return Ok(()); // brand new: there is no settings table yet
+    }
+    // No entry: last opened by a release from before versions were recorded (1.0.4 or older).
+    let stored = get_setting(conn, VERSION_KEY)?;
+    let newer = stored.as_deref().is_some_and(|s| match (parse_version(s), parse_version(running)) {
+        (Some(theirs), Some(ours)) => theirs > ours,
+        _ => true,
+    });
+    if !newer && schema as usize <= MIGRATIONS.len() {
+        return Ok(());
+    }
+    let theirs = stored.map(|s| format!("finstats {s}")).unwrap_or_else(|| "a newer finstats".into());
+    bail!(
+        "this database was last used by {theirs}, and this is the older finstats {running}.\n\n\
+         An older version cannot safely open a newer database, so it will not start. Nothing was changed.\n\
+         Fix it by running that version or a newer one again (with Docker: the image tag you used before),\n\
+         or start this version on an empty data folder and bring your history back from one of the files in\n\
+         the old folder's backups/ directory:   finstats restore <file>"
+    )
+}
+
+/// Remember the newest version that has opened this database; never lowers it.
+fn record_version(conn: &Connection, running: &str) -> Result<()> {
+    if get_setting(conn, VERSION_KEY)?.as_deref() != Some(running) {
+        set_setting(conn, VERSION_KEY, running)?;
+    }
+    Ok(())
 }
 
 pub fn get_setting(conn: &Connection, key: &str) -> Result<Option<String>> {
@@ -373,3 +421,71 @@ pub fn parse_ts(s: &str) -> Option<i64> {
 }
 
 pub use rusqlite::types::Value as SqlValue;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn db_at(schema: usize, version: Option<&str>) -> Connection {
+        let c = Connection::open_in_memory().unwrap();
+        if schema > 0 {
+            c.execute_batch(MIGRATIONS[0]).unwrap();
+            c.pragma_update(None, "user_version", schema as i64).unwrap();
+        }
+        if let Some(v) = version {
+            set_setting(&c, VERSION_KEY, v).unwrap();
+        }
+        c
+    }
+
+    #[test]
+    fn versions_compare_as_numbers_not_text() {
+        assert!(parse_version("1.10.0") > parse_version("1.9.12"));
+        assert_eq!(parse_version("2.0.0-rc.1+build5"), Some((2, 0, 0)));
+        assert_eq!(parse_version(" 1.0.4\n"), Some((1, 0, 4)));
+        for bad in ["", "1.0", "1.0.0.1", "one.two.three", "v1.0.0"] {
+            assert_eq!(parse_version(bad), None, "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn an_older_version_refuses_a_newer_database() {
+        let n = MIGRATIONS.len();
+        // New, from before versions were recorded, the same version, an upgrade: all start.
+        for (schema, stored) in [(0, None), (n, None), (n, Some("1.0.4")), (n - 1, Some("1.0.3")), (n, Some("0.9.12"))] {
+            assert!(refuse_downgrade(&db_at(schema, stored), "1.0.4").is_ok(), "{schema} {stored:?}");
+        }
+        // A newer patch, minor or major, a version nobody can read, and a schema from the future: none start.
+        for (schema, stored) in [(n, Some("1.0.5")), (n, Some("1.1.0")), (n, Some("2.0.0")), (n, Some("1.10.0")), (n, Some("next")), (n + 1, None), (n + 1, Some("1.0.4"))] {
+            let err = refuse_downgrade(&db_at(schema, stored), "1.0.4").expect_err(&format!("{schema} {stored:?}")).to_string();
+            assert!(err.contains("older finstats 1.0.4") && err.contains("finstats restore"), "{err}");
+        }
+        assert!(refuse_downgrade(&db_at(n, Some("1.1.0")), "1.0.4").unwrap_err().to_string().contains("last used by finstats 1.1.0"));
+    }
+
+    #[test]
+    fn opening_records_the_version_and_a_refusal_changes_nothing() {
+        let dir = std::env::temp_dir().join(format!("finstats-version-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("finstats.db");
+        let running = env!("CARGO_PKG_VERSION");
+
+        let db = Db::open(&path).unwrap();
+        assert_eq!(get_setting(&db.conn().unwrap(), VERSION_KEY).unwrap().as_deref(), Some(running));
+        set_setting(&db.conn().unwrap(), VERSION_KEY, "999.0.0").unwrap();
+        drop(db);
+
+        assert!(Db::open(&path).is_err());
+        let c = Connection::open(&path).unwrap();
+        assert_eq!(get_setting(&c, VERSION_KEY).unwrap().as_deref(), Some("999.0.0"));
+        drop(c);
+
+        // An upgrade moves the mark forward.
+        Connection::open(&path).unwrap().execute("UPDATE settings SET value = '0.1.0' WHERE key = ?1", [VERSION_KEY]).unwrap();
+        let db = Db::open(&path).unwrap();
+        assert_eq!(get_setting(&db.conn().unwrap(), VERSION_KEY).unwrap().as_deref(), Some(running));
+        drop(db);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}
