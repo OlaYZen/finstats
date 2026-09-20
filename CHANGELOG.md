@@ -6,6 +6,12 @@ binary and is what the **Patch notes** tab in the app shows.
 Format: `## [version] - date`, an optional one-paragraph summary, then `### Added`,
 `### Changed`, `### Fixed` or `### Removed` with one bullet per change.
 
+## [1.0.1] - 2026-09-20
+
+### Fixed
+- **The published image would not start on a fresh machine**: "unable to open database file: /data/finstats.db", after hanging for half a minute. When the `data` folder does not exist yet, Docker creates it as root, and finstats runs as an ordinary user that may not write there. The container now makes the folder its own when it starts and then drops to that ordinary user before finstats runs, so `docker run` works on the first try. If your files belong to someone other than user 1000, set `PUID` and `PGID`; `--user` still works as before.
+- If the data folder really cannot be written, finstats now says so at once, with the command that fixes it, instead of waiting 30 seconds and blaming the database.
+
 ## [1.0.0] - 2026-09-20
 
 finstats 1.0. Everything a Jellyfin server owner needs from a statistics tool is here and has settled: live sessions and every play down to the pause button, the library and playback insights, group watching, profiles with show progress, the yearly recap, people pages, permissions, sortable tables, the Jellystat import, and backups that move between installs. From here on, version numbers mean what they say: 1.x updates will not break your data, your backups or your settings.
