@@ -1,7 +1,8 @@
 # Contributing to finstats
 
 Thanks for wanting to help. finstats is a small project with a narrow idea of itself, and this page tells you
-how to report a problem, suggest something, or send a change that is likely to be merged.
+how to report a problem, suggest something, or send a change that is likely to be merged. Everyone taking part
+is expected to follow the [code of conduct](CODE_OF_CONDUCT.md).
 
 - [Ways to help](#ways-to-help)
 - [What finstats is, and what it will not become](#what-finstats-is-and-what-it-will-not-become)
@@ -24,6 +25,11 @@ You do not have to write Rust. Useful contributions, roughly in order of how oft
 - **Telling us where the docs lost you.** If the README made you guess, that is a bug in the README.
 - **A fix** for something in the [issue list](https://github.com/OlaYZen/finstats/issues).
 - **A feature**, after talking about it first (see below).
+- **Answering a question** in [Discussions](https://github.com/OlaYZen/finstats/discussions), or showing how you
+  run it. Other people's setups are the best documentation.
+
+A question about installing or running finstats belongs in
+[Discussions → Q&A](https://github.com/OlaYZen/finstats/discussions/categories/q-a), not in an issue.
 
 ## What finstats is, and what it will not become
 
@@ -67,7 +73,9 @@ describe **the question you could not answer** ("which of my users still use the
 than the screen you imagine. There is often a smaller way to answer it, sometimes with data finstats
 already has.
 
-For anything bigger than a bug fix, please **talk before you build**. It is no fun to review, or to write, a
+Not sure yet whether it is a feature? Think out loud in
+[Discussions → Ideas](https://github.com/OlaYZen/finstats/discussions/categories/ideas) first. For anything bigger
+than a bug fix, please **talk before you build**. It is no fun to review, or to write, a
 large pull request that does not fit.
 
 ## Reporting a security problem

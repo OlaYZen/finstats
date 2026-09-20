@@ -141,7 +141,8 @@ pre-compressed needs the same exemption.
 **HTTP contract.** `docs/api.md` is the contract the UI is written against; change it together with the endpoint.
 
 For people: `CONTRIBUTING.md` is the one guide (what fits the project, running from source, the local Docker setup with a throwaway
-Jellyfin, rules for a change, pull requests); `SECURITY.md` covers private reporting. Keep their rules in step with this file, and do
+Jellyfin, rules for a change, pull requests); `SECURITY.md` covers private reporting, `CODE_OF_CONDUCT.md` behaviour (it forbids posting other people's viewing data), and
+`.github/` holds the issue forms, the discussion forms (file name = category slug: `q-a`, `ideas`, `show-and-tell`) and the PR template. Keep their rules in step with this file, and do
 not add a second developer guide next to them.
 
 ## Frontend (`web/`)

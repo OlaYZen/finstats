@@ -263,7 +263,9 @@ docker build -t finstats:dev .          # your own image instead of the publishe
 ```
 
 Found a bug or have an idea? [Open an issue](https://github.com/OlaYZen/finstats/issues/new/choose); found a security
-problem? [Report it privately](SECURITY.md).
+problem? [Report it privately](SECURITY.md). Questions go to
+[Discussions](https://github.com/OlaYZen/finstats/discussions). Everyone taking part follows the
+[code of conduct](CODE_OF_CONDUCT.md).
 
 - [Contributing](CONTRIBUTING.md) — reporting bugs, what fits the project, running it from source or in a local Docker setup, the rules for a change, pull requests
 - [HTTP API](docs/api.md) — the contract the web UI is built on
