@@ -185,7 +185,8 @@ every bug fixed. It is a local tool and must never be committed; the same goes f
 
 `CHANGELOG.md` is the single source for the in-app **Patch notes** tab (`changelog.rs` parses it). A test fails if
 the top entry's version differs from `Cargo.toml`, or an entry lacks a date/notes/known group — so a version bump
-and its changelog entry land together. Format: `## [x.y.z] - YYYY-MM-DD`, optional summary paragraph, then
+and its changelog entry land together. Format: `## [x.y.z] - YYYY-MM-DD`, a summary paragraph (required for `x.y.0`, where its first sentence becomes that series'
+headline in the app, and a test enforces it; optional otherwise), then
 `### Added | Changed | Fixed | Removed` with one-line bullets (`**bold**` and `` `code` `` are rendered).
 
 History shape: a release is its logical commits (backend before UI, `fix(...)` on their own, then `docs:`),

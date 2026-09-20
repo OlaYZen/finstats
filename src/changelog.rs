@@ -98,6 +98,10 @@ mod tests {
             assert!(r.date.as_deref().is_some_and(|d| d.len() == 10), "release {} needs a YYYY-MM-DD date", r.version);
             assert!(r.groups.iter().any(|g| !g.items.is_empty()), "release {} has no notes", r.version);
             assert!(r.groups.iter().all(|g| ["Added", "Changed", "Fixed", "Removed"].contains(&g.kind.as_str())), "unknown group in {}", r.version);
+            // The app folds releases by minor series and headlines each fold with its x.y.0 summary.
+            if r.version.ends_with(".0") {
+                assert!(r.summary.as_deref().is_some_and(|s| s.len() >= 8), "release {} opens a series and needs a one-sentence summary: it is that series' headline in Patch notes", r.version);
+            }
         }
     }
 }

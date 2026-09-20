@@ -66,7 +66,8 @@ function group(g, current, open) {
   const n = g.releases.length;
   const dates = newest.date && oldest.date && newest.date !== oldest.date ? `${longDate(oldest.date)} – ${longDate(newest.date)}` : longDate(newest.date);
   // The x.y.0 release says what the series was about; fall back to the newest summary.
-  const about = (oldest.summary || newest.summary || '');
+  // Its first sentence only: a headline, not the whole introduction cut off by an ellipsis.
+  const about = ((oldest.summary || newest.summary || '').match(/^.+?[.!?](?=\s|$)/) || [''])[0];
   return h('details', { class: ['cl-series', running && 'is-current'], open: !!open },
     h('summary', { class: 'cl-series-head' },
       icon('chevronRight', 14, 'cl-chev'),

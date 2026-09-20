@@ -3,7 +3,8 @@
 Everything that changed in finstats, newest first. This file is compiled into the
 binary and is what the **Patch notes** tab in the app shows.
 
-Format: `## [version] - date`, an optional one-paragraph summary, then `### Added`,
+Format: `## [version] - date`, a one-paragraph summary (required for an `x.y.0` release: its first sentence is the
+headline of that series in the app; optional otherwise), then `### Added`,
 `### Changed`, `### Fixed` or `### Removed` with one bullet per change.
 
 ## [1.0.1] - 2026-09-20
@@ -14,7 +15,7 @@ Format: `## [version] - date`, an optional one-paragraph summary, then `### Adde
 
 ## [1.0.0] - 2026-09-20
 
-finstats 1.0. Everything a Jellyfin server owner needs from a statistics tool is here and has settled: live sessions and every play down to the pause button, the library and playback insights, group watching, profiles with show progress, the yearly recap, people pages, permissions, sortable tables, the Jellystat import, and backups that move between installs. From here on, version numbers mean what they say: 1.x updates will not break your data, your backups or your settings.
+Ready for everyone. This is finstats 1.0: everything a Jellyfin server owner needs from a statistics tool is here and has settled: live sessions and every play down to the pause button, the library and playback insights, group watching, profiles with show progress, the yearly recap, people pages, permissions, sortable tables, the Jellystat import, and backups that move between installs. From here on, version numbers mean what they say: 1.x updates will not break your data, your backups or your settings.
 
 ### Added
 - **A ready-made image.** finstats is now published at `ghcr.io/olayzen/finstats`, for 64-bit Intel/AMD and ARM machines (a Raspberry Pi 4 or 5 works). `docker pull ghcr.io/olayzen/finstats:latest` replaces building it yourself. `:latest` is the newest release, `:1` follows every 1.x update, `:1.0.0` stays exactly where it is, and `:edge` is the development version.
@@ -38,6 +39,8 @@ finstats 1.0. Everything a Jellyfin server owner needs from a statistics tool is
 
 ## [0.10.0] - 2026-09-20
 
+Your history, backed up and ready to move.
+
 ### Added
 - **Backups.** finstats now writes a backup of itself every week and keeps the newest five: every play with its pause-and-skip timeline, seen marks, permissions, home addresses, the server log and your settings, in one small file (a few hundred KB for thousands of plays). **Settings → Backups** lists them with a **Download** button each, makes one on demand, and lets you change how often and how many. They live in the `backups` folder of your data directory. A backup never contains your Jellyfin API key or anyone's sign-in session, but it is a complete viewing history with IP addresses, so keep it somewhere private.
 - **Move to a new finstats.** Set up the new instance, open **Settings → Backups** and choose the file, or pick one from the list and press **Restore**. Restoring merges rather than overwrites: plays that are already there are skipped, so it is safe to do twice or into an instance that has been running for a while. Untick "Also restore settings and permissions" to bring back the history only. Backups work across versions in both directions. From a terminal: `finstats backup` and `finstats restore <file>`.
@@ -57,6 +60,8 @@ finstats 1.0. Everything a Jellyfin server owner needs from a statistics tool is
 - **Settings → Home network.** See the addresses finstats treats as home, add your own (an earlier address, a second home, a VPN exit), or switch the lookup off. To learn your public address finstats asks a plain "what is my IP" service every 15 minutes; it tries several (Amazon, Cloudflare and others), because ad-blocking DNS such as Pi-hole often blocks them, and one of them needs no DNS at all. The request contains nothing about you or your server, and with the switch off finstats talks to nothing but Jellyfin. `FINSTATS_PUBLIC_IP_URL` lets you use a service of your own.
 
 ## [0.9.0] - 2026-09-20
+
+Every table, in the order you want.
 
 ### Added
 - **Every table can be sorted.** Click a column header to sort by it, click again to turn it around, and a third time to get the original order back: users A–Z or Z–A, progress 0–100% or 100–0%, watch time, sizes, dates, anything. It understands what the cells mean, so "3d 2h" sorts as time and "1.4 GB" as size, and empty cells always go last. This covers the user list, watchers, episodes, devices, plugins, scheduled tasks, the table view of every chart, the permission matrix, and the bar lists (codecs, resolutions, clients and the rest), which now have a slim header of their own.
