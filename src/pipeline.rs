@@ -281,6 +281,7 @@ fn request_json(r: &crate::db::rusqlite::Row, everyone: bool) -> crate::db::rusq
     let mut v = json!({
         "id": format!("{service_id}:{request_id}"), "media_type": r.get::<_, String>("media_type")?, "title": r.get::<_, Option<String>>("title")?, "year": r.get::<_, Option<i64>>("year")?,
         "tmdb_id": r.get::<_, Option<i64>>("tmdb_id")?, "seasons": serde_json::from_str::<Value>(&seasons).unwrap_or_else(|_| json!([])), "is_4k": r.get::<_, bool>("is_4k")?,
+        "tvdb_id": r.get::<_, Option<i64>>("tvdb_id")?,
         "state": r.get::<_, String>("state")?, "requested_at": requested_at, "available_at": available_at, "arrived_after_s": available_at.map(|a| (a - requested_at).max(0)),
         "user_id": r.get::<_, Option<String>>("user_id")?, "user_name": r.get::<_, Option<String>>("user_name")?, "has_image": r.get::<_, Option<bool>>("has_image")?.unwrap_or(false),
         "item_id": item_id, "poster": poster,
@@ -293,7 +294,7 @@ fn request_json(r: &crate::db::rusqlite::Row, everyone: bool) -> crate::db::rusq
     Ok(v)
 }
 
-const REQUEST_COLS: &str = "r.service_id, r.request_id, r.media_type, r.title, r.year, r.tmdb_id, r.seasons, r.is_4k, r.requested_at, r.available_at, r.user_id, r.item_id, r.arr_service_id, r.arr_media_id,
+const REQUEST_COLS: &str = "r.service_id, r.request_id, r.media_type, r.title, r.year, r.tmdb_id, r.tvdb_id, r.seasons, r.is_4k, r.requested_at, r.available_at, r.user_id, r.item_id, r.arr_service_id, r.arr_media_id,
       COALESCE(u.name, r.seerr_user_name) AS user_name, (u.image_tag IS NOT NULL) AS has_image, w.plays_mine, w.first_mine, w.plays_any";
 
 #[derive(Deserialize)]
@@ -334,7 +335,14 @@ fn requests_page(conn: &Connection, seen: &Seen, q: &RequestsQuery, min_play: i6
 pub async fn requests(State(app): State<App>, user: AuthUser, Query(q): Query<RequestsQuery>) -> ApiResult {
     let seen = Seen::of(&user, q.user_id.as_deref());
     let min_play = shortest_play(&app);
-    Ok(Json(app.db.call(move |c| requests_page(c, &seen, &q, min_play)).await?))
+    let mut out = app.db.call(move |c| requests_page(c, &seen, &q, min_play)).await?;
+    // How far along it is comes from the live queue, which is memory and not the database.
+    if let Some(rows) = out["rows"].as_array_mut() {
+        for row in rows {
+            crate::downloads::attach_progress(&app, row);
+        }
+    }
+    Ok(Json(out))
 }
 
 /// One title one person asked for, however many requests that took: (arrived, watched by them, still open, watched by anyone).

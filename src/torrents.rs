@@ -200,6 +200,168 @@ async fn dl_connected(app: &App, svc: &Service) -> Result<()> {
     Ok(())
 }
 
+// ---------------------------------------------------------------- what is downloading
+
+/// One torrent, however its client describes it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Torrent {
+    pub hash: String,
+    pub name: String,
+    pub state: &'static str,
+    /// 0..1
+    pub progress: f64,
+    pub size: i64,
+    pub left: i64,
+    pub down_bps: i64,
+    pub up_bps: i64,
+    pub eta_s: Option<i64>,
+    pub ratio: f64,
+    pub peers: i64,
+    pub error: Option<String>,
+}
+
+/// The states finstats talks about. Every client's vocabulary maps onto these.
+pub const STATES: [&str; 8] = ["downloading", "queued", "paused", "stalled", "checking", "seeding", "failed", "unknown"];
+
+/// An eta a client uses to mean "no idea" (qBittorrent's 8640000 = 100 days, Transmission's negatives).
+fn eta(v: Option<i64>) -> Option<i64> {
+    v.filter(|n| *n > 0 && *n < 86_400 * 30)
+}
+
+/// qBittorrent's `state`, which mixes what it is doing with whether it is finished.
+pub fn qb_state(raw: &str) -> &'static str {
+    match raw {
+        "downloading" | "forcedDL" | "metaDL" | "allocating" | "forcedMetaDL" => "downloading",
+        "queuedDL" | "queuedUP" => "queued",
+        "pausedDL" | "stoppedDL" => "paused",
+        "stalledDL" => "stalled",
+        "checkingDL" | "checkingUP" | "checkingResumeData" | "moving" => "checking",
+        "uploading" | "forcedUP" | "stalledUP" | "pausedUP" | "stoppedUP" => "seeding",
+        "error" | "missingFiles" => "failed",
+        _ => "unknown",
+    }
+}
+
+fn qb_torrent(t: &Value) -> Option<Torrent> {
+    let hash = t["hash"].as_str()?.to_ascii_lowercase();
+    let state = qb_state(t["state"].as_str().unwrap_or(""));
+    let size = t["size"].as_i64().unwrap_or(0).max(0);
+    Some(Torrent {
+        hash,
+        name: t["name"].as_str().unwrap_or("").to_string(),
+        state,
+        progress: t["progress"].as_f64().unwrap_or(0.0).clamp(0.0, 1.0),
+        size,
+        left: t["amount_left"].as_i64().unwrap_or(0).max(0),
+        down_bps: t["dlspeed"].as_i64().unwrap_or(0).max(0),
+        up_bps: t["upspeed"].as_i64().unwrap_or(0).max(0),
+        eta_s: eta(t["eta"].as_i64()),
+        ratio: t["ratio"].as_f64().unwrap_or(0.0).max(0.0),
+        peers: t["num_leechs"].as_i64().unwrap_or(0).max(0) + t["num_seeds"].as_i64().unwrap_or(0).max(0),
+        error: (state == "failed").then(|| "The client reports a problem with this torrent".to_string()),
+    })
+}
+
+/// Transmission's numeric status, plus its own "stalled" and "error" flags.
+pub fn tr_state(status: i64, stalled: bool, error: i64) -> &'static str {
+    if error != 0 {
+        return "failed";
+    }
+    match status {
+        0 => "paused",
+        1 | 2 => "checking",
+        3 => "queued",
+        4 => {
+            if stalled {
+                "stalled"
+            } else {
+                "downloading"
+            }
+        }
+        5 => "queued",
+        6 => "seeding",
+        _ => "unknown",
+    }
+}
+
+fn tr_torrent(t: &Value) -> Option<Torrent> {
+    let hash = t["hashString"].as_str()?.to_ascii_lowercase();
+    let error = t["error"].as_i64().unwrap_or(0);
+    let state = tr_state(t["status"].as_i64().unwrap_or(-1), t["isStalled"].as_bool().unwrap_or(false), error);
+    Some(Torrent {
+        hash,
+        name: t["name"].as_str().unwrap_or("").to_string(),
+        state,
+        progress: t["percentDone"].as_f64().unwrap_or(0.0).clamp(0.0, 1.0),
+        size: t["totalSize"].as_i64().unwrap_or(0).max(0),
+        left: t["leftUntilDone"].as_i64().unwrap_or(0).max(0),
+        down_bps: t["rateDownload"].as_i64().unwrap_or(0).max(0),
+        up_bps: t["rateUpload"].as_i64().unwrap_or(0).max(0),
+        eta_s: eta(t["eta"].as_i64()),
+        ratio: t["uploadRatio"].as_f64().unwrap_or(0.0).max(0.0),
+        peers: t["peersConnected"].as_i64().unwrap_or(0).max(0),
+        error: (error != 0).then(|| t["errorString"].as_str().unwrap_or("The client reports a problem with this torrent").chars().take(200).collect()),
+    })
+}
+
+/// Deluge's words.
+pub fn dl_state(raw: &str) -> &'static str {
+    match raw {
+        "Downloading" => "downloading",
+        "Queued" => "queued",
+        "Paused" => "paused",
+        "Checking" | "Allocating" | "Moving" => "checking",
+        "Seeding" => "seeding",
+        "Error" => "failed",
+        _ => "unknown",
+    }
+}
+
+fn dl_torrent(hash: &str, t: &Value) -> Option<Torrent> {
+    let state = dl_state(t["state"].as_str().unwrap_or(""));
+    let size = t["total_size"].as_i64().unwrap_or(0).max(0);
+    let progress = (t["progress"].as_f64().unwrap_or(0.0) / 100.0).clamp(0.0, 1.0);
+    Some(Torrent {
+        hash: hash.to_ascii_lowercase(),
+        name: t["name"].as_str().unwrap_or("").to_string(),
+        state,
+        progress,
+        left: ((1.0 - progress) * size as f64) as i64,
+        size,
+        down_bps: t["download_payload_rate"].as_i64().unwrap_or(0).max(0),
+        up_bps: t["upload_payload_rate"].as_i64().unwrap_or(0).max(0),
+        eta_s: eta(t["eta"].as_i64()),
+        ratio: t["ratio"].as_f64().unwrap_or(0.0).max(0.0),
+        peers: t["num_peers"].as_i64().unwrap_or(0).max(0),
+        error: (state == "failed").then(|| "The client reports a problem with this torrent".to_string()),
+    })
+}
+
+/// Everything the client is working on. `all`: also the finished ones, for the totals (once a minute;
+/// in between only what is moving, so a client with thousands of torrents is not asked for all of them every tick).
+pub async fn fetch(app: &App, svc: &Service, all: bool) -> Result<Vec<Torrent>> {
+    match svc.kind {
+        Kind::QBittorrent => {
+            let query: Vec<(&str, String)> = if all { vec![] } else { vec![("filter", "downloading".into())] };
+            let body: Value = qb_get(app, svc, "torrents/info", &query).await?.json().await.map_err(|e| explain(e, svc))?;
+            Ok(body.as_array().map(|a| a.iter().filter_map(qb_torrent).collect()).unwrap_or_default())
+        }
+        Kind::Transmission => {
+            const FIELDS: [&str; 12] = ["hashString", "name", "status", "percentDone", "totalSize", "leftUntilDone", "rateDownload", "rateUpload", "eta", "uploadRatio", "peersConnected", "isStalled"];
+            let args = if all { json!({ "fields": FIELDS }) } else { json!({ "fields": FIELDS, "ids": "recently-active" }) };
+            let body = tr_call(app, svc, "torrent-get", args).await?;
+            Ok(body["torrents"].as_array().map(|a| a.iter().filter_map(tr_torrent).collect()).unwrap_or_default())
+        }
+        Kind::Deluge => {
+            const KEYS: [&str; 10] = ["name", "state", "progress", "total_size", "download_payload_rate", "upload_payload_rate", "eta", "ratio", "num_peers", "hash"];
+            let filter = if all { json!({}) } else { json!({ "state": "Downloading" }) };
+            let body = dl_call(app, svc, "web.update_ui", json!([KEYS, filter])).await?;
+            Ok(body["torrents"].as_object().map(|m| m.iter().filter_map(|(hash, t)| dl_torrent(hash, t)).collect()).unwrap_or_default())
+        }
+        _ => bail!("not a torrent client"),
+    }
+}
+
 // ---------------------------------------------------------------- connection test
 
 pub async fn test(app: &App, svc: &Service) -> Result<(String, String)> {

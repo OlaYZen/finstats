@@ -5,6 +5,7 @@ mod backup;
 mod changelog;
 mod collector;
 mod db;
+mod downloads;
 mod fuzzy;
 mod geo;
 mod groups;
@@ -205,6 +206,10 @@ async fn serve(db: db::Db, data_dir: PathBuf) -> Result<()> {
         service_health: Default::default(),
         client_sessions: Default::default(),
         services_http: services::Http::new(),
+        downloads: Default::default(),
+        wishes: Default::default(),
+        downloads_watched: Mutex::new(0),
+        downloads_wake: Notify::new(),
         wake: Notify::new(),
     });
 
@@ -216,6 +221,7 @@ async fn serve(db: db::Db, data_dir: PathBuf) -> Result<()> {
     }
 
     tokio::spawn(collector::run(app.clone()));
+    tokio::spawn(downloads::run(app.clone()));
     tokio::spawn(sync::scheduler(app.clone()));
     tokio::spawn(api::prune_image_cache(app.clone()));
 

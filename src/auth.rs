@@ -29,7 +29,7 @@ const ATTEMPT_WINDOW_S: i64 = 300;
 /// Permission keys an administrator can grant. `sign_in` lets one user in while sign-in
 /// for everyone is off; the rest widen what a signed-in user may see or do.
 pub const SIGN_IN: &str = "sign_in";
-pub const GRANTABLE: [&str; 5] = [SIGN_IN, "see_everyone", "see_network", "see_server", "manage"];
+pub const GRANTABLE: [&str; 6] = [SIGN_IN, "see_everyone", "see_network", "see_server", "see_downloads", "manage"];
 
 /// What this request may see and do. Jellyfin administrators always hold everything.
 /// The year recap is not covered: it stays personal whatever is granted.
@@ -39,6 +39,7 @@ pub struct Perms {
     pub see_everyone: bool,
     /// IP addresses, device ids, local/remote.
     pub see_network: bool,
+    pub see_downloads: bool,
     /// The Server page, the server log, failed sign-ins and file paths.
     pub see_server: bool,
     /// Settings, tasks, imports and deleting plays.
@@ -46,7 +47,7 @@ pub struct Perms {
 }
 
 impl Perms {
-    pub const ALL: Perms = Perms { see_everyone: true, see_network: true, see_server: true, manage: true };
+    pub const ALL: Perms = Perms { see_everyone: true, see_network: true, see_server: true, see_downloads: true, manage: true };
 
     pub fn from_keys<'a>(keys: impl IntoIterator<Item = &'a str>) -> Self {
         let mut p = Perms::default();
@@ -54,6 +55,7 @@ impl Perms {
             match k {
                 "see_everyone" => p.see_everyone = true,
                 "see_network" => p.see_network = true,
+                "see_downloads" => p.see_downloads = true,
                 "see_server" => p.see_server = true,
                 "manage" => p.manage = true,
                 _ => {}
@@ -77,6 +79,9 @@ pub struct Manager(#[allow(dead_code)] pub AuthUser);
 /// May see the server page and the server log.
 pub struct ServerViewer(#[allow(dead_code)] pub AuthUser);
 /// A Jellyfin administrator: the only one who may hand out permissions.
+/// May see what is downloading: the queue, speeds, torrent names and which client.
+pub struct DownloadsViewer(#[allow(dead_code)] pub AuthUser);
+
 pub struct JellyfinAdmin(#[allow(dead_code)] pub AuthUser);
 
 /// A non-admin's own grants, as stored. Administrators never have a row.
@@ -173,6 +178,18 @@ impl FromRequestParts<App> for ServerViewer {
             return Err(ApiError::not_permitted("see the server"));
         }
         Ok(ServerViewer(user))
+    }
+}
+
+impl FromRequestParts<App> for DownloadsViewer {
+    type Rejection = ApiError;
+
+    async fn from_request_parts(parts: &mut Parts, app: &App) -> Result<Self, Self::Rejection> {
+        let user = AuthUser::from_request_parts(parts, app).await?;
+        if !user.perms.see_downloads {
+            return Err(ApiError::not_permitted("see what is downloading"));
+        }
+        Ok(DownloadsViewer(user))
     }
 }
 

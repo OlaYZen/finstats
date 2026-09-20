@@ -793,3 +793,35 @@ for a series only in the seasons that were asked for.
 
 `GET /api/items/{id}` gains `item.request` — the oldest request for that title, but only the caller's own unless they have `see_everyone`;
 otherwise the key is absent, "arrived after" included.
+
+## Downloads (Sonarr, Radarr and the torrent clients)
+
+Live, from memory: Sonarr's and Radarr's queues joined with the torrent clients at the torrent hash. Nothing is stored. Needs the new
+permission **`see_downloads`** (`403` without it; Jellyfin administrators always have it).
+
+`GET /api/downloads?live=1` — `live=1` means "a page is showing this": the snapshot is then refreshed every 5 seconds for the next 20,
+and every 60 seconds otherwise. The prefetcher never asks for it.
+```jsonc
+{ "rows": [ {"key": "<torrent hash>" | "arr:<service>:<title>",
+             "title": "Low Orbit", "sub": "Season 3 · 3 episodes" | "2026" | null,
+             "state": "downloading" | "stalled" | "queued" | "paused" | "checking" | "importing" | "failed" | "unknown",
+             "progress": 0.66, "size": 9000000000, "eta_s": 1300,
+             "down_bps": 8400000, "up_bps": 120000, "ratio": 0.2, "peers": 24,      // the last four only when a client knows the torrent
+             "release": "Low.Orbit.S03.1080p.WEB-DL" | null, "client": "qBittorrent" | null, "service_name": "Sonarr" | null,
+             "known": true,                                    // false: a torrent no Sonarr or Radarr is waiting for
+             "error": "One file was not imported" | null,
+             "poster": {"item_id": "…"} | {"service_id": 1, "media_id": 12} | null,
+             "item_id": "…" | null,
+             "requested_by": {"user_id": "…" | null, "user_name": "maria"} | null} ],
+  "totals": {"down_bps": 0, "up_bps": 0, "downloading": 3, "queued": 1, "importing": 1, "failed": 0, "seeding": 12, "torrents": 140},
+  "at": 0, "sources": 5,
+  "problems": [{"service": "Deluge", "error": "…"}] }
+```
+A season pack is one row, however many episodes it holds. A usenet download has no torrent and is described from the queue alone
+(progress from `size`/`sizeleft`). Torrents that are only seeding are counted, not listed, and at most 500 rows are returned.
+
+**Without `see_downloads`** a person still learns how far their *own* request has got: rows of `GET /api/requests` and
+`item.request` of `GET /api/items/{id}` carry `"download": {"state": "downloading", "progress": 0.66, "eta_s": 1300}` when something in the
+queue is that title — and nothing else: no release name, no client, no speed, no other download.
+
+`GET/PUT /api/permissions` gain `see_downloads`.

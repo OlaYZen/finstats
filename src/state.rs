@@ -37,6 +37,12 @@ pub struct AppState {
     pub client_sessions: crate::services::Sessions,
     /// Their own HTTP clients: no redirect is ever followed with a key in hand.
     pub services_http: crate::services::Http,
+    /// What is downloading right now, and who wished for it: in memory only, worthless a minute later.
+    pub downloads: RwLock<Arc<crate::downloads::Snapshot>>,
+    pub wishes: RwLock<Arc<crate::downloads::Wishes>>,
+    /// When a page last said it was showing the downloads, and how to wake their loop.
+    pub downloads_watched: Mutex<i64>,
+    pub downloads_wake: Notify,
     /// Wakes background loops when configuration or settings change.
     pub wake: Notify,
 }

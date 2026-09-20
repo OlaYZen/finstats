@@ -75,6 +75,7 @@ pub fn router(app: App) -> Router {
         .route("/upcoming", get(pipeline::upcoming))
         .route("/requests", get(pipeline::requests))
         .route("/requests/summary", get(pipeline::requests_summary))
+        .route("/downloads", get(crate::downloads::downloads))
         .route("/settings", get(get_settings).put(put_settings))
         .route("/permissions", get(get_permissions))
         .route("/permissions/defaults", axum::routing::put(put_default_permissions))
@@ -425,11 +426,12 @@ async fn run_task(State(app): State<App>, Manager(_): Manager, Path(id): Path<St
 
 const ACCESS_KEYS: [&str; 2] = ["allow_user_login", "default_permissions"];
 
-const PERMISSION_INFO: [(&str, &str, &str); 5] = [
+const PERMISSION_INFO: [(&str, &str, &str); 6] = [
     ("sign_in", "Sign in", "May use finstats and sees their own statistics and recap."),
     ("see_everyone", "See everyone's activity", "Other people's statistics and history, the Users page and every live stream."),
     ("see_network", "See network details", "IP addresses, device ids and whether a play was local or remote."),
     ("see_server", "See the server", "The Server page, the server log, failed sign-ins and file paths."),
+    ("see_downloads", "See what is downloading", "The download queue with speeds, torrent names and which client. Without it, people still see how far their own request has got."),
     ("manage", "Manage finstats", "Settings, tasks, the Jellystat import and deleting plays. Cannot change permissions."),
 ];
 

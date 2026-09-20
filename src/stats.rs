@@ -828,6 +828,7 @@ pub async fn item_detail(State(app): State<App>, user: AuthUser, Path(id): Path<
     let id = db::norm_id(&id);
     let (caller, min_play) = (user.id.clone(), app.settings().min_play_s.max(120));
     let out = scoped(&app, &user, &q, move |c, scope| {
+        let mut requested: Option<Value> = None;
         let item = one_json(
             c,
             "SELECT i.id, i.name, i.type, i.production_year AS year, i.overview, i.genres, i.community_rating, i.official_rating,
@@ -948,9 +949,9 @@ pub async fn item_detail(State(app): State<App>, user: AuthUser, Path(id): Path<
         }
         // Who asked for it, when it arrived: only for the caller's own request, or for someone who may see everyone.
         if matches!(item_type, "Series" | "Movie")
-            && let Some(request) = crate::pipeline::request_for_item(c, &id, scope.perms.see_everyone, &caller, min_play)?
+            && let Some(mut request) = crate::pipeline::request_for_item(c, &id, scope.perms.see_everyone, &caller, min_play)?
         {
-            item.insert("request".into(), request);
+            requested = Some(std::mem::take(&mut request));
         }
         // What Sonarr or Radarr expect next for this title. About the title, not about people.
         if matches!(item_type, "Series" | "Movie") {
@@ -987,10 +988,20 @@ pub async fn item_detail(State(app): State<App>, user: AuthUser, Path(id): Path<
             "SELECT person_id AS id, name, kind, role, has_image FROM item_people WHERE item_id = ?1 ORDER BY (kind = 'Actor'), sort",
             &[credited.into()],
         )?;
-        Ok(Some(json!({ "item": item, "totals": totals, "watchers": watchers, "seasons": seasons, "daily": series, "bucket": bucket, "played_by": played_by, "people": people })))
+        Ok(Some(json!({ "item": item, "request": requested, "totals": totals, "watchers": watchers, "seasons": seasons, "daily": series, "bucket": bucket, "played_by": played_by, "people": people })))
     })
     .await?;
-    out.map(Json).ok_or_else(|| ApiError::not_found("Item"))
+    let mut out = out.ok_or_else(|| ApiError::not_found("Item"))?;
+    // How far along it is lives in memory, not in the database.
+    if !out["request"].is_null() {
+        let mut request = out["request"].take();
+        crate::downloads::attach_progress(&app, &mut request);
+        out["item"]["request"] = request;
+    }
+    if let Some(o) = out.as_object_mut() {
+        o.remove("request");
+    }
+    Ok(Json(out))
 }
 
 /// One actor or director: what they are in, and how much of it was watched (within the caller's scope).

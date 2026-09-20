@@ -399,7 +399,7 @@ pub async fn check_all(app: &App) {
 pub fn features(app: &App) -> Value {
     let list = all(app);
     let has = |want: fn(Kind) -> bool| list.iter().any(|s| s.enabled && want(s.kind));
-    json!({ "upcoming": has(Kind::is_arr), "requests": has(|k| k == Kind::Seerr) })
+    json!({ "upcoming": has(Kind::is_arr), "requests": has(|k| k == Kind::Seerr), "downloads": has(Kind::is_client) || has(Kind::is_arr) })
 }
 
 // ---------------------------------------------------------------- API (Jellyfin administrators)
@@ -591,6 +591,7 @@ const CHILD_TABLES: [&str; 3] = ["upcoming", "requests", "grabs"];
 async fn changed(app: &App) -> Result<()> {
     reload(app).await?;
     app.wake.notify_waiters();
+    app.downloads_wake.notify_waiters();
     Ok(())
 }
 

@@ -353,6 +353,8 @@ pub async fn sync_requests(app: &App) -> Result<String> {
             }
         }
     }
+    // Whose wish a download is may have changed.
+    app.downloads_wake.notify_waiters();
     if failed.len() == list.len() {
         bail!("{} did not answer", failed.join(", "));
     }
