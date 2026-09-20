@@ -18,7 +18,9 @@ const TABS = [
 ];
 const features = () => (state.user && state.user.features) || {};
 export const pipelineTabs = () => TABS.filter((t) => features()[t.feature] && (!t.perm || can(t.perm)));
-export const hasPipeline = () => pipelineTabs().length > 0;
+// In the menu as soon as a service can answer something — and always for an administrator, who is the only
+// person who can connect one. A page that can only be reached by typing its address is a page nobody finds.
+export const hasPipeline = () => pipelineTabs().length > 0 || !!(state.user && state.user.is_admin);
 
 const SPANS = [{ value: 7, label: '7 days' }, { value: 14, label: '14 days' }, { value: 30, label: '30 days' }, { value: 90, label: '90 days' }];
 const upcomingScope = (query) => ({
