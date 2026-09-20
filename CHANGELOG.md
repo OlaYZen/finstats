@@ -7,6 +7,11 @@ Format: `## [version] - date`, a one-paragraph summary (required for an `x.y.0` 
 headline of that series in the app; optional otherwise), then `### Added`,
 `### Changed`, `### Fixed` or `### Removed` with one bullet per change.
 
+## [1.0.2] - 2026-09-20
+
+### Fixed
+- In **Patch notes**, the v0.9 and v0.10 groups had no headline next to their version, unlike every other group. They have one now, and a group's headline is always the first sentence of what its first release was about, so a long introduction no longer gets cut off mid-sentence.
+
 ## [1.0.1] - 2026-09-20
 
 ### Fixed
