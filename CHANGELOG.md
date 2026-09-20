@@ -7,6 +7,11 @@ Format: `## [version] - date`, a one-paragraph summary (required for an `x.y.0` 
 headline of that series in the app; optional otherwise), then `### Added`,
 `### Changed`, `### Fixed` or `### Removed` with one bullet per change.
 
+## [1.1.3] - 2026-09-20
+
+### Added
+- **Search finds actors and directors.** Ctrl+Space now also looks through the cast and crew of everything in your library and lists them under **Cast and crew**, with their photo, whether they act or direct, and how many of your titles they are in. Choosing one opens their page. It is as forgiving as the title search: words in any order, accents ignored, and a slip of the finger allowed, so "scarlet johanson" still finds her. When several people match equally well, the one in more of your titles comes first.
+
 ## [1.1.2] - 2026-09-20
 
 ### Added
