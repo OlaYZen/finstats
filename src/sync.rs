@@ -51,6 +51,7 @@ pub fn spawn(app: &App, id: &'static str) -> bool {
 }
 
 const LIGHT_EVERY_S: i64 = 900;
+const REQUESTS_EVERY_S: i64 = 300;
 const SCAN_CHECK_EVERY_S: i64 = 300;
 /// Even when following Jellyfin's scan, re-read once a week: real-time monitoring adds
 /// items without the scan task ever running.
@@ -83,6 +84,7 @@ pub fn run_backup(app: &App, automatic: bool) -> bool {
 /// (expensive) library read simply follows Jellyfin's own "Scan Media Library" task.
 pub async fn scheduler(app: App) {
     let mut last_light = 0i64;
+    let mut last_requests = 0i64;
     let mut last_scan_check = 0i64;
     let mut last_library: i64 = app
         .db
@@ -106,6 +108,12 @@ pub async fn scheduler(app: App) {
                 spawn(&app, "sync_users");
                 spawn(&app, "sync_events");
                 spawn(&app, "sync_server");
+            }
+
+            // Requests change by the hour, not by the quarter: who asked for what should feel current.
+            if now - last_requests >= REQUESTS_EVERY_S && crate::seerr::connected(&app) {
+                last_requests = now;
+                crate::services::spawn(&app, "sync_requests");
             }
 
             let timer_due = now - last_library >= settings.sync_interval_h.clamp(1, 168) * 3600;

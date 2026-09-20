@@ -465,7 +465,7 @@ pub struct ActivityQuery {
 
 /// `ORDER BY` for a paginated list: a whitelisted column, empty values last whichever way it runs,
 /// and a fixed tiebreaker so pages never shuffle. Unknown keys fall back to the default order.
-fn order_by(columns: &[(&str, &str)], sort: Option<&str>, dir: Option<&str>, default: &str) -> String {
+pub(crate) fn order_by(columns: &[(&str, &str)], sort: Option<&str>, dir: Option<&str>, default: &str) -> String {
     let Some((_, expr)) = sort.and_then(|k| columns.iter().find(|(key, _)| *key == k)) else { return default.to_string() };
     let dir = if dir == Some("asc") { "ASC" } else { "DESC" };
     format!("({expr}) IS NULL, {expr} {dir}, {default}")
@@ -826,6 +826,7 @@ pub async fn library_detail(State(app): State<App>, user: AuthUser, Path(id): Pa
 
 pub async fn item_detail(State(app): State<App>, user: AuthUser, Path(id): Path<String>, Query(q): Query<FilterQuery>) -> ApiResult {
     let id = db::norm_id(&id);
+    let (caller, min_play) = (user.id.clone(), app.settings().min_play_s.max(120));
     let out = scoped(&app, &user, &q, move |c, scope| {
         let item = one_json(
             c,
@@ -944,6 +945,12 @@ pub async fn item_detail(State(app): State<App>, user: AuthUser, Path(id): Path<
                 };
                 item.insert("language_coverage".into(), json!({ "episodes": total, "audio": per("audio_languages")?, "subtitles": per("subtitle_languages")? }));
             }
+        }
+        // Who asked for it, when it arrived: only for the caller's own request, or for someone who may see everyone.
+        if matches!(item_type, "Series" | "Movie")
+            && let Some(request) = crate::pipeline::request_for_item(c, &id, scope.perms.see_everyone, &caller, min_play)?
+        {
+            item.insert("request".into(), request);
         }
         // What Sonarr or Radarr expect next for this title. About the title, not about people.
         if matches!(item_type, "Series" | "Movie") {

@@ -182,6 +182,32 @@ pub async fn sync_upcoming(app: &App) -> Result<String> {
     })
 }
 
+pub struct Found {
+    pub service_id: i64,
+    pub media_id: i64,
+    pub title: String,
+    pub year: Option<i64>,
+}
+
+/// Does a connected Sonarr (by TVDB id) or Radarr (by TMDB id) have this title? It then also has its poster.
+pub async fn find(app: &App, media_type: &str, tmdb: Option<i64>, tvdb: Option<i64>) -> Option<Found> {
+    let (kind, path, key, id) = match media_type {
+        "movie" => (Kind::Radarr, "/api/v3/movie", "tmdbId", tmdb?),
+        _ => (Kind::Sonarr, "/api/v3/series", "tvdbId", tvdb?),
+    };
+    for svc in services::enabled(app, |k| k == kind) {
+        let Ok(list) = services::get_json(app, &svc, path, &[(key, id.to_string())]).await else { continue };
+        // Older versions ignore the filter and answer with everything: take the one that matches, not the first.
+        let hit = list.as_array().and_then(|a| a.iter().find(|m| m[key].as_i64() == Some(id)));
+        if let Some(m) = hit
+            && let (Some(media_id), Some(title)) = (self::id(&m["id"]), text(&m["title"]))
+        {
+            return Some(Found { service_id: svc.id, media_id, title, year: self::id(&m["year"]) });
+        }
+    }
+    None
+}
+
 /// Where a title's poster lives in Sonarr or Radarr. A constant shape: nothing a caller sends ends up in it but a number.
 pub fn poster_path(media_id: i64, width: u32) -> String {
     format!("/api/v3/mediacover/{media_id}/poster-{}.jpg", if width <= 250 { 250 } else { 500 })

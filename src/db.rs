@@ -368,6 +368,47 @@ pub(crate) const MIGRATIONS: &[&str] = &[
     CREATE INDEX idx_upcoming_at ON upcoming(at);
     CREATE INDEX idx_upcoming_day ON upcoming(day);
     "#,
+    // 15 — what people asked for in Seerr. Seerr purges a request when its media is removed, so a request that
+    //      disappears is kept and marked (`removed_at`): "asked for 14, watched 9" should not shrink.
+    //      `status` and `media_status` are Seerr's own numbers; `available_at` is worked out by finstats.
+    //      `user_id` is the Jellyfin user behind Seerr's, when Seerr says who that is; `item_id` and
+    //      `arr_*` say where the poster is: in the library, or still only in Sonarr or Radarr.
+    r#"
+    CREATE TABLE requests (
+        service_id        INTEGER NOT NULL REFERENCES services(id) ON DELETE CASCADE,
+        request_id        INTEGER NOT NULL,
+        media_type        TEXT NOT NULL,             -- movie | tv
+        tmdb_id           INTEGER,
+        tvdb_id           INTEGER,
+        imdb_id           TEXT,
+        title             TEXT,                      -- NULL until it has been looked up
+        year              INTEGER,
+        seasons           TEXT NOT NULL DEFAULT '[]', -- JSON array of season numbers; empty for a film
+        is_4k             INTEGER NOT NULL DEFAULT 0,
+        status            INTEGER NOT NULL,          -- 1 pending, 2 approved, 3 declined, 4 failed, 5 completed
+        media_status      INTEGER NOT NULL,          -- 1 unknown, 2 pending, 3 processing, 4 partially available, 5 available, 6+ gone
+        requested_at      INTEGER NOT NULL,
+        updated_at        INTEGER NOT NULL,
+        media_added_at    INTEGER,                   -- Seerr's own note of when it arrived
+        seen_available_at INTEGER,                   -- when finstats first saw it available
+        available_at      INTEGER,
+        removed_at        INTEGER,
+        seerr_user_id     INTEGER,
+        seerr_user_name   TEXT,
+        jellyfin_user_id  TEXT,
+        jellyfin_username TEXT,
+        jellyfin_media_id TEXT,
+        user_id           TEXT,
+        item_id           TEXT,
+        arr_service_id    INTEGER,
+        arr_media_id      INTEGER,
+        looked_up_at      INTEGER,                   -- the last attempt to find its title
+        PRIMARY KEY (service_id, request_id)
+    ) WITHOUT ROWID;
+    CREATE INDEX idx_requests_user ON requests(user_id, requested_at);
+    CREATE INDEX idx_requests_when ON requests(requested_at);
+    CREATE INDEX idx_requests_item ON requests(item_id);
+    "#,
 ];
 
 impl Db {

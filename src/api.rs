@@ -73,6 +73,8 @@ pub fn router(app: App) -> Router {
         .route("/img/user/{id}", get(user_image))
         .route("/img/arr/{service_id}/{media_id}", get(arr_image))
         .route("/upcoming", get(pipeline::upcoming))
+        .route("/requests", get(pipeline::requests))
+        .route("/requests/summary", get(pipeline::requests_summary))
         .route("/settings", get(get_settings).put(put_settings))
         .route("/permissions", get(get_permissions))
         .route("/permissions/defaults", axum::routing::put(put_default_permissions))
@@ -275,10 +277,10 @@ async fn user_image(State(app): State<App>, _user: AuthUser, Path(id): Path<Stri
 /// The poster of a title that is not in the library yet: only Sonarr or Radarr has it. Both path segments
 /// are numbers, the upstream path is a constant, and only posters of titles finstats itself has listed are
 /// served, so this is no window into everything Sonarr and Radarr know.
-async fn arr_image(State(app): State<App>, _user: AuthUser, Path((service_id, media_id)): Path<(i64, i64)>, Query(q): Query<ImageQuery>) -> ApiResult<Response> {
+async fn arr_image(State(app): State<App>, user: AuthUser, Path((service_id, media_id)): Path<(i64, i64)>, Query(q): Query<ImageQuery>) -> ApiResult<Response> {
     let width = if q.w.unwrap_or(250) <= 250 { 250 } else { 500 };
     let svc = services::all(&app).iter().find(|s| s.id == service_id && s.enabled && s.kind.is_arr()).cloned().ok_or_else(|| ApiError::not_found("Image"))?;
-    if media_id <= 0 || !app.db.call(move |c| pipeline::poster_is_listed(c, service_id, media_id)).await? {
+    if media_id <= 0 || !app.db.call(move |c| pipeline::poster_is_listed(c, service_id, media_id, &user)).await? {
         return Err(ApiError::not_found("Image"));
     }
     let worker = app.clone();
@@ -408,7 +410,7 @@ async fn get_tasks(State(app): State<App>, Manager(_): Manager) -> ApiResult {
 
 /// Every task that can be started by hand. `Tasks::try_start` panics on an id it does not know, so a test
 /// holds this list against `TASK_IDS`.
-const RUNNABLE: [&str; 6] = ["sync_users", "sync_libraries", "sync_events", "sync_server", "sync_userdata", "sync_upcoming"];
+const RUNNABLE: [&str; 7] = ["sync_users", "sync_libraries", "sync_events", "sync_server", "sync_userdata", "sync_upcoming", "sync_requests"];
 
 async fn run_task(State(app): State<App>, Manager(_): Manager, Path(id): Path<String>) -> ApiResult<Response> {
     let Some(id) = RUNNABLE.into_iter().find(|t| *t == id) else { return Err(ApiError::not_found("Task")) };

@@ -11,7 +11,7 @@
 //! `item_id` on a row is only where a click should lead. (`relink.rs` refuses ambiguity because it rewrites
 //! history. Nothing here rewrites anything.)
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use anyhow::Result;
 use axum::Json;
@@ -54,6 +54,7 @@ pub fn link(conn: &Connection) -> Result<()> {
     };
     conn.execute(&format!("UPDATE upcoming SET item_id = COALESCE({}, {}) WHERE kind = 'episode'", target("Tvdb", "tvdb_id", "Series"), target("Imdb", "imdb_id", "Series")), [])?;
     conn.execute(&format!("UPDATE upcoming SET item_id = COALESCE({}, {}) WHERE kind = 'movie'", target("Tmdb", "tmdb_id", "Movie"), target("Imdb", "imdb_id", "Movie")), [])?;
+    crate::seerr::link(conn)?;
     Ok(())
 }
 
@@ -205,10 +206,268 @@ pub async fn upcoming(State(app): State<App>, user: AuthUser, Query(q): Query<Up
     Ok(Json(json!({ "days": days, "user_id": subject, "entries": list })))
 }
 
-/// Is this poster one the caller could have been shown? Otherwise the proxy would let anyone walk through
-/// everything Sonarr and Radarr know by counting upwards.
-pub fn poster_is_listed(conn: &Connection, service_id: i64, media_id: i64) -> Result<bool> {
-    Ok(conn.prepare_cached("SELECT 1 FROM upcoming WHERE service_id = ?1 AND arr_media_id = ?2 LIMIT 1")?.exists(params![service_id, media_id])?)
+// ---------------------------------------------------------------- requests
+
+/// Seerr's two numbers as one word. A request that vanished from Seerr stays "available" if it had arrived.
+const STATE_SQL: &str = "CASE WHEN r.removed_at IS NOT NULL AND r.media_status <> 5 THEN 'removed'
+      WHEN r.status = 3 THEN 'declined' WHEN r.status = 4 THEN 'failed'
+      WHEN r.media_status = 5 THEN 'available' WHEN r.media_status = 4 THEN 'partial'
+      WHEN r.status = 1 THEN 'pending' WHEN r.media_status = 3 THEN 'processing' ELSE 'approved' END";
+
+/// Every request with every copy of its title in the library (`ri`), and what was played of it *after* it was
+/// asked for (`w`): by the requester and by anyone. Each branch is driven through an index: a TMDB number means
+/// one thing for a film and another for a show, so the item's type is always part of the match, and a show
+/// request only counts episodes of the seasons that were asked for. `?1` is the shortest play that counts.
+const WATCHED_CTE: &str = "WITH ri AS (
+      SELECT r.service_id, r.request_id, x.item_id FROM requests r JOIN item_external x ON x.source = 'Tmdb' AND x.value = CAST(r.tmdb_id AS TEXT) JOIN items i ON i.id = x.item_id AND i.type = 'Movie' WHERE r.media_type = 'movie'
+      UNION SELECT r.service_id, r.request_id, x.item_id FROM requests r JOIN item_external x ON x.source = 'Imdb' AND x.value = r.imdb_id JOIN items i ON i.id = x.item_id AND i.type = 'Movie' WHERE r.media_type = 'movie'
+      UNION SELECT r.service_id, r.request_id, x.item_id FROM requests r JOIN item_external x ON x.source = 'Tvdb' AND x.value = CAST(r.tvdb_id AS TEXT) JOIN items i ON i.id = x.item_id AND i.type = 'Series' WHERE r.media_type = 'tv'
+      UNION SELECT r.service_id, r.request_id, x.item_id FROM requests r JOIN item_external x ON x.source = 'Tmdb' AND x.value = CAST(r.tmdb_id AS TEXT) JOIN items i ON i.id = x.item_id AND i.type = 'Series' WHERE r.media_type = 'tv'
+    ), plays AS (
+      SELECT r.service_id, r.request_id, p.user_id = r.user_id AS mine, p.started_at
+      FROM requests r JOIN ri ON ri.service_id = r.service_id AND ri.request_id = r.request_id JOIN playbacks p ON p.item_id = ri.item_id
+      WHERE r.media_type = 'movie' AND p.started_at >= r.requested_at AND p.duration_s >= ?1
+      UNION ALL
+      SELECT r.service_id, r.request_id, p.user_id = r.user_id, p.started_at
+      FROM requests r JOIN ri ON ri.service_id = r.service_id AND ri.request_id = r.request_id JOIN playbacks p ON p.series_id = ri.item_id
+      WHERE r.media_type = 'tv' AND p.started_at >= r.requested_at AND p.duration_s >= ?1
+        AND (r.seasons = '[]' OR p.season_number IN (SELECT value FROM json_each(r.seasons)))
+    ), w AS (
+      SELECT service_id, request_id, COALESCE(SUM(mine), 0) AS plays_mine, MIN(CASE WHEN mine THEN started_at END) AS first_mine, COUNT(*) AS plays_any, MIN(started_at) AS first_any
+      FROM plays GROUP BY service_id, request_id
+    )";
+
+const REQUEST_SORTS: [(&str, &str); 6] = [
+    ("when", "r.requested_at"),
+    ("title", "COALESCE(r.title, '') COLLATE NOCASE"),
+    ("user", "COALESCE(u.name, r.seerr_user_name) COLLATE NOCASE"),
+    ("state", "state"),
+    ("arrived", "r.available_at - r.requested_at"),
+    ("watched", "w.first_mine"),
+];
+
+/// A play shorter than this is a click, not watching.
+fn shortest_play(app: &App) -> i64 {
+    app.settings().min_play_s.max(120)
+}
+
+struct Seen {
+    everyone: bool,
+    /// Whose requests: `Some` pins the list to one person (always, without "see everyone").
+    who: Option<String>,
+}
+
+impl Seen {
+    fn of(user: &AuthUser, asked: Option<&str>) -> Self {
+        Seen { everyone: user.perms.see_everyone, who: pinned_user(user, asked) }
+    }
+    /// The `WHERE` that everything about requests goes through. A request nobody could be linked to has no
+    /// `user_id`, so it can only ever match when nobody in particular is asked for, which needs "see everyone".
+    fn clause(&self) -> &'static str {
+        if self.who.is_some() { "r.user_id = ?2" } else { "?2 IS NULL" }
+    }
+}
+
+fn request_json(r: &crate::db::rusqlite::Row, everyone: bool) -> crate::db::rusqlite::Result<Value> {
+    let (service_id, request_id): (i64, i64) = (r.get("service_id")?, r.get("request_id")?);
+    let (item_id, arr_service, arr_media): (Option<String>, Option<i64>, Option<i64>) = (r.get("item_id")?, r.get("arr_service_id")?, r.get("arr_media_id")?);
+    let poster = match (&item_id, arr_service, arr_media) {
+        (Some(id), _, _) => json!({ "item_id": id }),
+        (None, Some(s), Some(m)) => json!({ "service_id": s, "media_id": m }),
+        _ => Value::Null,
+    };
+    let (requested_at, available_at): (i64, Option<i64>) = (r.get("requested_at")?, r.get("available_at")?);
+    let seasons: String = r.get("seasons")?;
+    let mut v = json!({
+        "id": format!("{service_id}:{request_id}"), "media_type": r.get::<_, String>("media_type")?, "title": r.get::<_, Option<String>>("title")?, "year": r.get::<_, Option<i64>>("year")?,
+        "tmdb_id": r.get::<_, Option<i64>>("tmdb_id")?, "seasons": serde_json::from_str::<Value>(&seasons).unwrap_or_else(|_| json!([])), "is_4k": r.get::<_, bool>("is_4k")?,
+        "state": r.get::<_, String>("state")?, "requested_at": requested_at, "available_at": available_at, "arrived_after_s": available_at.map(|a| (a - requested_at).max(0)),
+        "user_id": r.get::<_, Option<String>>("user_id")?, "user_name": r.get::<_, Option<String>>("user_name")?, "has_image": r.get::<_, Option<bool>>("has_image")?.unwrap_or(false),
+        "item_id": item_id, "poster": poster,
+        "watched": r.get::<_, Option<i64>>("plays_mine")?.unwrap_or(0) > 0, "plays": r.get::<_, Option<i64>>("plays_mine")?.unwrap_or(0), "first_play_at": r.get::<_, Option<i64>>("first_mine")?,
+    });
+    if everyone {
+        v["watched_by_anyone"] = json!(r.get::<_, Option<i64>>("plays_any")?.unwrap_or(0) > 0);
+        v["plays_by_anyone"] = json!(r.get::<_, Option<i64>>("plays_any")?.unwrap_or(0));
+    }
+    Ok(v)
+}
+
+const REQUEST_COLS: &str = "r.service_id, r.request_id, r.media_type, r.title, r.year, r.tmdb_id, r.seasons, r.is_4k, r.requested_at, r.available_at, r.user_id, r.item_id, r.arr_service_id, r.arr_media_id,
+      COALESCE(u.name, r.seerr_user_name) AS user_name, (u.image_tag IS NOT NULL) AS has_image, w.plays_mine, w.first_mine, w.plays_any";
+
+#[derive(Deserialize)]
+pub struct RequestsQuery {
+    /// open | arrived | declined | all (default)
+    status: Option<String>,
+    user_id: Option<String>,
+    q: Option<String>,
+    sort: Option<String>,
+    dir: Option<String>,
+    page: Option<i64>,
+    per_page: Option<i64>,
+}
+
+fn requests_page(conn: &Connection, seen: &Seen, q: &RequestsQuery, min_play: i64) -> Result<Value> {
+    let per_page = q.per_page.unwrap_or(25).clamp(1, 100);
+    let page = q.page.unwrap_or(1).clamp(1, 100_000);
+    let states = match q.status.as_deref() {
+        Some("open") => "state IN ('pending', 'approved', 'processing', 'partial')",
+        Some("arrived") => "state = 'available'",
+        Some("declined") => "state IN ('declined', 'failed', 'removed')",
+        _ => "1 = 1",
+    };
+    let needle = q.q.as_deref().map(str::trim).filter(|s| !s.is_empty()).map(|s| format!("%{}%", s.chars().take(80).collect::<String>().replace('%', "").replace('_', " ")));
+    let from = format!(
+        "FROM (SELECT r.*, {STATE_SQL} AS state FROM requests r) r LEFT JOIN users u ON u.id = r.user_id LEFT JOIN w ON w.service_id = r.service_id AND w.request_id = r.request_id
+         WHERE {} AND {states} AND (?3 IS NULL OR r.title LIKE ?3)",
+        seen.clause()
+    );
+    let args = params![min_play, seen.who, needle];
+    let total: i64 = conn.query_row(&format!("{WATCHED_CTE} SELECT COUNT(*) {from}"), args, |r| r.get(0))?;
+    let order = crate::stats::order_by(&REQUEST_SORTS, q.sort.as_deref(), q.dir.as_deref(), "r.requested_at DESC, r.request_id DESC");
+    let sql = format!("{WATCHED_CTE} SELECT {REQUEST_COLS}, r.state {from} ORDER BY {order} LIMIT {per_page} OFFSET {}", (page - 1) * per_page);
+    let rows: Vec<Value> = conn.prepare(&sql)?.query_map(args, |r| request_json(r, seen.everyone))?.collect::<Result<_, _>>()?;
+    Ok(json!({ "rows": rows, "total": total, "page": page, "per_page": per_page }))
+}
+
+pub async fn requests(State(app): State<App>, user: AuthUser, Query(q): Query<RequestsQuery>) -> ApiResult {
+    let seen = Seen::of(&user, q.user_id.as_deref());
+    let min_play = shortest_play(&app);
+    Ok(Json(app.db.call(move |c| requests_page(c, &seen, &q, min_play)).await?))
+}
+
+/// One title one person asked for, however many requests that took: (arrived, watched by them, still open, watched by anyone).
+type Wish = (bool, bool, bool, bool);
+/// One person in the "who asks, who watches" list: name, Jellyfin id if known, titles asked for, arrived, watched.
+type Asker = (String, Option<String>, usize, usize, usize);
+
+fn median(mut v: Vec<i64>) -> Option<i64> {
+    if v.is_empty() {
+        return None;
+    }
+    v.sort_unstable();
+    let mid = v.len() / 2;
+    Some(if v.len() % 2 == 1 { v[mid] } else { (v[mid - 1] + v[mid]) / 2 })
+}
+
+/// The figures above the list, from the same rows the list may show and no others.
+fn summary(conn: &Connection, seen: &Seen, days: i64, min_play: i64) -> Result<Value> {
+    let since = if days > 0 { crate::db::now() - days * 86_400 } else { 0 };
+    let sql = format!(
+        "{WATCHED_CTE} SELECT {REQUEST_COLS}, r.state FROM (SELECT r.*, {STATE_SQL} AS state FROM requests r) r LEFT JOIN users u ON u.id = r.user_id
+         LEFT JOIN w ON w.service_id = r.service_id AND w.request_id = r.request_id WHERE {} AND r.requested_at >= ?3 ORDER BY r.requested_at DESC",
+        seen.clause()
+    );
+    let rows: Vec<Value> = conn.prepare(&sql)?.query_map(params![min_play, seen.who, since], |r| request_json(r, true))?.collect::<Result<_, _>>()?;
+
+    // The same film asked for in HD and in 4K is one wish: count titles per person, not rows.
+    let mut titles: BTreeMap<(String, String, i64), Wish> = BTreeMap::new();
+    for r in &rows {
+        let who = r["user_id"].as_str().or_else(|| r["user_name"].as_str()).unwrap_or("").to_string();
+        let key = (who, r["media_type"].as_str().unwrap_or("").to_string(), r["tmdb_id"].as_i64().unwrap_or_else(|| -r["requested_at"].as_i64().unwrap_or(0)));
+        let t = titles.entry(key).or_default();
+        let state = r["state"].as_str().unwrap_or("");
+        t.0 |= state == "available";
+        t.1 |= r["watched"].as_bool().unwrap_or(false);
+        t.2 |= matches!(state, "pending" | "approved" | "processing" | "partial");
+        t.3 |= r["watched_by_anyone"].as_bool().unwrap_or(false);
+    }
+    let count = |f: fn(&Wish) -> bool| titles.values().filter(|t| f(t)).count();
+    let arrive: Vec<i64> = rows.iter().filter_map(|r| r["arrived_after_s"].as_i64()).collect();
+
+    // Time to arrive, month by month (the month it was asked for in).
+    let mut months: BTreeMap<String, Vec<i64>> = BTreeMap::new();
+    for r in &rows {
+        if let (Some(at), Some(took)) = (r["requested_at"].as_i64(), r["arrived_after_s"].as_i64())
+            && let Some(d) = chrono::DateTime::from_timestamp(at, 0)
+        {
+            months.entry(d.with_timezone(&chrono::Local).format("%Y-%m").to_string()).or_default().push(took);
+        }
+    }
+    let trend: Vec<Value> = months.into_iter().rev().take(12).collect::<Vec<_>>().into_iter().rev().map(|(m, v)| json!({ "month": m, "arrived": v.len(), "median_s": median(v) })).collect();
+
+    // Arrived two weeks ago or more, and never played: by the person who asked, or (for those who may know) by anybody.
+    let settled = crate::db::now() - 14 * 86_400;
+    let mut listed: HashSet<(String, i64)> = HashSet::new();
+    let never: Vec<Value> = rows
+        .iter()
+        .filter(|r| r["state"] == "available" && r["available_at"].as_i64().is_some_and(|a| a <= settled))
+        .filter(|r| !r[if seen.everyone { "watched_by_anyone" } else { "watched" }].as_bool().unwrap_or(false))
+        // One wish, one line: the same film asked for in HD and in 4K is not two disappointments.
+        .filter(|r| listed.insert((r["media_type"].as_str().unwrap_or("").to_string(), r["tmdb_id"].as_i64().unwrap_or(0))))
+        .take(15)
+        .cloned()
+        .collect();
+
+    let mut out = json!({
+        "days": days,
+        "totals": { "requests": rows.len(), "titles": titles.len(), "open": count(|t| t.2 && !t.0), "arrived": count(|t| t.0), "watched": count(|t| t.0 && t.1) },
+        "median_arrive_s": median(arrive), "trend": trend, "never_played": never,
+    });
+    if seen.everyone {
+        out["totals"]["watched_by_anyone"] = json!(count(|t| t.0 && t.3));
+    }
+    // Who asks, and who watches what they asked for. Only ever for someone who may see everyone, looking at everyone.
+    if seen.everyone && seen.who.is_none() {
+        let mut people: BTreeMap<String, Asker> = BTreeMap::new();
+        for ((who, _, _), t) in &titles {
+            let name = rows.iter().find(|r| r["user_id"].as_str().or_else(|| r["user_name"].as_str()) == Some(who.as_str()));
+            let e = people.entry(who.clone()).or_insert_with(|| (name.and_then(|r| r["user_name"].as_str()).unwrap_or("Unknown").to_string(), name.and_then(|r| r["user_id"].as_str()).map(str::to_string), 0, 0, 0));
+            e.2 += 1;
+            e.3 += t.0 as usize;
+            e.4 += (t.0 && t.1) as usize;
+        }
+        let mut list: Vec<Value> = people.into_values().map(|(name, id, n, arrived, watched)| json!({ "user_id": id, "user_name": name, "requests": n, "arrived": arrived, "watched": watched })).collect();
+        list.sort_by(|a, b| b["requests"].as_u64().cmp(&a["requests"].as_u64()).then_with(|| a["user_name"].as_str().unwrap_or("").to_lowercase().cmp(&b["user_name"].as_str().unwrap_or("").to_lowercase())));
+        out["people"] = json!(list);
+    }
+    if !seen.everyone {
+        // What a plain user gets back never mentions what anybody else did.
+        if let Some(list) = out["never_played"].as_array_mut() {
+            for r in list {
+                if let Some(o) = r.as_object_mut() {
+                    o.remove("watched_by_anyone");
+                    o.remove("plays_by_anyone");
+                }
+            }
+        }
+    }
+    Ok(out)
+}
+
+#[derive(Deserialize)]
+pub struct SummaryQuery {
+    days: Option<i64>,
+    user_id: Option<String>,
+}
+
+pub async fn requests_summary(State(app): State<App>, user: AuthUser, Query(q): Query<SummaryQuery>) -> ApiResult {
+    let seen = Seen::of(&user, q.user_id.as_deref());
+    let (days, min_play) = (q.days.unwrap_or(0).clamp(0, 36_500), shortest_play(&app));
+    Ok(Json(app.db.call(move |c| summary(c, &seen, days, min_play)).await?))
+}
+
+/// The one request behind a title's page, if it is the caller's to know about: their own, or anyone's with "see everyone".
+pub fn request_for_item(conn: &Connection, item_id: &str, everyone: bool, caller: &str, min_play: i64) -> Result<Option<Value>> {
+    let seen = Seen { everyone, who: if everyone { None } else { Some(caller.to_string()) } };
+    let sql = format!(
+        "{WATCHED_CTE} SELECT {REQUEST_COLS}, r.state FROM (SELECT r.*, {STATE_SQL} AS state FROM requests r) r LEFT JOIN users u ON u.id = r.user_id
+         LEFT JOIN w ON w.service_id = r.service_id AND w.request_id = r.request_id
+         WHERE {} AND EXISTS (SELECT 1 FROM ri WHERE ri.service_id = r.service_id AND ri.request_id = r.request_id AND ri.item_id = ?3) ORDER BY r.requested_at LIMIT 1",
+        seen.clause()
+    );
+    Ok(conn.prepare(&sql)?.query_map(params![min_play, seen.who, item_id], |r| request_json(r, seen.everyone))?.next().transpose()?)
+}
+
+/// Is this poster one the caller could have been shown: on the calendar (which is everyone's), or on a request
+/// they may see? Otherwise the proxy would let anyone walk through everything Sonarr and Radarr know by counting upwards.
+pub fn poster_is_listed(conn: &Connection, service_id: i64, media_id: i64, user: &AuthUser) -> Result<bool> {
+    if conn.prepare_cached("SELECT 1 FROM upcoming WHERE service_id = ?1 AND arr_media_id = ?2 LIMIT 1")?.exists(params![service_id, media_id])? {
+        return Ok(true);
+    }
+    let mine = (!user.perms.see_everyone).then(|| user.id.clone());
+    Ok(conn.prepare_cached("SELECT 1 FROM requests WHERE arr_service_id = ?1 AND arr_media_id = ?2 AND (?3 IS NULL OR user_id = ?3) LIMIT 1")?.exists(params![service_id, media_id, mine])?)
 }
 
 #[cfg(test)]
@@ -329,7 +588,100 @@ mod tests {
     fn only_listed_posters_are_served() {
         let c = conn();
         add(&c, 1, "episode", 5, "air", 2, Some(370001), None, false);
-        assert!(poster_is_listed(&c, 1, 12).unwrap());
-        assert!(!poster_is_listed(&c, 1, 13).unwrap() && !poster_is_listed(&c, 2, 12).unwrap());
+        let bob = plain("ub");
+        assert!(poster_is_listed(&c, 1, 12, &bob).unwrap());
+        assert!(!poster_is_listed(&c, 1, 13, &bob).unwrap() && !poster_is_listed(&c, 2, 12, &bob).unwrap());
+    }
+
+    fn plain(id: &str) -> AuthUser {
+        AuthUser { id: id.into(), name: id.into(), is_admin: false, perms: crate::auth::Perms::default() }
+    }
+    fn everyone(id: &str) -> AuthUser {
+        AuthUser { id: id.into(), name: id.into(), is_admin: false, perms: crate::auth::Perms { see_everyone: true, ..Default::default() } }
+    }
+
+    /// alice asked for a film (HD and 4K) and season 2 of a show; bob asked for a film; someone Seerr cannot place asked for another.
+    fn with_requests() -> Connection {
+        let c = conn();
+        let now = crate::db::now();
+        c.execute_batch(&format!(
+            "INSERT INTO services(id, kind, name, url, secret, created_at) VALUES (9, 'seerr', 'Seerr', 'http://nas:5055', 'k', 1);
+             INSERT INTO items(id, type, name, provider_ids, removed, updated_at) VALUES ('m-2', 'Movie', 'Glasshouse', '{{\"Tmdb\":\"370001\"}}', 0, 1);
+             INSERT INTO requests(service_id, request_id, media_type, tmdb_id, tvdb_id, title, seasons, is_4k, status, media_status, requested_at, updated_at, media_added_at, jellyfin_user_id, seerr_user_name) VALUES
+                (9, 1, 'movie', 990001, NULL, 'Winterline', '[]', 0, 2, 5, {t0}, {t0}, {t0} + 7200, 'ua', 'alice'),
+                (9, 2, 'movie', 990001, NULL, 'Winterline', '[]', 1, 2, 5, {t0}, {t0}, {t0} + 9000, 'ua', 'alice'),
+                (9, 3, 'tv', 370001, 370001, 'Low Orbit', '[2]', 0, 2, 5, {t0}, {t0}, {t0} + 3600, 'ua', 'alice'),
+                (9, 4, 'movie', 370001, NULL, 'Glasshouse', '[]', 0, 2, 5, {t0}, {t0}, {t0} + 600, 'ub', 'bob'),
+                (9, 5, 'movie', 555, NULL, 'Nobody Knows Who', '[]', 0, 1, 1, {t0}, {t0}, NULL, NULL, 'a stranger');
+             INSERT INTO playbacks(source, user_id, user_name, item_id, item_name, item_type, series_id, season_number, started_at, ended_at, duration_s) VALUES
+                ('live', 'ub', 'bob', 'm-1', 'Winterline', 'Movie', NULL, NULL, {t0} + 90000, {t0} + 95000, 5000),
+                ('live', 'ua', 'alice', 'e-1', 'S1 episode', 'Episode', 's-hd', 1, {t0} + 90000, {t0} + 92000, 2000),
+                ('live', 'ua', 'alice', 'e-2', 'S2 before asking', 'Episode', 's-4k', 2, {t0} - 5000, {t0} - 3000, 2000),
+                ('live', 'ua', 'alice', 'm-2', 'Glasshouse', 'Movie', NULL, NULL, {t0} + 90000, {t0} + 90030, 30);",
+            t0 = now - 40 * 86_400
+        ))
+        .unwrap();
+        link(&c).unwrap();
+        c
+    }
+
+    fn query() -> RequestsQuery {
+        RequestsQuery { status: None, user_id: None, q: None, sort: None, dir: None, page: None, per_page: None }
+    }
+
+    #[test]
+    fn a_plain_user_sees_their_own_requests_and_not_a_trace_of_anyone_elses() {
+        let c = with_requests();
+        let bob = Seen::of(&plain("ub"), Some("ua"));
+        assert_eq!(bob.who.as_deref(), Some("ub"), "asking about alice gets bob");
+        let page = requests_page(&c, &bob, &query(), 120).unwrap();
+        assert_eq!((page["total"].clone(), page["rows"][0]["title"].clone()), (json!(1), json!("Glasshouse")));
+        let text = page.to_string() + &summary(&c, &bob, 0, 120).unwrap().to_string();
+        for leak in ["alice", "Winterline", "Low Orbit", "a stranger", "watched_by_anyone", "plays_by_anyone", "people"] {
+            assert!(!text.contains(leak), "`{leak}` reached a plain user: {text}");
+        }
+        assert_eq!(summary(&c, &bob, 0, 120).unwrap()["totals"]["requests"], json!(1));
+
+        // The title's page: bob's own request is there, alice's is not, for him. For someone who may see everyone it is.
+        assert_eq!(request_for_item(&c, "m-2", false, "ub", 120).unwrap().unwrap()["user_name"], json!("bob"));
+        assert!(request_for_item(&c, "m-1", false, "ub", 120).unwrap().is_none(), "somebody else's request shows on a title page");
+        assert_eq!(request_for_item(&c, "m-1", true, "ub", 120).unwrap().unwrap()["user_name"], json!("alice"));
+
+        // A request nobody could be linked to belongs to nobody's page, and only shows where everyone does.
+        let all = requests_page(&c, &Seen::of(&everyone("ua"), None), &query(), 120).unwrap();
+        assert_eq!(all["total"], json!(5));
+        assert_eq!(requests_page(&c, &Seen::of(&everyone("ua"), Some("ub")), &query(), 120).unwrap()["total"], json!(1));
+    }
+
+    #[test]
+    fn watched_means_by_the_requester_after_asking_the_seasons_asked_for_and_more_than_a_click() {
+        let c = with_requests();
+        let all = requests_page(&c, &Seen::of(&everyone("ua"), None), &RequestsQuery { sort: Some("when".into()), per_page: Some(100), ..query() }, 120).unwrap();
+        let row = |title: &str, is_4k: bool| all["rows"].as_array().unwrap().iter().find(|r| r["title"] == title && r["is_4k"] == is_4k).unwrap().clone();
+        // bob watched alice's film; she did not.
+        assert_eq!((row("Winterline", false)["watched"].clone(), row("Winterline", false)["watched_by_anyone"].clone()), (json!(false), json!(true)));
+        // She asked for season 2: an episode of season 1 does not count, nor one of season 2 from before she asked.
+        assert_eq!((row("Low Orbit", false)["watched"].clone(), row("Low Orbit", false)["plays_by_anyone"].clone()), (json!(false), json!(0)));
+        // TMDB 370001 is bob's film *and* the show's TVDB number: a show's plays are not a film's. And 30 seconds is a click.
+        assert_eq!((row("Glasshouse", false)["watched"].clone(), row("Glasshouse", false)["plays_by_anyone"].clone()), (json!(false), json!(0)));
+        assert_eq!(row("Glasshouse", false)["arrived_after_s"], json!(600));
+
+        let s = summary(&c, &Seen::of(&everyone("ua"), None), 0, 120).unwrap();
+        assert_eq!(s["totals"], json!({ "requests": 5, "titles": 4, "open": 1, "arrived": 3, "watched": 0, "watched_by_anyone": 1 }), "HD and 4K of one film are one wish");
+        assert_eq!(s["median_arrive_s"], json!(5400), "600, 3600, 7200 and 9000 seconds");
+        assert_eq!(s["people"][0], json!({ "user_id": "ua", "user_name": "alice", "requests": 2, "arrived": 2, "watched": 0 }));
+        let never: Vec<&str> = s["never_played"].as_array().unwrap().iter().map(|r| r["title"].as_str().unwrap()).collect();
+        assert!(never.contains(&"Low Orbit") && never.contains(&"Glasshouse") && !never.contains(&"Winterline"), "{never:?}");
+        // Sorting only by known columns; anything else falls back to newest first.
+        assert!(requests_page(&c, &Seen::of(&everyone("ua"), None), &RequestsQuery { sort: Some("r.secret; DROP TABLE requests".into()), ..query() }, 120).is_ok());
+        assert_eq!(requests_page(&c, &Seen::of(&everyone("ua"), None), &RequestsQuery { status: Some("open".into()), ..query() }, 120).unwrap()["total"], json!(1));
+    }
+
+    #[test]
+    fn a_poster_is_served_to_whoever_may_see_the_request_it_belongs_to() {
+        let c = with_requests();
+        c.execute("UPDATE requests SET arr_service_id = 3, arr_media_id = 77 WHERE request_id = 1", []).unwrap();
+        assert!(poster_is_listed(&c, 3, 77, &plain("ua")).unwrap() && poster_is_listed(&c, 3, 77, &everyone("ub")).unwrap());
+        assert!(!poster_is_listed(&c, 3, 77, &plain("ub")).unwrap(), "bob would learn what alice asked for");
     }
 }

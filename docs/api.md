@@ -754,3 +754,42 @@ say nothing. Without `see_everyone` there is no count either: on a small server 
   disk. Both ids are numbers, only posters of titles finstats itself lists are served (`404` otherwise), and the browser never talks to TMDB.
 - `GET /api/items/{id}` gains `item.upcoming` for a series or film with something due in the next 90 days: entries as above, without any of the
   keys about people.
+
+## Requests (Seerr)
+
+Read every 5 minutes (task `sync_requests`). Everyone signed in sees **their own** requests; other people's need `see_everyone`, and
+without it no count, name or "somebody else watched it" is sent either. A request Seerr cannot tie to a Jellyfin user belongs to nobody and
+is only visible to those who may see everyone.
+
+`GET /api/requests?status=&user_id=&q=&sort=&dir=&page=&per_page=` — `status`: `open` | `arrived` | `declined` | all (default); `q` matches the
+title; `sort` is one of `when` (default), `title`, `user`, `state`, `arrived`, `watched`; at most 100 per page.
+```jsonc
+{ "rows": [ {"id": "3:41",                       // <connection>:<Seerr request>
+             "media_type": "movie" | "tv", "title": "Low Orbit" | null, "year": 2021, "tmdb_id": 871002,
+             "seasons": [1, 2], "is_4k": false,
+             "state": "pending" | "approved" | "processing" | "partial" | "available" | "declined" | "failed" | "removed",
+             "requested_at": 0, "available_at": 0 | null, "arrived_after_s": 7200 | null,
+             "user_id": "…" | null, "user_name": "alice" | null, "has_image": true,
+             "item_id": "…" | null, "poster": {"item_id": "…"} | {"service_id": 2, "media_id": 21} | null,
+             "watched": true, "plays": 2, "first_play_at": 0 | null,          // by the person who asked, after they asked
+             "watched_by_anyone": true, "plays_by_anyone": 3}                 // only with `see_everyone`
+          ],
+  "total": 42, "page": 1, "per_page": 25 }
+```
+"Watched" counts plays of the requested title that started at or after the request, are longer than `min_play_s` (at least two minutes), and
+for a series only in the seasons that were asked for.
+
+`GET /api/requests/summary?user_id=&days=` (`days` 0 = all time)
+```jsonc
+{ "days": 0,
+  "totals": {"requests": 42, "titles": 39,      // one film asked for in HD and in 4K is one title
+             "open": 4, "arrived": 30, "watched": 21, "watched_by_anyone": 24},   // the last only with `see_everyone`
+  "median_arrive_s": 7200,
+  "trend": [{"month": "2026-09", "arrived": 6, "median_s": 5400}],               // at most 12 months, by the month it was asked in
+  "never_played": [ /* rows as above: arrived over two weeks ago, nobody has watched it, one line per title */ ],
+  "people": [{"user_id": "…" | null, "user_name": "alice", "requests": 12, "arrived": 10, "watched": 7}]   // only for `see_everyone`, and only when not asking about one person
+}
+```
+
+`GET /api/items/{id}` gains `item.request` — the oldest request for that title, but only the caller's own unless they have `see_everyone`;
+otherwise the key is absent, "arrived after" included.

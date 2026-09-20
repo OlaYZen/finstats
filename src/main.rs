@@ -19,6 +19,7 @@ mod recap;
 mod recent;
 mod relink;
 mod security;
+mod seerr;
 mod services;
 mod state;
 mod stats;
