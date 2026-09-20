@@ -1434,3 +1434,5 @@ span.shelf-card { cursor: default; }
 .dl-bar { display: block; height: 5px; border-radius: 3px; background: var(--bg-sunken); overflow: hidden; }
 .dl-fill { display: block; height: 100%; background: var(--accent); border-radius: 3px; transition: width 400ms ease; }
 @media (prefers-reduced-motion: reduce) { .dl-fill { transition: none; } }
+.dl-history { margin-top: 24px; }
+.dl-history .filters { justify-content: space-between; }

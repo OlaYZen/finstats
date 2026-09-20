@@ -1,12 +1,12 @@
 // /pipeline: what is coming in. One page, a tab per question: what did people ask for, what airs when,
 // what is arriving right now. A tab exists only when a connected service can answer it and the viewer may see it.
 
-import { h, icon, num, store, debounce, duration, relTime, dateTime, pct } from '../dom.js';
+import { h, icon, num, store, debounce, duration, relTime, dateTime, pct, bytes, dayLabel, dayLabelLong } from '../dom.js';
 import { state, can } from '../state.js';
 import { replaceQuery } from '../router.js';
 import { pageHeader, card, chartCard, dataView, sk, emptyState, segmented, userCombobox, statTile, pagination, avatar } from '../components.js';
 import { dataTable } from '../tables.js';
-import { simpleColumns, simpleColumnsTable } from '../charts.js';
+import { simpleColumns, simpleColumnsTable, libBucketList } from '../charts.js';
 import { loadUpcoming, agenda, upcomingPoster } from '../upcoming.js';
 import { loadDownloads, downloadsList, nothingDownloading } from '../downloads.js';
 import { api } from '../api.js';
@@ -212,6 +212,51 @@ function upcomingTab(ctx, root) {
   dv.load();
 }
 
+const HISTORY_SPANS = [{ value: 7, label: '7 days' }, { value: 30, label: '30 days' }, { value: 90, label: '90 days' }, { value: 365, label: 'A year' }];
+
+/** What came in over time: the same data as the live list, only after the fact. */
+function historySection(ctx) {
+  let days = Number(store.get('finstats.grabDays', 30)) || 30;
+  const view = h('div', { class: 'stack' });
+  const dv = dataView({
+    container: view, signal: ctx.signal,
+    skeleton: () => sk.cardBlock(220),
+    fetch: () => api.get('/downloads/history', { days }, { signal: ctx.signal }),
+    render: (d) => {
+      const t = d.totals || {};
+      if (!t.imported && !t.failed && !t.grabbed) return null;
+      const daily = (d.daily || []).map((x) => ({ label: dayLabel(x.day), title: dayLabelLong(x.day), value: Math.round((x.size_bytes / 1e9) * 10) / 10 }));
+      const bucket = (title, sub, rows, unit) => card({ title, sub, body: libBucketList(rows, { unit }) });
+      return [
+        h('div', { class: 'tiles' },
+          statTile({ label: 'Arrived', value: num(t.imported), hint: `in the last ${days === 365 ? 'year' : days + ' days'}` }),
+          statTile({ label: 'Downloaded', value: bytes(t.size_bytes), hint: t.imported ? `${bytes(t.size_bytes / t.imported)} on average` : ' ' }),
+          statTile({ label: 'Failed', value: num(t.failed), hint: t.grabbed ? `of ${num(t.grabbed)} grabbed` : ' ' })),
+        chartCard({ title: 'Imported per day', sub: 'Gigabytes that finished downloading',
+          chart: () => simpleColumns({ rows: daily, unit: ['GB', 'GB'], ariaLabel: 'Gigabytes imported per day' }),
+          table: () => simpleColumnsTable({ rows: daily, head: ['Day', 'GB'] }) }),
+        h('div', { class: 'grid-3' },
+          bucket('Indexers', 'Where it came from', d.indexers, 'Files'),
+          bucket('Quality', 'As Sonarr and Radarr sorted it', d.quality, 'Files'),
+          bucket('Clients', 'What fetched it', d.clients, 'Files')),
+        (d.failures || []).length ? card({ title: 'Failed downloads', sub: 'Grabbed and then given up on', cls: 'card-flush',
+          body: dataTable(h('table', { class: 'table' },
+            h('thead', null, h('tr', null, h('th', { 'data-first': 'desc' }, 'When'), h('th', null, 'Title'), h('th', null, 'Indexer'))),
+            h('tbody', null, d.failures.map((f) => h('tr', null,
+              h('td', { class: 'mono nowrap', 'data-sort': f.at, title: dateTime(f.at) }, relTime(f.at)),
+              h('td', null, h('span', { class: 'dl-release mono' }, f.source || f.title || 'Unknown')),
+              h('td', null, f.indexer || h('span', { class: 'muted' }, '–'))))))) }) : null,
+      ];
+    },
+  });
+  const el = h('section', { class: 'dl-history' },
+    h('div', { class: 'filters' }, h('h2', { class: 'section-title' }, 'What came in'),
+      segmented({ label: 'How far back', size: 'seg-sm', value: days, options: HISTORY_SPANS, onChange: (v) => { days = v; store.set('finstats.grabDays', String(v)); dv.load(); } })),
+    view);
+  dv.load();
+  return el;
+}
+
 function downloadsTab(ctx, root) {
   const view = h('div');
   let failed = null;
@@ -227,7 +272,7 @@ function downloadsTab(ctx, root) {
       return card({ cls: 'card-flush dl-card', body: h('div', { class: 'dl-wrap' }, downloadsList(d)) });
     },
   });
-  root.append(view);
+  root.append(view, historySection(ctx));
   dv.load();
   // A live list: it is polled while this page is open, and only then.
   ctx.every(async () => {
