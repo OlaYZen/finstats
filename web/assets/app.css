@@ -318,6 +318,8 @@ kbd {
 .copy-row { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 6px; min-width: 0; max-width: 100%; }
 /* An address is one word: never break it in the middle. What follows it wraps underneath instead. */
 .copy-row > .mono:not(.trunc) { white-space: nowrap; overflow-wrap: normal; }
+/* A truncated value gives way instead: it shrinks to its ellipsis, so the copy button stays beside it and never wraps under it. */
+.copy-row > .trunc { flex: 1 1 0; }
 .copy-btn { display: inline-grid; place-items: center; width: 24px; height: 24px; padding: 0; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--text-faint); }
 .copy-btn:hover { background: var(--hover); color: var(--text); }
 .copy-btn.is-ok { color: var(--good); }
@@ -724,6 +726,11 @@ a.lib-card:hover { border-color: var(--accent); text-decoration: none; }
 .card-legend .legend { margin-top: 0; }
 .cm-table th[scope="row"] { font-weight: 450; text-align: left; color: var(--text); max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .cm-barcol { width: 34%; min-width: 90px; }
+/* Five columns in half a page: the sortable headers made them too wide to fit, and the last one was cut off. Let the two-word
+   headers break onto two lines and tighten the gutters instead of scrolling a table that has room. */
+.cm-table th, .cm-table td { padding-left: 8px; padding-right: 8px; }
+.cm-table thead th.r { white-space: normal; line-height: 1.25; vertical-align: bottom; }
+.cm-table thead th.r .th-sort { text-align: right; }
 .sbar-sm { display: flex; height: 8px; min-width: 0; }
 
 /* strip: a few facts that don't deserve tiles */
