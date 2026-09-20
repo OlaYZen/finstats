@@ -52,6 +52,22 @@ export function inlineError(id, text) {
   return h('p', { class: 'field-error', id, role: 'alert' }, icon('alert', 14), h('span', null, text));
 }
 
+/** A labelled input with help text and a place for its error. `setError('')` clears it. */
+export function formField({ id, label, type = 'text', autocomplete, placeholder, inputMode, help }) {
+  const input = h('input', { class: 'input', id, name: id, type, autocomplete, placeholder, inputMode, autocapitalize: 'none', autocorrect: 'off', spellcheck: false,
+    'aria-describedby': help ? id + '-help' : null });
+  const err = h('div');
+  const el = h('div', { class: 'field' }, h('label', { htmlFor: id, class: 'field-label' }, label), input, help ? h('p', { class: 'help', id: id + '-help' }, help) : null, err);
+  return {
+    el, input,
+    setError(msg) {
+      input.setAttribute('aria-invalid', msg ? 'true' : 'false');
+      input.setAttribute('aria-describedby', [msg ? id + '-err' : null, help ? id + '-help' : null].filter(Boolean).join(' '));
+      mount(err, msg ? inlineError(id + '-err', msg) : '');
+    },
+  };
+}
+
 export function spinner(size = 14) { return h('span', { class: 'spinner', style: { width: size + 'px', height: size + 'px' }, 'aria-hidden': 'true' }); }
 
 /** Put a button into / out of its busy state (disabled only while the request runs). */

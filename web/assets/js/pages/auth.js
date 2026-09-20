@@ -5,25 +5,10 @@ import { h, icon, mount, logo } from '../dom.js';
 import { api } from '../api.js';
 import { state, resetCaches } from '../state.js';
 import { navigate } from '../router.js';
-import { setBusy, inlineError } from '../components.js';
+import { setBusy, inlineError, formField as field } from '../components.js';
 
 function brand() {
   return h('div', { class: 'auth-brand' }, logo(34), h('span', { class: 'brand-name' }, 'finstats'));
-}
-
-function field({ id, label, type = 'text', autocomplete, placeholder, inputMode, help }) {
-  const input = h('input', { class: 'input', id, name: id, type, autocomplete, placeholder, inputMode, autocapitalize: 'none', autocorrect: 'off', spellcheck: false,
-    'aria-describedby': help ? id + '-help' : null });
-  const err = h('div');
-  const el = h('div', { class: 'field' }, h('label', { htmlFor: id, class: 'field-label' }, label), input, help ? h('p', { class: 'help', id: id + '-help' }, help) : null, err);
-  return {
-    el, input,
-    setError(msg) {
-      input.setAttribute('aria-invalid', msg ? 'true' : 'false');
-      input.setAttribute('aria-describedby', [msg ? id + '-err' : null, help ? id + '-help' : null].filter(Boolean).join(' '));
-      mount(err, msg ? inlineError(id + '-err', msg) : '');
-    },
-  };
 }
 
 function normalizeUrl(raw) {

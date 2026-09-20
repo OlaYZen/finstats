@@ -2,6 +2,7 @@ import { h, icon, num, bytes, relTime, dateTime, mount, humanize } from '../dom.
 import { api, isAbort, uploadRaw } from '../api.js';
 import { isAdmin } from '../state.js';
 import { pageHeader, card, sk, toggle, setBusy, inlineError, errorState, facts, spinner, avatar } from '../components.js';
+import { connectionsPanel } from '../connections.js';
 import { dataTable, plainTable } from '../tables.js';
 
 const TASK_LABEL = {
@@ -61,6 +62,7 @@ export default function settings(ctx) {
   ctx.root.append(pageHeader('Settings', 'Connection, access, collection and data'),
     h('div', { class: 'stack settings' },
       card({ title: 'Jellyfin connection', body: connSlot }),
+      isAdmin() ? card({ title: 'Connections', sub: 'Sonarr, Radarr, Seerr and torrent clients: what is requested, coming and downloading', body: connectionsPanel(ctx), id: 'connections' }) : null,
       card({ title: 'Access', sub: 'Who can use finstats and what they can see', body: accessSlot }),
       card({ title: 'Collection', sub: 'How finstats gathers data from Jellyfin', body: collectSlot }),
       card({ title: 'Home network', sub: 'Which plays count as local and which as remote', body: networkSlot }),

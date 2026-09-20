@@ -1361,3 +1361,20 @@ button.ep[aria-disabled="true"]:hover { filter: none; outline: 0; }
 .item-langs-label { display: inline-block; min-width: 68px; color: var(--text-faint); }
 .item-langs .lang-partial { color: var(--text); }
 .ep-langs { color: var(--text-muted); font-size: 12.5px; white-space: nowrap; max-width: 220px; overflow: hidden; text-overflow: ellipsis; }
+
+/* ---------------------------------------------------------------- settings: connections */
+.conn-list > li + li { border-top: 1px solid var(--border-soft); margin-top: 12px; padding-top: 12px; }
+.conn-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px 20px; flex-wrap: wrap; }
+.conn-main { min-width: 0; flex: 1 1 320px; display: flex; flex-direction: column; gap: 3px; }
+.conn-name { display: flex; align-items: center; gap: 8px; }
+.conn-url { color: var(--text-muted); font-size: 12.5px; overflow-wrap: anywhere; }
+.conn-status .sev { white-space: normal; align-items: flex-start; }
+.conn-status .sev .icon { margin-top: 3px; flex: none; }
+.conn-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.conn-form { display: flex; flex-direction: column; gap: 14px; padding: 14px 16px; border: 1px solid var(--border-soft); border-radius: var(--radius); background: var(--bg-sunken); }
+.conn-form-title { font-size: 14px; font-weight: 600; margin: 0; }
+.conn-form .check + .help { margin-bottom: 8px; }
+select.input { appearance: none; padding-right: 30px; background-image: linear-gradient(45deg, transparent 50%, var(--text-muted) 50%), linear-gradient(135deg, var(--text-muted) 50%, transparent 50%); background-position: calc(100% - 16px) 50%, calc(100% - 11px) 50%; background-size: 5px 5px; background-repeat: no-repeat; }
+select.input:disabled { opacity: .6; }
+.conn-form, .conn-form .form-grid > * { min-width: 0; }
+.conn-form .input { width: 100%; max-width: 100%; }
