@@ -172,7 +172,9 @@ Play = {
 ```
 Recent plays for an item come from `/api/activity?item_id=` (episode/movie) or `?series_id=`.
 
-`GET /api/search?q=att&limit=12` → `{"items": [ItemCard], "users": [{"id","name"}]}` — items limited to Movie/Series/MusicAlbum/Audio top-level hits.
+`GET /api/search?q=att&limit=12` → `{"items": [ItemCard], "users": [{"id","name"}], "people": [Person]}` — items limited to Movie/Series/MusicAlbum/Audio top-level hits.
+`Person = {"id","name","has_image","is_actor","is_director","titles"}`: cast and crew of titles that are still in the library (at most 8; `titles` counts those
+titles, and breaks ties: more first). Matched like titles, by name only. Open to everyone signed in; `users` needs `see_everyone`.
 
 ## Images
 

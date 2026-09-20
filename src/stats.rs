@@ -1022,7 +1022,7 @@ pub struct SearchQuery {
 
 pub async fn search(State(app): State<App>, user: AuthUser, Query(q): Query<SearchQuery>) -> ApiResult {
     let Some(query) = crate::fuzzy::Query::new(q.q.as_deref().unwrap_or_default()) else {
-        return Ok(Json(json!({ "items": [], "users": [] })));
+        return Ok(Json(json!({ "items": [], "users": [], "people": [] })));
     };
     let limit = q.limit.unwrap_or(12).clamp(1, 50) as usize;
     let see_everyone = user.perms.see_everyone;
@@ -1064,7 +1064,39 @@ pub async fn search(State(app): State<App>, user: AuthUser, Query(q): Query<Sear
             } else {
                 vec![]
             };
-            Ok(json!({ "items": items, "users": users }))
+            // Cast and crew of what is in the library. Names are scored bare, and only the best few dozen are looked up
+            // (counting every person's titles first took a third of a second on 10,000 people). More titles first among
+            // equals: the lead of five shows before someone with the same name who appears once.
+            let mut named: Vec<(i32, String)> = Vec::new();
+            {
+                let mut stmt = c.prepare("SELECT DISTINCT person_id, name FROM item_people")?;
+                let mut rows = stmt.query([])?;
+                while let Some(r) = rows.next()? {
+                    if let Some(score) = query.score(r.get_ref(1)?.as_str().unwrap_or_default()) {
+                        named.push((score, r.get(0)?));
+                    }
+                }
+            }
+            named.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.cmp(&b.1)));
+            let mut seen = std::collections::HashSet::new();
+            named.retain(|(_, id)| seen.insert(id.clone())); // one person under two spellings: the better match stays
+            named.truncate(60);
+            let mut people: Vec<(i32, i64, Map<String, Value>)> = Vec::new();
+            for (score, id) in named {
+                let found = one_json(
+                    c,
+                    "SELECT ip.person_id AS id, MAX(ip.name) AS name, MAX(ip.has_image) AS has_image, MAX(ip.kind = 'Actor') AS is_actor,
+                            MAX(ip.kind = 'Director') AS is_director, COUNT(DISTINCT ip.item_id) AS titles
+                     FROM item_people ip JOIN items i ON i.id = ip.item_id AND i.removed = 0 WHERE ip.person_id = ?1 GROUP BY ip.person_id",
+                    &[id.into()],
+                )?;
+                if let Some(p) = found {
+                    people.push((score, p.get("titles").and_then(Value::as_i64).unwrap_or(0), p));
+                }
+            }
+            people.sort_by(|a, b| b.0.cmp(&a.0).then(b.1.cmp(&a.1)).then_with(|| a.2["name"].as_str().cmp(&b.2["name"].as_str())));
+            let people: Vec<Value> = people.into_iter().take(8).map(|(_, _, p)| Value::Object(p)).collect();
+            Ok(json!({ "items": items, "users": users, "people": people }))
         })
         .await?;
     Ok(Json(out))
