@@ -112,6 +112,14 @@ size. In the UI (`pages/timeline.js`) the column count comes from a `ResizeObser
 (their cards reset to `ltr`), a bend joins each row to the next, and below 620 px it becomes one straight line (`.is-line`). DOM
 order stays chronological, so keyboard and screen readers follow the trail.
 
+**Recently added (`recent.rs`, the dashboard shelf).** Episodes of one show added on the same local day fold into one entry (pure
+`fold()`), everything else is its own. It must stay cheap because the dashboard loads it: the query walks the partial index
+`idx_items_added` newest first and `fold()` stops reading at the first row older than the last entry's day (about 50 rows for 30
+entries). The `+i.type` in its SQL is deliberate: without it the planner picks the type index, sorts every episode and takes ~270 ms on
+a 23k-episode library; a test asserts the plan. Not scoped to the caller: the library is the same for everyone.
+The shelf scrolls by hand (`shelf()` in `pages/dashboard.js`): one glide towards a target for Shift+wheel, keys and the arrows. Do not
+put CSS scroll-snap on a row like this: a wheel notch shorter than half a card springs back, so Firefox users could barely move it.
+
 **Recap (`recap.rs`)** is one person's year: the caller's own, or, for a Jellyfin administrator only (`is_admin`, not a
 permission), the user in `user_id`. There is deliberately no whole-server edition. It excludes Live TV item types and
 defaults to the year that is "ready": the current year in December, otherwise the previous one.
