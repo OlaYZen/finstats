@@ -9,6 +9,20 @@ import { openPlayModal } from '../playmodal.js';
 import { profileAllTime } from './showprogress.js';
 import { dataTable, plainTable } from '../tables.js';
 
+// Loaders are shared with the prefetcher, so a prefetched view has exactly the address the page asks for.
+const loadUsers = (days, signal) => api.get('/users', { days }, { signal });
+async function loadUser(id, days, signal) {
+  const o = { signal };
+  const [detail, recent, groups] = await Promise.all([
+    api.get(`/users/${id}`, { days }, o),
+    api.get('/activity', { days, user_id: id, page: 1, per_page: 10 }, o),
+    soft(api.get('/stats/groups', { days, user_id: id }, o)),
+  ]);
+  return { detail, recent, groups };
+}
+export const prefetchUsers = ({ query, signal }) => [() => loadUsers(readDays(query), signal)];
+export const prefetchUser = ({ params, query, signal }) => [() => loadUser(params.id, readDays(query), signal)];
+
 // ---------------------------------------------------------------- /users
 export function usersPage(ctx) {
   ctx.title('Users');
@@ -17,7 +31,7 @@ export function usersPage(ctx) {
   const dv = dataView({
     container: view, signal: ctx.signal,
     skeleton: () => sk.rows(5),
-    fetch: () => api.get('/users', { days }, { signal: ctx.signal }),
+    fetch: () => loadUsers(days, ctx.signal),
     render: (data) => {
       const users = (data.users || []).slice().sort((a, b) => (b.watch_s || 0) - (a.watch_s || 0));
       if (!users.length) return emptyState('No users yet', 'Users appear after the first sync with Jellyfin.');
@@ -61,15 +75,7 @@ export function userPage(ctx) {
   const dv = dataView({
     container: view, signal: ctx.signal,
     skeleton: () => [sk.tiles(4), sk.cardBlock(260), h('div', { class: 'grid-2' }, sk.cardRows(4), sk.cardRows(4))],
-    fetch: async () => {
-      const o = { signal: ctx.signal };
-      const [detail, recent, groups] = await Promise.all([
-        api.get(`/users/${id}`, { days }, o),
-        api.get('/activity', { days, user_id: id, page: 1, per_page: 10 }, o),
-        soft(api.get('/stats/groups', { days, user_id: id }, o)),
-      ]);
-      return { detail, recent, groups };
-    },
+    fetch: () => loadUser(id, days, ctx.signal),
     render: ({ detail: d, recent, groups }) => {
       const u = d.user;
       ctx.title(u.name);

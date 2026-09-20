@@ -9,6 +9,16 @@ import { plainTable } from '../tables.js';
 
 const TYPE_LABEL = { Movie: 'Movie', Series: 'Series', Episode: 'Episode', Season: 'Season', Audio: 'Track', MusicAlbum: 'Album' };
 
+// Shared with the prefetcher, so a prefetched view has exactly the address the page asks for.
+async function loadItem(id, days, signal) {
+  const o = { signal };
+  const d = await api.get(`/items/${id}`, { days }, o);
+  const key = d.item.type === 'Series' ? 'series_id' : 'item_id';
+  const recent = await api.get('/activity', { days, [key]: id, page: 1, per_page: 10 }, o);
+  return { d, recent, key };
+}
+export const prefetchItem = ({ params, query, signal }) => [() => loadItem(params.id, readDays(query), signal)];
+
 export default function itemPage(ctx) {
   const id = ctx.params.id;
   ctx.title('Title');
@@ -19,13 +29,7 @@ export default function itemPage(ctx) {
   const dv = dataView({
     container: view, signal: ctx.signal,
     skeleton: () => [h('div', { class: 'item-hero' }, h('span', { class: 'sk sk-poster-lg' }), h('div', { class: 'sk-row-lines' }, sk.line('40%', 28), sk.line('60%'), sk.line('30%'))), sk.tiles(3), sk.cardBlock(240)],
-    fetch: async () => {
-      const o = { signal: ctx.signal };
-      const d = await api.get(`/items/${id}`, { days }, o);
-      const key = d.item.type === 'Series' ? 'series_id' : 'item_id';
-      const recent = await api.get('/activity', { days, [key]: id, page: 1, per_page: 10 }, o);
-      return { d, recent, key };
-    },
+    fetch: () => loadItem(id, days, ctx.signal),
     render: ({ d, recent, key }) => {
       const it = d.item, t = d.totals || {};
       ctx.title(it.name);

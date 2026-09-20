@@ -9,6 +9,10 @@ import { plainTable } from '../tables.js';
 
 const TYPE_LABEL = { Movie: 'Movie', Series: 'Series' };
 
+// Shared with the prefetcher, so a prefetched view has exactly the address the page asks for.
+const loadPerson = (id, days, signal) => api.get(`/people/${id}`, { days }, { signal });
+export const prefetchPerson = ({ params, query, signal }) => [() => loadPerson(params.id, readDays(query), signal)];
+
 export default function personPage(ctx) {
   const id = ctx.params.id;
   ctx.title('Person');
@@ -18,7 +22,7 @@ export default function personPage(ctx) {
   const dv = dataView({
     container: view, signal: ctx.signal,
     skeleton: () => [h('div', { class: 'item-hero' }, h('span', { class: 'sk sk-poster-lg' }), h('div', { class: 'sk-row-lines' }, sk.line('40%', 28), sk.line('30%'))), sk.tiles(3), sk.cardBlock(320)],
-    fetch: () => api.get(`/people/${id}`, { days }, { signal: ctx.signal }),
+    fetch: () => loadPerson(id, days, ctx.signal),
     render: (d) => {
       const p = d.person, t = d.totals || {};
       ctx.title(p.name);

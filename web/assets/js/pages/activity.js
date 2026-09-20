@@ -14,10 +14,11 @@ const TYPES = [
 ];
 const PER_PAGE = 50;
 
-export default function activity(ctx) {
-  ctx.title('Activity');
-  const q0 = ctx.query;
-  const f = {
+export const loadActivity = (f, signal) => api.get('/activity', { ...f, per_page: PER_PAGE }, { signal });
+export const prefetchActivity = ({ query, signal }) => [() => loadActivity(filtersOf(query), signal)];
+
+function filtersOf(q0) {
+  return {
     days: readDays(q0),
     user_id: can('see_everyone') ? q0.get('user_id') || '' : '',
     method: q0.get('method') || '',
@@ -29,13 +30,18 @@ export default function activity(ctx) {
     dir: q0.get('dir') || '',
     page: Math.max(1, Number(q0.get('page')) || 1),
   };
+}
+
+export default function activity(ctx) {
+  ctx.title('Activity');
+  const f = filtersOf(ctx.query);
 
   const view = h('div');
   const summary = h('p', { class: 'result-count', 'aria-live': 'polite' });
   const dv = dataView({
     container: view, signal: ctx.signal,
     skeleton: () => sk.tableRows(5),
-    fetch: () => api.get('/activity', { ...f, per_page: PER_PAGE }, { signal: ctx.signal }),
+    fetch: () => loadActivity(f, ctx.signal),
     render: (data) => {
       summary.textContent = `${num(data.total)} ${data.total === 1 ? 'play' : 'plays'} · ${rangeLong(f.days).toLowerCase()}`;
       return [

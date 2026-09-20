@@ -79,6 +79,10 @@ function group(g, current, open) {
     h('div', { class: 'cl-series-body' }, g.releases.map((r) => release(r, current))));
 }
 
+// Shared with the prefetcher, so a prefetched view has exactly the address the page asks for.
+const loadChangelog = (signal) => api.get('/changelog', null, { signal });
+export const prefetchChangelog = ({ signal }) => [() => loadChangelog(signal)];
+
 export default function changelogPage(ctx) {
   ctx.title('Patch notes');
   const view = h('div', { class: 'cl-list' });
@@ -86,7 +90,7 @@ export default function changelogPage(ctx) {
   dataView({
     container: view, signal: ctx.signal,
     skeleton: () => [sk.block(180), sk.block(56), sk.block(56)],
-    fetch: () => api.get('/changelog', null, { signal: ctx.signal }),
+    fetch: () => loadChangelog(ctx.signal),
     render: (d) => {
       markVersionSeen(d.current);
       const releases = d.releases || [];

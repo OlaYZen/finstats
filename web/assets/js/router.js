@@ -30,6 +30,16 @@ function match(pathname) {
   return null;
 }
 
+/** The route behind an in-app address, if the signed-in user may open it. `key` identifies the address. */
+export function resolve(href) {
+  let url;
+  try { url = new URL(href, location.origin); } catch { return null; }
+  if (url.origin !== location.origin) return null;
+  const m = match(url.pathname);
+  if (!m || !state.user || (m.route.perm && !can(m.route.perm))) return null;
+  return { ...m, query: url.searchParams, key: url.pathname + url.search };
+}
+
 /** Where should this path actually go, given setup/auth state? */
 function guard(url) {
   const path = url.pathname;

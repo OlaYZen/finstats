@@ -14,9 +14,14 @@ const SEVERITY = {
   debug: { cls: 'sev-info', icon: 'info', label: 'Debug' }, trace: { cls: 'sev-info', icon: 'info', label: 'Trace' },
 };
 
+// Shared with the prefetcher, so a prefetched view has exactly the address the page asks for.
+const loadEvents = (f, signal) => api.get('/events', { ...f, per_page: PER_PAGE }, { signal });
+const filtersOf = (query) => ({ q: query.get('q') || '', type: query.get('type') || '', sort: query.get('sort') || '', dir: query.get('dir') || '', page: Math.max(1, Number(query.get('page')) || 1) });
+export const prefetchEvents = ({ query, signal }) => [() => loadEvents(filtersOf(query), signal)];
+
 export default function events(ctx) {
   ctx.title('Server log');
-  const f = { q: ctx.query.get('q') || '', type: ctx.query.get('type') || '', sort: ctx.query.get('sort') || '', dir: ctx.query.get('dir') || '', page: Math.max(1, Number(ctx.query.get('page')) || 1) };
+  const f = filtersOf(ctx.query);
   const view = h('div');
   const summary = h('p', { class: 'result-count', 'aria-live': 'polite' });
   const typeSlot = h('span');
@@ -35,7 +40,7 @@ export default function events(ctx) {
   const dv = dataView({
     container: view, signal: ctx.signal,
     skeleton: () => sk.tableRows(5),
-    fetch: () => api.get('/events', { ...f, per_page: PER_PAGE }, { signal: ctx.signal }),
+    fetch: () => loadEvents(f, ctx.signal),
     render: (data) => {
       summary.textContent = `${num(data.total)} ${data.total === 1 ? 'entry' : 'entries'}`;
       if (!data.rows.length) return emptyState(f.q || f.type ? 'No log entries match these filters.' : 'No log entries yet', f.q || f.type ? null : 'Entries arrive with the next “Sync server log” task.');

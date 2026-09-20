@@ -628,11 +628,15 @@ function buildStory(d, me, periodLabel, picker) {
   return parts.filter(Boolean);
 }
 
+// Shared with the prefetcher, so a prefetched view has exactly the address the page asks for.
+const loadRecap = (year, userId, signal) => api.get('/recap', { year, user_id: userId }, { signal });
+const yearOf = (query) => { const y = query.get('year'); return /^\d{4}$/.test(y || '') || y === 'last12' ? y : ''; };
+export const prefetchRecap = ({ query, signal }) => [() => loadRecap(yearOf(query), isAdmin() ? query.get('user') || '' : '', signal)];
+
 export default function recapPage(ctx) {
   ctx.title('Recap');
   const me = state.user;
-  const qYear = ctx.query.get('year');
-  let year = /^\d{4}$/.test(qYear || '') || qYear === 'last12' ? qYear : '';
+  let year = yearOf(ctx.query);
   // Administrators can open one other person's recap. There is no "everyone" recap.
   let userId = isAdmin() ? ctx.query.get('user') || '' : '';
   let reveal = revealer();
@@ -652,7 +656,7 @@ export default function recapPage(ctx) {
     skeleton: () => [h('div', { class: 'rc-hero rc-sk' }, h('div', { class: 'rc-hero-text' }, sk.line('120px', 12), sk.line('min(80%, 520px)', 64), sk.line('min(90%, 360px)', 16), sk.block(120))),
       h('div', { class: 'rc-chapter is-in' }, sk.line('120px', 12), sk.line('min(80%, 380px)', 30), sk.block(220)),
       h('div', { class: 'rc-chapter is-in' }, sk.line('120px', 12), sk.line('min(80%, 380px)', 30), sk.block(220))],
-    fetch: () => api.get('/recap', { year, user_id: userId }, { signal: ctx.signal }),
+    fetch: () => loadRecap(year, userId, ctx.signal),
     render: (d) => {
       if (d.year != null) year = String(d.year);
       const picker = yearTabs(d, String(year || ''), (val) => { year = val; sync(); dv.load(); });

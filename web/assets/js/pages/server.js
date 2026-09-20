@@ -13,6 +13,10 @@ const RESULT = {
   Cancelled: ['sev-warning', 'alert', 'Cancelled'],
 };
 
+// Shared with the prefetcher, so a prefetched view has exactly the address the page asks for.
+const loadServer = (signal) => api.get('/server', null, { signal });
+export const prefetchServer = ({ signal }) => [() => loadServer(signal)];
+
 export default function serverPage(ctx) {
   ctx.title('Server');
   const headerSlot = h('div', null, pageHeader('Server', 'Your Jellyfin server, as finstats last saw it'));
@@ -22,7 +26,7 @@ export default function serverPage(ctx) {
   const dv = dataView({
     container: view, signal: ctx.signal,
     skeleton: () => [sk.cardBlock(120), h('div', { class: 'grid-2' }, sk.cardRows(4), sk.cardRows(4)), sk.cardBlock(200)],
-    fetch: () => api.get('/server', null, { signal: ctx.signal }),
+    fetch: () => loadServer(ctx.signal),
     render,
   });
 

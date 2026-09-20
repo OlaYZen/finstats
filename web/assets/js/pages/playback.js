@@ -10,21 +10,25 @@ import { chartTable } from '../tables.js';
 const upper = (x) => (x && x.length <= 5 ? x.toUpperCase() : x);
 const chLabel = (x) => ({ 1: 'Mono', 2: 'Stereo', 6: '5.1', 8: '7.1' }[x] || (/^\d+$/.test(String(x)) ? `${x} channels` : x));
 
+// Shared with the prefetcher, so a prefetched view has exactly the address the page asks for.
+async function loadPlayback({ days, userId }, signal) {
+  const f = { days, user_id: userId }, o = { signal };
+  const [d, ins] = await Promise.all([api.get('/stats/playback', f, o), soft(api.get('/stats/insights', f, o))]);
+  return { d, ins };
+}
+const scopeOf = (query) => ({ days: readDays(query), userId: can('see_everyone') ? query.get('user_id') || '' : '' });
+export const prefetchPlayback = ({ query, signal }) => [() => loadPlayback(scopeOf(query), signal)];
+
 export default function playback(ctx) {
   ctx.title('Playback');
-  let days = readDays(ctx.query);
-  let userId = can('see_everyone') ? ctx.query.get('user_id') || '' : '';
+  let { days, userId } = scopeOf(ctx.query);
   let metric = store.get('finstats.methodMetric', 'plays') === 'watch_s' ? 'watch_s' : 'plays';
   const view = h('div', { class: 'stack' });
 
   const dv = dataView({
     container: view, signal: ctx.signal,
     skeleton: () => [sk.cardBlock(80), h('div', { class: 'grid-3' }, sk.cardRows(5), sk.cardRows(5), sk.cardRows(5))],
-    fetch: async () => {
-      const f = { days, user_id: userId }, o = { signal: ctx.signal };
-      const [d, ins] = await Promise.all([api.get('/stats/playback', f, o), soft(api.get('/stats/insights', f, o))]);
-      return { d, ins };
-    },
+    fetch: () => loadPlayback({ days, userId }, ctx.signal),
     render: ({ d, ins }) => {
       const methodsCard = chartCard({
         title: 'Play methods', sub: 'Direct play streams the file untouched; transcoding costs server CPU or GPU',

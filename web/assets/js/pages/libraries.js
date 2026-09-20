@@ -25,6 +25,13 @@ function libraryArt(l, w, cls, fallback = null) {
     onError: (e) => { if (fallback) e.target.replaceWith(fallback); else e.target.remove(); } });
 }
 
+// Loaders are shared with the prefetcher, so a prefetched view has exactly the address the page asks for.
+const loadLibraries = (days, signal) => api.get('/libraries', { days }, { signal });
+const loadLibrary = (id, days, signal) => api.get(`/libraries/${id}`, { days }, { signal });
+const loadMakeup = (libraryId, signal) => soft(api.get('/library/insights', libraryId ? { library_id: libraryId } : null, { signal }));
+export const prefetchLibraries = ({ query, signal }) => [() => loadLibraries(readDays(query), signal), () => loadMakeup(null, signal)];
+export const prefetchLibrary = ({ params, query, signal }) => [() => loadLibrary(params.id, readDays(query), signal), () => loadMakeup(params.id, signal)];
+
 export function librariesPage(ctx) {
   ctx.title('Libraries');
   let days = readDays(ctx.query);
@@ -32,7 +39,7 @@ export function librariesPage(ctx) {
   const dv = dataView({
     container: view, signal: ctx.signal,
     skeleton: () => h('div', { class: 'lib-grid' }, [0, 1, 2].map(() => h('div', { class: 'lib-card' }, sk.line('40%', 16), sk.line('60%'), sk.block(48)))),
-    fetch: () => api.get('/libraries', { days }, { signal: ctx.signal }),
+    fetch: () => loadLibraries(days, ctx.signal),
     render: (data) => {
       const libs = (data.libraries || []).slice().sort((a, b) => (a.removed - b.removed) || (b.watch_s || 0) - (a.watch_s || 0));
       if (!libs.length) return emptyState('No libraries yet', 'Libraries appear after the first sync with Jellyfin. You can start one from Settings → Tasks.');
@@ -57,7 +64,7 @@ function makeupSlot(ctx, libraryId) {
   dataView({
     container: slot, signal: ctx.signal,
     skeleton: () => [sk.line('240px', 18), sk.tiles(3), h('div', { class: 'grid-3' }, sk.cardRows(4), sk.cardRows(4), sk.cardRows(4))],
-    fetch: () => soft(api.get('/library/insights', libraryId ? { library_id: libraryId } : null, { signal: ctx.signal })),
+    fetch: () => loadMakeup(libraryId, ctx.signal),
     render: (d) => libraryInsights(d, { scoped: !!libraryId }),
   }).load();
   return slot;
@@ -73,7 +80,7 @@ export function libraryPage(ctx) {
   const dv = dataView({
     container: view, signal: ctx.signal,
     skeleton: () => [sk.cardBlock(260), sk.cardRows(5)],
-    fetch: () => api.get(`/libraries/${id}`, { days }, { signal: ctx.signal }),
+    fetch: () => loadLibrary(id, days, ctx.signal),
     render: (d) => {
       const l = d.library;
       ctx.title(l.name);

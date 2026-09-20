@@ -8,10 +8,29 @@ import { openPlayModal } from '../playmodal.js';
 import { recapBanner } from './recap.js';
 import { groupsCard } from '../widgets.js';
 
+/** Everything the filter row scopes. Shared with the prefetcher, so both ask for exactly the same URLs. */
+export async function loadDashboard({ days, userId }, signal) {
+  const f = { days, user_id: userId };
+  const o = { signal };
+  const admin = can('see_everyone');
+  const [overview, series, movies, users, heat, recent, insights, groups] = await Promise.all([
+    api.get('/stats/overview', f, o),
+    api.get('/stats/top', { ...f, kind: 'series', limit: 5 }, o),
+    api.get('/stats/top', { ...f, kind: 'movies', limit: 5 }, o),
+    admin && !userId ? api.get('/stats/top', { ...f, kind: 'users', limit: 5 }, o) : api.get('/stats/top', { ...f, kind: 'music', limit: 5 }, o),
+    api.get('/stats/heatmap', f, o),
+    api.get('/activity', { ...f, page: 1, per_page: 8 }, o),
+    soft(api.get('/stats/insights', f, o)), // optional: the page works without it
+    soft(api.get('/stats/groups', f, o)),
+  ]);
+  return { overview, series, movies, users, heat, recent, insights, groups };
+}
+const scopeOf = (query) => ({ days: readDays(query), userId: can('see_everyone') ? query.get('user_id') || '' : '' });
+export const prefetchDashboard = ({ query, signal }) => [() => loadDashboard(scopeOf(query), signal)];
+
 export default function dashboard(ctx) {
   ctx.title('Dashboard');
-  let days = readDays(ctx.query);
-  let userId = can('see_everyone') ? ctx.query.get('user_id') || '' : '';
+  let { days, userId } = scopeOf(ctx.query);
   const admin = can('see_everyone'); // sees the whole server rather than only themselves
 
   // ---- now playing (live; not scoped by the filters below)
@@ -41,21 +60,7 @@ export default function dashboard(ctx) {
   const dv = dataView({
     container: view, signal: ctx.signal,
     skeleton: () => [sk.tiles(4), sk.cardBlock(260), h('div', { class: 'grid-3' }, sk.cardRows(5), sk.cardRows(5), sk.cardRows(5))],
-    fetch: async () => {
-      const f = { days, user_id: userId };
-      const o = { signal: ctx.signal };
-      const [overview, series, movies, users, heat, recent, insights, groups] = await Promise.all([
-        api.get('/stats/overview', f, o),
-        api.get('/stats/top', { ...f, kind: 'series', limit: 5 }, o),
-        api.get('/stats/top', { ...f, kind: 'movies', limit: 5 }, o),
-        admin && !userId ? api.get('/stats/top', { ...f, kind: 'users', limit: 5 }, o) : api.get('/stats/top', { ...f, kind: 'music', limit: 5 }, o),
-        api.get('/stats/heatmap', f, o),
-        api.get('/activity', { ...f, page: 1, per_page: 8 }, o),
-        soft(api.get('/stats/insights', f, o)), // optional: the page works without it
-        soft(api.get('/stats/groups', f, o)),
-      ]);
-      return { overview, series, movies, users, heat, recent, insights, groups };
-    },
+    fetch: () => loadDashboard({ days, userId }, ctx.signal),
     render: ({ overview, series, movies, users, heat, recent, insights, groups }) => {
       const nothingYet = days === 0 && !userId && !(overview.totals && overview.totals.plays);
       if (nothingYet) {

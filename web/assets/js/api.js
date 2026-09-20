@@ -26,7 +26,7 @@ export function qs(params) {
 // paint it at once while fresh data loads. Memory only; cleared whenever the signed-in user changes.
 let recording = null;
 const viewCache = new Map();
-const VIEW_CACHE_MAX = 80;
+const VIEW_CACHE_MAX = 150; // a view is a few kB of JSON; the warm-up alone remembers around 35
 export function recordRequests(fn) {
   const urls = [];
   recording = urls;
@@ -39,11 +39,37 @@ export function viewCacheSet(key, data) {
   viewCache.set(key, data);
   if (viewCache.size > VIEW_CACHE_MAX) viewCache.delete(viewCache.keys().next().value);
 }
-export const clearViewCache = () => viewCache.clear();
+const cleared = new Set();
+/** Told whenever what is remembered is thrown away (sign-out, any write). */
+export function onViewCacheCleared(fn) { cleared.add(fn); }
+export function clearViewCache() {
+  viewCache.clear();
+  for (const fn of cleared) fn();
+}
 
-async function request(method, path, { body, signal, params, quiet401 = false } = {}) {
+// GETs made on behalf of the prefetcher (recognised by its AbortSignal) can be joined: a page that asks for
+// the same address while one is on its way waits for that answer instead of asking again. Only those:
+// joining a page's own request would tie the newcomer to a signal that dies with the page before it.
+let sharedSignal = null;
+const inflight = new Map();
+export function shareRequestsOf(signal) { sharedSignal = signal; inflight.clear(); }
+
+function request(method, path, { body, signal, params, quiet401 = false } = {}) {
   if (method === 'GET' && recording) recording.push(path + qs(params));
-  else if (method !== 'GET') viewCache.clear(); // something was changed; what we remember may be wrong
+  else if (method !== 'GET') clearViewCache(); // something was changed; what we remember may be wrong
+  if (method !== 'GET') return send(method, path, { body, signal, params, quiet401 });
+  const url = path + qs(params);
+  if (inflight.has(url)) return inflight.get(url);
+  const sent = send(method, path, { body, signal, params, quiet401 });
+  if (signal && signal === sharedSignal) {
+    inflight.set(url, sent);
+    const done = () => { if (inflight.get(url) === sent) inflight.delete(url); };
+    sent.then(done, done);
+  }
+  return sent;
+}
+
+async function send(method, path, { body, signal, params, quiet401 = false } = {}) {
   const init = { method, signal, credentials: 'same-origin', headers: { Accept: 'application/json' } };
   if (body !== undefined) {
     init.headers['Content-Type'] = 'application/json';
