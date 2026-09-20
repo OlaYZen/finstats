@@ -163,7 +163,7 @@ Play = {
            "runtime_s","premiere_date","date_created","library_id","library_name","removed",
            "series_id","series_name","season_number","episode_number",
            "container","size_bytes","bitrate","video":"HEVC 1080p"|null,"audio":null,"path":"…"|null /* 🔒 */,
-           "has_backdrop": true},
+           "has_image": true /* own primary image; an episode without one shows its series' poster */, "has_backdrop": true},
   "totals": {"plays","watch_s","users","last_played_at"},
   "watchers": [{"user_id","user_name","plays","watch_s","last_played_at"}],
   "seasons": [ {"id","name","season_number","episodes":[{"id","name","episode_number","runtime_s","plays","watch_s"}]} ], // Series only, else []

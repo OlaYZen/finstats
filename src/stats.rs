@@ -829,7 +829,7 @@ pub async fn item_detail(State(app): State<App>, user: AuthUser, Path(id): Path<
                     i.album, i.album_artist, i.container, i.size_bytes, i.bitrate, i.path,
                     i.video_codec, i.width, i.height, i.video_range, i.audio_codec, i.audio_channels,
                     i.bit_depth, i.framerate, i.studios, i.provider_ids,
-                    (i.backdrop_tag IS NOT NULL) AS has_backdrop
+                    (i.image_tag IS NOT NULL) AS has_image, (i.backdrop_tag IS NOT NULL) AS has_backdrop
              FROM items i LEFT JOIN libraries l ON l.id = i.library_id WHERE i.id = ?1",
             &[id.clone().into()],
         )?;
