@@ -682,3 +682,17 @@ the fact (an import, the first database) are filed as resolved by `finstats`. Al
 ```jsonc
 "geoip": {"database": {…} | null, "folder": "/data/geoip", "from_env": false, "source": "https://download.db-ip.com/free/dbip-city-lite-YYYY-MM.mmdb.gz"}
 ```
+
+---
+
+# v1.2.2 — Languages
+
+Every audio and subtitle track of a file is kept, not only the first: ISO 639-2 codes as Jellyfin reports them, lower case, each once,
+in track order, `"und"` for a track without a language. Filled by the library read (and by a Jellystat import for files it describes).
+
+- `GET /api/items/{id}` — a film, episode or other file: `item.audio_languages: ["jpn","eng"] | null` and `item.subtitle_languages`.
+  A series or a season has no tracks of its own and gets
+  `item.language_coverage: {"episodes": 26, "audio": [{"code": "jpn", "episodes": 26}, {"code": "eng", "episodes": 13}], "subtitles": [...]}`
+  over its episodes that exist as files (absent when there are none). Each row of `seasons[].episodes[]` gains `audio_languages`.
+- `GET /api/library/insights` gains `audio_languages` and `subtitle_languages`: `[{"name": "jpn", "count": 29, "size_bytes": 0}]`, video
+  files that have a track in the language (a file with two languages counts in both), at most 12 and then `"Other"`.

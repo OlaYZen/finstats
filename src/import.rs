@@ -272,7 +272,8 @@ fn import_row(conn: &Connection, table: &str, d: &Value, res: &mut ImportResult)
             res.item_info += conn
                 .prepare_cached(
                     "UPDATE items SET path = ?2, size_bytes = ?3, bitrate = ?4, container = COALESCE(container, ?5),
-                        video_codec = ?6, width = ?7, height = ?8, video_range = ?9, audio_codec = ?10, audio_channels = ?11
+                        video_codec = ?6, width = ?7, height = ?8, video_range = ?9, audio_codec = ?10, audio_channels = ?11,
+                        audio_languages = ?12, subtitle_languages = ?13
                      WHERE id = ?1 AND size_bytes IS NULL",
                 )?
                 .execute(params![
@@ -287,6 +288,8 @@ fn import_row(conn: &Connection, table: &str, d: &Value, res: &mut ImportResult)
                     st.video_range,
                     st.audio_codec,
                     st.audio_channels,
+                    crate::media::track_languages(&d["MediaStreams"], "Audio"),
+                    crate::media::track_languages(&d["MediaStreams"], "Subtitle"),
                 ])? as u64;
             Ok(())
         }

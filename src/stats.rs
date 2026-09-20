@@ -16,7 +16,7 @@ use crate::media;
 use crate::state::{ApiError, ApiResult, App};
 
 const BOOL_COLS: [&str; 11] = ["active", "is_admin", "is_disabled", "removed", "has_image", "item_exists", "has_backdrop", "is_local", "is_favorite", "is_actor", "is_director"];
-const JSON_COLS: [&str; 4] = ["genres", "transcode", "studios", "provider_ids"];
+const JSON_COLS: [&str; 6] = ["genres", "transcode", "studios", "provider_ids", "audio_languages", "subtitle_languages"];
 
 // ---------------------------------------------------------------- plumbing
 
@@ -828,7 +828,7 @@ pub async fn item_detail(State(app): State<App>, user: AuthUser, Path(id): Path<
                     i.series_id, i.series_name, i.parent_index_number AS season_number, i.index_number AS episode_number,
                     i.album, i.album_artist, i.container, i.size_bytes, i.bitrate, i.path,
                     i.video_codec, i.width, i.height, i.video_range, i.audio_codec, i.audio_channels,
-                    i.bit_depth, i.framerate, i.studios, i.provider_ids,
+                    i.bit_depth, i.framerate, i.studios, i.provider_ids, i.audio_languages, i.subtitle_languages,
                     (i.image_tag IS NOT NULL) AS has_image, (i.backdrop_tag IS NOT NULL) AS has_backdrop
              FROM items i LEFT JOIN libraries l ON l.id = i.library_id WHERE i.id = ?1",
             &[id.clone().into()],
@@ -897,7 +897,7 @@ pub async fn item_detail(State(app): State<App>, user: AuthUser, Path(id): Path<
                 &format!(
                     "SELECT e.id, e.name, e.index_number AS episode_number, e.parent_index_number AS season_number, e.season_id,
                             COALESCE(sn.name, 'Season ' || COALESCE(e.parent_index_number, '?')) AS season_name,
-                            e.runtime_s, COALESCE(s.plays, 0) AS plays, COALESCE(s.watch_s, 0) AS watch_s
+                            e.runtime_s, e.audio_languages, COALESCE(s.plays, 0) AS plays, COALESCE(s.watch_s, 0) AS watch_s
                      FROM items e
                      LEFT JOIN items sn ON sn.id = e.season_id
                      LEFT JOIN (SELECT p.item_id, COUNT(*) AS plays, SUM(p.duration_s) AS watch_s FROM playbacks p {} GROUP BY p.item_id) s ON s.item_id = e.id
@@ -921,6 +921,21 @@ pub async fn item_detail(State(app): State<App>, user: AuthUser, Path(id): Path<
                 if let Some(list) = seasons.last_mut().and_then(|s| s["episodes"].as_array_mut()) {
                     list.push(Value::Object(e));
                 }
+            }
+        }
+        // A show or a season has no tracks of its own: say how many of its episodes have each language,
+        // which is what tells a complete dub from one that stops after season one.
+        let item_type = item.get("type").and_then(Value::as_str).unwrap_or("");
+        if matches!(item_type, "Series" | "Season") {
+            let parent = if item_type == "Series" { "e.series_id" } else { "e.season_id" };
+            let files = format!("FROM items e WHERE {parent} = ?1 AND e.type = 'Episode' AND e.removed = 0 AND e.size_bytes IS NOT NULL");
+            let total: i64 = c.query_row(&format!("SELECT COUNT(*) {files}"), [&id], |r| r.get(0))?;
+            if total > 0 {
+                let per = |col: &str| -> Result<Vec<Value>> {
+                    let sql = format!("SELECT j.value AS code, COUNT(*) AS episodes FROM items e, json_each(e.{col}) j WHERE {parent} = ?1 AND e.type = 'Episode' AND e.removed = 0 AND e.size_bytes IS NOT NULL GROUP BY 1 ORDER BY 2 DESC, MIN(j.key), 1");
+                    Ok(rows_json(c, &sql, &[id.clone().into()])?.into_iter().map(Value::Object).collect())
+                };
+                item.insert("language_coverage".into(), json!({ "episodes": total, "audio": per("audio_languages")?, "subtitles": per("subtitle_languages")? }));
             }
         }
         let (series, bucket) = daily(c, scope, &cond)?;
@@ -1479,6 +1494,8 @@ pub async fn library_insights(State(app): State<App>, _user: AuthUser, Query(q):
                 "video_ranges": lib_buckets(c, "i.video_range", "", &video, &args, by_count, 12)?,
                 "containers": lib_buckets(c, "LOWER(i.container)", "", &files, &args, by_count, 12)?,
                 "audio_codecs": lib_buckets(c, "UPPER(i.audio_codec)", "", &files, &args, by_count, 12)?,
+                "audio_languages": lib_buckets(c, "al.value", ", json_each(i.audio_languages) al", &video, &args, by_count, 12)?,
+                "subtitle_languages": lib_buckets(c, "sl.value", ", json_each(i.subtitle_languages) sl", &video, &args, by_count, 12)?,
                 // A series row has no size of its own, so a per-genre size would only count the films.
                 "genres": lib_buckets(c, "g.value", ", json_each(i.genres) g", &titles, &args, by_count, 12)?
                     .into_iter()

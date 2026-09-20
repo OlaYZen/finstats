@@ -238,9 +238,9 @@ pub fn upsert_item(conn: &Connection, library_id: &str, it: &Value, now: i64) ->
         "INSERT INTO items(id, library_id, type, name, series_id, season_id, series_name, index_number, parent_index_number,
             album, album_artist, runtime_s, production_year, premiere_date, date_created, community_rating, official_rating,
             genres, overview, image_tag, backdrop_tag, container, path, size_bytes, bitrate,
-            video_codec, width, height, video_range, audio_codec, audio_channels, provider_ids, studios, bit_depth, framerate, removed, updated_at)
+            video_codec, width, height, video_range, audio_codec, audio_channels, provider_ids, studios, bit_depth, framerate, audio_languages, subtitle_languages, removed, updated_at)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23,
-            ?24, ?25, ?26, ?27, ?28, ?29, ?30, ?31, ?33, ?34, ?35, ?36, 0, ?32)
+            ?24, ?25, ?26, ?27, ?28, ?29, ?30, ?31, ?33, ?34, ?35, ?36, ?37, ?38, 0, ?32)
          ON CONFLICT(id) DO UPDATE SET library_id = excluded.library_id, type = excluded.type, name = excluded.name,
             series_id = excluded.series_id, season_id = excluded.season_id, series_name = excluded.series_name,
             index_number = excluded.index_number, parent_index_number = excluded.parent_index_number,
@@ -253,7 +253,8 @@ pub fn upsert_item(conn: &Connection, library_id: &str, it: &Value, now: i64) ->
             video_codec = excluded.video_codec, width = excluded.width, height = excluded.height,
             video_range = excluded.video_range, audio_codec = excluded.audio_codec,
             audio_channels = excluded.audio_channels, provider_ids = excluded.provider_ids, studios = excluded.studios,
-            bit_depth = excluded.bit_depth, framerate = excluded.framerate, removed = 0, updated_at = excluded.updated_at",
+            bit_depth = excluded.bit_depth, framerate = excluded.framerate,
+            audio_languages = excluded.audio_languages, subtitle_languages = excluded.subtitle_languages, removed = 0, updated_at = excluded.updated_at",
     )?
     .execute(params![
         norm_id(id),
@@ -292,6 +293,8 @@ pub fn upsert_item(conn: &Connection, library_id: &str, it: &Value, now: i64) ->
         studios,
         streams.bit_depth,
         framerate,
+        crate::media::track_languages(&source["MediaStreams"], "Audio"),
+        crate::media::track_languages(&source["MediaStreams"], "Subtitle"),
     ])?;
     Ok(())
 }

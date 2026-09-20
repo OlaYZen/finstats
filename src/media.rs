@@ -76,6 +76,20 @@ impl Streams {
     }
 }
 
+/// The languages of every track of one kind ("Audio", "Subtitle") as a JSON array, each once, in track
+/// order: `["jpn","eng"]`. A track without a language counts as "und", because "there is a second audio
+/// track, nobody knows in what" still answers "is there a dub?". `None` when there is no such track.
+pub fn track_languages(media_streams: &Value, kind: &str) -> Option<String> {
+    let mut out: Vec<String> = vec![];
+    for t in media_streams.as_array()?.iter().filter(|t| t["Type"].as_str() == Some(kind)) {
+        let code = t["Language"].as_str().map(|l| l.trim().to_ascii_lowercase()).filter(|l| !l.is_empty() && l.len() <= 12 && l.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')).unwrap_or_else(|| "und".into());
+        if !out.contains(&code) {
+            out.push(code);
+        }
+    }
+    (!out.is_empty()).then(|| serde_json::json!(out).to_string())
+}
+
 /// Keep only the useful parts of Jellyfin's `TranscodingInfo`.
 pub fn compact_transcode(t: &Value) -> Option<Value> {
     if !t.is_object() {
@@ -227,5 +241,18 @@ mod tests {
     fn numeric_strings() {
         assert_eq!(int(&json!("1497")), Some(1497));
         assert_eq!(ticks_to_s(&json!("14400000000")), Some(1440));
+    }
+
+    #[test]
+    fn every_track_language_is_kept_once_and_in_order() {
+        let streams = serde_json::json!([
+            {"Type": "Video", "Language": "und"},
+            {"Type": "Audio", "Language": "JPN"}, {"Type": "Audio", "Language": "eng"}, {"Type": "Audio", "Language": "eng"}, {"Type": "Audio"},
+            {"Type": "Subtitle", "Language": "eng"}, {"Type": "Subtitle", "Language": "<script>"},
+        ]);
+        assert_eq!(track_languages(&streams, "Audio").as_deref(), Some(r#"["jpn","eng","und"]"#));
+        assert_eq!(track_languages(&streams, "Subtitle").as_deref(), Some(r#"["eng","und"]"#));
+        assert_eq!(track_languages(&serde_json::json!([{"Type": "Video"}]), "Audio"), None);
+        assert_eq!(track_languages(&Value::Null, "Audio"), None);
     }
 }

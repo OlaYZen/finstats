@@ -302,6 +302,14 @@ pub(crate) const MIGRATIONS: &[&str] = &[
     CREATE INDEX idx_alerts_open ON security_alerts(resolved_at, at);
     CREATE INDEX idx_alerts_user ON security_alerts(user_id, at);
     "#,
+    // 12 — which languages a file can be played in: every audio and subtitle track, not just the first.
+    //      JSON arrays of the codes Jellyfin reports (ISO 639-2, "und" for a track without one), in track
+    //      order. Filled by the library read, so forget when it last ran and it runs again now.
+    r#"
+    ALTER TABLE items ADD COLUMN audio_languages TEXT;
+    ALTER TABLE items ADD COLUMN subtitle_languages TEXT;
+    DELETE FROM settings WHERE key = 'library_synced_at';
+    "#,
 ];
 
 impl Db {
