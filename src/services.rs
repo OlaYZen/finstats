@@ -14,7 +14,6 @@
 //!
 //! Only Jellyfin administrators may add or change a connection: it is a secret plus an address finstats will call.
 
-use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -38,32 +37,16 @@ pub enum Kind {
     Sonarr,
     Radarr,
     Seerr,
-    QBittorrent,
-    Transmission,
-    Deluge,
-}
-
-/// What a connection needs besides its address.
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum Auth {
-    ApiKey,
-    /// User name and password.
-    Login,
-    /// A password alone (Deluge's web UI has no users).
-    Password,
 }
 
 impl Kind {
-    pub const ALL: [Kind; 6] = [Kind::Sonarr, Kind::Radarr, Kind::Seerr, Kind::QBittorrent, Kind::Transmission, Kind::Deluge];
+    pub const ALL: [Kind; 3] = [Kind::Sonarr, Kind::Radarr, Kind::Seerr];
 
     pub fn key(self) -> &'static str {
         match self {
             Kind::Sonarr => "sonarr",
             Kind::Radarr => "radarr",
             Kind::Seerr => "seerr",
-            Kind::QBittorrent => "qbittorrent",
-            Kind::Transmission => "transmission",
-            Kind::Deluge => "deluge",
         }
     }
 
@@ -72,9 +55,6 @@ impl Kind {
             Kind::Sonarr => "Sonarr",
             Kind::Radarr => "Radarr",
             Kind::Seerr => "Seerr",
-            Kind::QBittorrent => "qBittorrent",
-            Kind::Transmission => "Transmission",
-            Kind::Deluge => "Deluge",
         }
     }
 
@@ -82,22 +62,11 @@ impl Kind {
         Kind::ALL.into_iter().find(|k| k.key() == key)
     }
 
-    pub fn auth(self) -> Auth {
-        match self {
-            Kind::Sonarr | Kind::Radarr | Kind::Seerr => Auth::ApiKey,
-            Kind::QBittorrent | Kind::Transmission => Auth::Login,
-            Kind::Deluge => Auth::Password,
-        }
-    }
-
     fn example(self) -> &'static str {
         match self {
             Kind::Sonarr => "http://192.168.1.10:8989",
             Kind::Radarr => "http://192.168.1.10:7878",
             Kind::Seerr => "http://192.168.1.10:5055",
-            Kind::QBittorrent => "http://192.168.1.10:8080",
-            Kind::Transmission => "http://192.168.1.10:9091",
-            Kind::Deluge => "http://192.168.1.10:8112",
         }
     }
 
@@ -106,7 +75,6 @@ impl Kind {
             Kind::Sonarr => "Series: what airs when, and what is downloading",
             Kind::Radarr => "Films: what is released when, and what is downloading",
             Kind::Seerr => "Requests: who asked for what (Seerr, Jellyseerr or Overseerr)",
-            Kind::QBittorrent | Kind::Transmission | Kind::Deluge => "Torrent client: speeds and everything it is downloading",
         }
     }
 
@@ -114,9 +82,6 @@ impl Kind {
         matches!(self, Kind::Sonarr | Kind::Radarr)
     }
 
-    pub fn is_client(self) -> bool {
-        matches!(self, Kind::QBittorrent | Kind::Transmission | Kind::Deluge)
-    }
 }
 
 // Deliberately not `Debug` and not `Serialize`: there is no way to print or send one by accident.
@@ -243,9 +208,8 @@ pub fn refuse(status: StatusCode, headers: &HeaderMap, svc: &Service) -> anyhow:
         let to: String = headers.get(LOCATION).and_then(|v| v.to_str().ok()).unwrap_or("another address").chars().filter(|c| !c.is_control()).take(200).collect();
         return anyhow!("{url} answers with a redirect to {to}. finstats follows no redirects, so that a key can never end up somewhere else: enter the final address, including any base path");
     }
-    match (status.as_u16(), svc.kind.auth()) {
-        (401 | 403, Auth::ApiKey) => anyhow!("{label} refused the API key"),
-        (401 | 403, _) => anyhow!("{label} refused the user name or password"),
+    match (status.as_u16(), ()) {
+        (401 | 403, _) => anyhow!("{label} refused the API key"),
         (404, _) => anyhow!("{url} answered 404 Not Found. Is the address right, including a base path like /{}?", svc.kind.key()),
         _ => anyhow!("{label} answered {status}"),
     }
@@ -253,7 +217,6 @@ pub fn refuse(status: StatusCode, headers: &HeaderMap, svc: &Service) -> anyhow:
 
 /// `GET` on Sonarr, Radarr or Seerr. The key is a header; the query never carries it.
 pub async fn get_json(app: &App, svc: &Service, path: &str, query: &[(&str, String)]) -> Result<Value> {
-    debug_assert!(svc.kind.auth() == Auth::ApiKey);
     let resp = app.services_http.of(svc).get(format!("{}{path}", svc.url)).header("X-Api-Key", svc.secret()).query(query).send().await.map_err(|e| explain(e, svc))?;
     if !resp.status().is_success() {
         return Err(refuse(resp.status(), resp.headers(), svc));
@@ -295,7 +258,6 @@ pub async fn test(app: &App, svc: &Service) -> Result<(String, String)> {
             get_json(app, svc, "/api/v1/auth/me", &[]).await?;
             Ok(("Seerr".into(), version.to_string()))
         }
-        Kind::QBittorrent | Kind::Transmission | Kind::Deluge => crate::torrents::test(app, svc).await,
     }
 }
 
@@ -400,7 +362,7 @@ pub async fn check_all(app: &App) {
 pub fn features(app: &App) -> Value {
     let list = all(app);
     let has = |want: fn(Kind) -> bool| list.iter().any(|s| s.enabled && want(s.kind));
-    json!({ "upcoming": has(Kind::is_arr), "requests": has(|k| k == Kind::Seerr), "downloads": has(Kind::is_client) || has(Kind::is_arr) })
+    json!({ "upcoming": has(Kind::is_arr), "requests": has(|k| k == Kind::Seerr), "downloads": has(Kind::is_arr) })
 }
 
 // ---------------------------------------------------------------- API (Jellyfin administrators)
@@ -409,7 +371,7 @@ fn service_json(svc: &Service, health: Option<&Health>) -> Value {
     let h = health.cloned().unwrap_or_default();
     json!({
         "id": svc.id, "kind": svc.kind.key(), "label": svc.kind.label(), "name": svc.name, "url": svc.url,
-        "username": svc.username, "has_secret": !svc.secret.is_empty(), "accept_invalid_certs": svc.accept_invalid_certs, "enabled": svc.enabled,
+        "has_secret": !svc.secret.is_empty(), "accept_invalid_certs": svc.accept_invalid_certs, "enabled": svc.enabled,
         "version": h.version, "last_ok_at": h.last_ok_at, "last_error": h.last_error,
     })
 }
@@ -419,8 +381,7 @@ fn list_json(app: &App) -> Value {
     let services: Vec<Value> = all(app).iter().map(|s| service_json(s, health.get(&s.id))).collect();
     let kinds: Vec<Value> = Kind::ALL
         .into_iter()
-        .map(|k| json!({ "key": k.key(), "label": k.label(), "what": k.what(), "example": k.example(),
-            "auth": match k.auth() { Auth::ApiKey => "api_key", Auth::Login => "login", Auth::Password => "password" } }))
+        .map(|k| json!({ "key": k.key(), "label": k.label(), "what": k.what(), "example": k.example() }))
         .collect();
     json!({ "services": services, "kinds": kinds })
 }
@@ -433,7 +394,6 @@ pub struct ServiceBody {
     kind: Option<String>,
     name: Option<String>,
     url: Option<String>,
-    username: Option<String>,
     secret: Option<String>,
     accept_invalid_certs: Option<bool>,
     enabled: Option<bool>,
@@ -454,17 +414,13 @@ fn describe(body: ServiceBody, stored: Option<&Service>, taken: &[String]) -> st
     let secret = match (body.secret.filter(|s| !s.is_empty()), stored) {
         (Some(s), _) => s,
         (None, Some(s)) => s.secret.clone(),
-        // Transmission without a password and qBittorrent with "bypass authentication" are real.
-        (None, None) if kind.is_client() => String::new(),
         (None, None) => return Err(ApiError::bad_request("Enter the API key")),
     };
     if secret.len() > 512 || secret.chars().any(char::is_control) {
         return Err(ApiError::bad_request("That does not look like a key or password"));
     }
-    let username = match kind.auth() {
-        Auth::Login => body.username.map(|u| u.trim().to_string()).or_else(|| stored.and_then(|s| s.username.clone())).filter(|u| !u.is_empty() && u.len() <= 128),
-        _ => None,
-    };
+    // Nothing finstats connects to needs a user name any more; the column stays for databases that have one.
+    let username = stored.and_then(|s| s.username.clone());
     let wanted: String = body.name.as_deref().map(str::trim).filter(|n| !n.is_empty()).map(|n| n.chars().filter(|c| !c.is_control()).take(60).collect()).unwrap_or_default();
     let name = if !wanted.is_empty() {
         wanted
@@ -560,7 +516,6 @@ pub async fn update(State(app): State<App>, JellyfinAdmin(_): JellyfinAdmin, Pat
         })
         .await?;
     app.service_health.write().unwrap().remove(&id);
-    app.client_sessions.lock().unwrap().remove(&id);
     changed(&app).await?;
     Ok(Json(list_json(&app)))
 }
@@ -569,7 +524,6 @@ pub async fn remove(State(app): State<App>, JellyfinAdmin(_): JellyfinAdmin, Pat
     find(&app, id)?;
     // Whatever was read from it goes with it (ON DELETE CASCADE).
     app.db.call(move |c| Ok(c.execute("DELETE FROM services WHERE id = ?1", [id])?)).await?;
-    app.client_sessions.lock().unwrap().remove(&id);
     changed(&app).await?;
     Ok(Json(list_json(&app)))
 }
@@ -596,8 +550,6 @@ async fn changed(app: &App) -> Result<()> {
     Ok(())
 }
 
-pub type Sessions = std::sync::Mutex<HashMap<i64, String>>;
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -610,7 +562,7 @@ mod tests {
     fn an_address_keeps_its_base_path_and_carries_nothing_else() {
         assert_eq!(clean_url("192.168.1.10:8989/", Kind::Sonarr).unwrap(), "http://192.168.1.10:8989");
         assert_eq!(clean_url(" https://media.example/sonarr/ ", Kind::Sonarr).unwrap(), "https://media.example/sonarr");
-        assert_eq!(clean_url("http://nas:9091/transmission/web/", Kind::Transmission).unwrap(), "http://nas:9091/transmission");
+        assert_eq!(clean_url("http://nas:7878/web/", Kind::Radarr).unwrap(), "http://nas:7878");
         for bad in ["http://admin:secret@nas:8989", "http://nas:8989/?apikey=abc", "http://nas:8989/#x", "ftp://nas", "file:///etc/passwd", ""] {
             assert!(clean_url(bad, Kind::Sonarr).is_err(), "{bad} was accepted");
         }
@@ -641,7 +593,6 @@ mod tests {
         let text = refuse(StatusCode::FOUND, &headers, &svc).to_string();
         assert!(text.contains("redirect to /login") && text.contains("follows no redirects"), "{text}");
         assert!(refuse(StatusCode::UNAUTHORIZED, &HeaderMap::new(), &svc).to_string().contains("refused the API key"));
-        assert!(refuse(StatusCode::UNAUTHORIZED, &HeaderMap::new(), &service(Kind::Transmission, "http://nas:9091")).to_string().contains("user name or password"));
         assert!(refuse(StatusCode::NOT_FOUND, &HeaderMap::new(), &svc).to_string().contains("/sonarr"));
         for e in [StatusCode::FOUND, StatusCode::UNAUTHORIZED, StatusCode::BAD_GATEWAY] {
             assert!(!refuse(e, &headers, &svc).to_string().contains("hunter2"));
@@ -650,15 +601,15 @@ mod tests {
 
     #[test]
     fn a_second_connection_of_a_kind_gets_its_own_name() {
-        let body = |name: Option<&str>| ServiceBody { id: None, kind: Some("radarr".into()), name: name.map(str::to_string), url: Some("nas:7878".into()), username: Some("ignored".into()), secret: Some("k".into()), accept_invalid_certs: None, enabled: None };
+        let body = |name: Option<&str>| ServiceBody { id: None, kind: Some("radarr".into()), name: name.map(str::to_string), url: Some("nas:7878".into()), secret: Some("k".into()), accept_invalid_certs: None, enabled: None };
         let first = describe(body(None), None, &[]).ok().unwrap();
-        assert_eq!((first.name.as_str(), first.username.as_deref(), first.enabled, first.accept_invalid_certs), ("Radarr", None, true, false));
+        assert_eq!((first.name.as_str(), first.enabled, first.accept_invalid_certs), ("Radarr", true, false));
         assert_eq!(describe(body(None), None, &["Radarr".into()]).ok().unwrap().name, "Radarr 2");
         assert_eq!(describe(body(Some("  4K  ")), None, &[]).ok().unwrap().name, "4K");
         // Editing without retyping the key keeps the key, and the kind never changes.
-        let edited = describe(ServiceBody { id: Some(1), kind: Some("sonarr".into()), name: None, url: None, username: None, secret: None, accept_invalid_certs: Some(true), enabled: None }, Some(&first), &[]).ok().unwrap();
+        let edited = describe(ServiceBody { id: Some(1), kind: Some("sonarr".into()), name: None, url: None, secret: None, accept_invalid_certs: Some(true), enabled: None }, Some(&first), &[]).ok().unwrap();
         assert!(edited.kind == Kind::Radarr && edited.secret() == "k" && edited.accept_invalid_certs);
-        assert!(describe(ServiceBody { id: None, kind: Some("radarr".into()), name: None, url: Some("nas".into()), username: None, secret: None, accept_invalid_certs: None, enabled: None }, None, &[]).is_err());
+        assert!(describe(ServiceBody { id: None, kind: Some("radarr".into()), name: None, url: Some("nas".into()), secret: None, accept_invalid_certs: None, enabled: None }, None, &[]).is_err());
     }
 
     /// The reason this module has its own client: a redirect must not be followed, or the key goes along.

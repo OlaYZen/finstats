@@ -7,14 +7,10 @@ import { api, isAbort } from './api.js';
 import { state } from './state.js';
 import { setBusy, inlineError, formField, errorState, sk } from './components.js';
 
-const SECRET_LABEL = { api_key: 'API key', login: 'Password', password: 'Password' };
 const SECRET_HELP = {
   sonarr: 'Sonarr → Settings → General → Security → API Key.',
   radarr: 'Radarr → Settings → General → Security → API Key.',
   seerr: 'Seerr → Settings → General → API Key.',
-  qbittorrent: 'The user name and password of qBittorrent’s Web UI (Tools → Options → Web UI).',
-  transmission: 'Only if Transmission asks for one (Remote → “Use authentication”). Leave both empty otherwise.',
-  deluge: 'The password of Deluge’s web page. It must be connected to its daemon (Connection Manager).',
 };
 
 /** A self-managing card body. `ctx` is the page context (signal, every). */
@@ -73,7 +69,6 @@ export function connectionsPanel(ctx) {
     const kindHelp = h('p', { class: 'help', id: 'conn-kind-help' });
     const name = formField({ id: 'conn-name', label: 'Name (optional)', autocomplete: 'off', help: 'Shown in finstats. Useful with two of a kind: “Radarr 4K”.' });
     const url = formField({ id: 'conn-url', label: 'Address', autocomplete: 'off', inputMode: 'url' });
-    const user = formField({ id: 'conn-user', label: 'User name', autocomplete: 'off' });
     const secret = formField({ id: 'conn-secret', label: 'API key', type: 'password', autocomplete: 'new-password', help: ' ' });
     const certs = h('input', { type: 'checkbox', id: 'conn-certs', 'aria-describedby': 'conn-certs-help' });
     const enabled = h('input', { type: 'checkbox', id: 'conn-enabled' });
@@ -85,23 +80,20 @@ export function connectionsPanel(ctx) {
     function paintKind() {
       kindHelp.textContent = kind.what;
       url.input.placeholder = kind.example;
-      user.el.hidden = kind.auth !== 'login';
-      secret.el.querySelector('label').textContent = SECRET_LABEL[kind.auth];
       secret.el.querySelector('.help').textContent = (existing && existing.has_secret ? 'Leave empty to keep the stored one. ' : '') + (SECRET_HELP[kind.key] || '');
       secret.input.placeholder = existing && existing.has_secret ? 'Unchanged' : '';
     }
     if (existing) {
       kindSel.value = existing.kind; kindSel.disabled = true;
-      name.input.value = existing.name; url.input.value = existing.url; user.input.value = existing.username || '';
+      name.input.value = existing.name; url.input.value = existing.url;
       certs.checked = !!existing.accept_invalid_certs; enabled.checked = !!existing.enabled;
     } else enabled.checked = true;
     kindSel.addEventListener('change', () => { kind = kinds.find((k) => k.key === kindSel.value); mount(result, ''); paintKind(); });
-    for (const f of [url, user, secret]) f.input.addEventListener('input', () => { f.setError(''); mount(result, ''); });
+    for (const f of [url, secret]) f.input.addEventListener('input', () => { f.setError(''); mount(result, ''); });
     paintKind();
 
     const body = () => {
       const b = { kind: kind.key, name: name.input.value.trim(), url: url.input.value.trim(), accept_invalid_certs: certs.checked, enabled: enabled.checked };
-      if (kind.auth === 'login') b.username = user.input.value.trim();
       if (secret.input.value) b.secret = secret.input.value;
       if (existing) b.id = existing.id;
       return b;
@@ -109,7 +101,7 @@ export function connectionsPanel(ctx) {
     function valid() {
       let ok = true;
       if (!url.input.value.trim()) { url.setError(`Enter the address of ${kind.label}, like ${kind.example}.`); ok = false; }
-      if (kind.auth === 'api_key' && !secret.input.value && !(existing && existing.has_secret)) { secret.setError('Enter the API key.'); ok = false; }
+      if (!secret.input.value && !(existing && existing.has_secret)) { secret.setError('Enter the API key.'); ok = false; }
       if (!ok) (url.input.getAttribute('aria-invalid') === 'true' ? url.input : secret.input).focus();
       return ok;
     }
@@ -117,7 +109,7 @@ export function connectionsPanel(ctx) {
     function place(err) {
       mount(result, '');
       const text = err.message || 'Something went wrong.';
-      if (/API key|password|user name|blocked this address/i.test(text)) { secret.setError(text); secret.input.focus(); }
+      if (/API key/i.test(text)) { secret.setError(text); secret.input.focus(); }
       else if (err.status === 400 || err.status === 502) { url.setError(text); url.input.focus(); }
       else mount(formErr, inlineError('conn-form-err', text));
     }
@@ -134,7 +126,7 @@ export function connectionsPanel(ctx) {
       h('h3', { class: 'conn-form-title' }, existing ? `Edit ${existing.name}` : 'Add a connection'),
       h('div', { class: 'form-grid' },
         h('div', { class: 'field' }, h('label', { class: 'field-label', htmlFor: 'conn-kind' }, 'Service'), kindSel, kindHelp),
-        name.el, url.el, user.el, secret.el,
+        name.el, url.el, secret.el,
         h('div', { class: 'field' },
           h('label', { class: 'check' }, certs, 'Accept a self-signed certificate'),
           h('p', { class: 'help', id: 'conn-certs-help' }, 'Only for an https:// address whose certificate is your own. finstats then does not verify who answers at this address. Leave it off otherwise.'),
@@ -161,7 +153,7 @@ export function connectionsPanel(ctx) {
     if (!data) return;
     const list = data.services.length
       ? h('ul', { class: 'conn-list' }, data.services.map(row))
-      : h('p', { class: 'help' }, 'Nothing connected yet. With Sonarr and Radarr, finstats knows what is coming; with Seerr, who asked for what; with a torrent client, what is arriving right now.');
+      : h('p', { class: 'help' }, 'Nothing connected yet. With Sonarr and Radarr, finstats knows what is coming and what is downloading; with Seerr, who asked for what.');
     const existing = typeof editing === 'number' ? data.services.find((s) => s.id === editing) : null;
     mount(root,
       h('p', { class: 'help' }, 'finstats only reads from these services: it never approves a request, starts a search or touches a download. Keys and passwords are stored in finstats’ own database, are never shown again and are never part of a backup.'),

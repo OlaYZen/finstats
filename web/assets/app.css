@@ -1426,7 +1426,6 @@ span.shelf-card { cursor: default; }
 .dl-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 3px 14px; font-size: 12.5px; color: var(--text-muted); }
 .dl-meta .icon, .dl-who .icon { flex: none; }
 .dl-down .icon { color: var(--series-2); }
-.dl-up .icon { color: var(--series-1); }
 .dl-who { display: inline-flex; align-items: center; gap: 5px; }
 .dl-error { display: flex; align-items: flex-start; gap: 6px; font-size: 12.5px; color: var(--critical-text); }
 .dl-error .icon { margin-top: 2px; flex: none; }

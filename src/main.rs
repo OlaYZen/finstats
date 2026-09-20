@@ -26,7 +26,6 @@ mod state;
 mod stats;
 mod sync;
 mod timeline;
-mod torrents;
 
 use std::net::SocketAddr;
 use std::path::PathBuf;
@@ -204,7 +203,6 @@ async fn serve(db: db::Db, data_dir: PathBuf) -> Result<()> {
         geo: Default::default(),
         services: Default::default(),
         service_health: Default::default(),
-        client_sessions: Default::default(),
         services_http: services::Http::new(),
         downloads: Default::default(),
         wishes: Default::default(),

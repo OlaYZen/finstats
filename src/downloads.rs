@@ -1,17 +1,17 @@
-//! What is arriving right now: Sonarr's and Radarr's queues, joined with the torrent clients.
+//! What is arriving right now, from Sonarr's and Radarr's queues.
 //!
-//! Two sources say different halves of the truth. The queue knows *what* a download is (which episode, which
-//! film, how far along, what went wrong on import); the client knows *how* it is going (speed, peers, ratio,
-//! whether it is stalled). They meet at the torrent hash, which Sonarr and Radarr call `downloadId`.
+//! They already talk to the download client, whichever it is, and report the same things for a torrent as for
+//! a usenet download: what it is, how far along, and what went wrong on import. That is what finstats reads,
+//! rather than each client's own API — three services to keep up with instead of six, and nothing to set up
+//! twice. What is lost is what only a client knows (ratio, peers), and the speed, which is worked out here
+//! instead: bytes that moved between two readings, divided by the time between them.
 //!
-//! Three things follow from that, and `merge` is where they live:
-//! - A season pack is several queue records with one hash: one download, not five.
-//! - A usenet download has no torrent at all, so it is described from the queue alone.
-//! - A torrent no Arr app knows is somebody's own download; it is listed, without pretending to know what it is.
+//! Two things fall out of the queue's shape, and `fold` is where they live:
+//! - A season pack is several records with one `downloadId`: one download, not five.
+//! - A record without one (Sonarr is between clients, or the client forgot it) still describes itself.
 //!
-//! The snapshot is kept in memory and never in the database: it is worthless a minute later. It holds only
-//! what is unfinished, because a client may seed thousands of torrents and nobody wants that list; the
-//! finished ones are counted, not kept. Nothing here touches the database per tick.
+//! The snapshot is kept in memory and never in the database: it is worthless a minute later, and nothing here
+//! touches the database per tick.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -27,7 +27,6 @@ use crate::auth::DownloadsViewer;
 use crate::db::rusqlite::Connection;
 use crate::services::{self, Kind};
 use crate::state::{ApiResult, App};
-use crate::torrents::Torrent;
 
 /// While somebody is looking, and while nobody is.
 const WATCHED_EVERY_S: u64 = 5;
@@ -58,8 +57,10 @@ pub struct Queued {
     pub left: i64,
     pub eta_s: Option<i64>,
     pub state: &'static str,
-    pub protocol: String,
+    pub protocol: Option<String>,
     pub client: Option<String>,
+    /// What the release is called: the queue's own title.
+    pub release: Option<String>,
     pub error: Option<String>,
 }
 
@@ -137,8 +138,9 @@ fn queue_row(svc_id: i64, svc_name: &str, kind: Kind, r: &Value) -> Option<Queue
         left,
         eta_s: timespan(&r["timeleft"]),
         state: queue_state(r["status"].as_str().unwrap_or(""), r["trackedDownloadState"].as_str().unwrap_or(""), r["trackedDownloadStatus"].as_str().unwrap_or("")),
-        protocol: r["protocol"].as_str().unwrap_or("unknown").to_string(),
+        protocol: text(&r["protocol"]),
         client: text(&r["downloadClient"]),
+        release: text(&r["title"]),
         error,
     })
 }
@@ -157,8 +159,7 @@ async fn read_queue(app: &App, svc: &services::Service) -> Result<Vec<Queued>> {
     let records = body["records"].as_array().cloned().unwrap_or_default();
     Ok(records.iter().filter_map(|r| queue_row(svc.id, &svc.name, svc.kind, r)).collect())
 }
-
-// ---------------------------------------------------------------- one picture out of two
+// ---------------------------------------------------------------- one download out of its records
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Download {
@@ -168,14 +169,16 @@ pub struct Download {
     pub state: &'static str,
     pub progress: f64,
     pub size: i64,
+    /// Bytes still to come: what the speed is worked out from.
+    pub left: i64,
     pub eta_s: Option<i64>,
+    /// Worked out from two readings, because a queue reports no speed.
     pub down_bps: i64,
-    pub up_bps: i64,
-    pub ratio: Option<f64>,
-    pub peers: Option<i64>,
-    /// What the torrent is called on disk. Only ever shown to somebody who may see downloads.
+    /// What the release is called. Only ever shown to somebody who may see downloads.
     pub release: Option<String>,
+    /// The download client Sonarr or Radarr handed it to.
     pub client: Option<String>,
+    pub protocol: Option<String>,
     pub service_name: Option<String>,
     pub arr: Option<(i64, i64)>,
     pub media_type: Option<&'static str>,
@@ -185,55 +188,36 @@ pub struct Download {
     /// How many queue records share this download: a season pack is one download and many episodes.
     pub parts: usize,
     pub error: Option<String>,
-    pub known: bool,
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Totals {
     pub down_bps: i64,
-    pub up_bps: i64,
     pub downloading: usize,
     pub queued: usize,
     pub importing: usize,
     pub failed: usize,
-    pub seeding: usize,
-    pub torrents: usize,
 }
 
-fn rank(state: &str) -> u8 {
-    match state {
-        "failed" => 0,
-        "importing" => 1,
-        "downloading" => 2,
-        "stalled" => 3,
-        "queued" => 4,
-        "paused" => 5,
-        "checking" => 6,
-        _ => 7,
-    }
+/// The words finstats uses for what a download is doing, worst first: what needs a person's attention is on top.
+pub const STATES: [&str; 7] = ["failed", "importing", "downloading", "stalled", "queued", "paused", "checking"];
+
+fn rank(state: &str) -> usize {
+    STATES.iter().position(|s| *s == state).unwrap_or(STATES.len())
 }
 
-/// The queue records and the torrents as one list. Pure: the loop only feeds it.
-pub fn merge(queue: Vec<Queued>, torrents: Vec<(String, Torrent)>) -> (Vec<Download>, Totals) {
-    let mut totals = Totals { torrents: torrents.len(), ..Default::default() };
-    let mut by_hash: HashMap<String, (String, Torrent)> = HashMap::new();
-    for (client, t) in torrents {
-        totals.down_bps += t.down_bps;
-        totals.up_bps += t.up_bps;
-        if t.state == "seeding" {
-            totals.seeding += 1;
-        }
-        by_hash.insert(t.hash.clone(), (client, t));
-    }
-
-    // A season pack is one hash and several records: the pack is the download, the episodes are what it holds.
+/// The queue records of every connected Sonarr and Radarr as one list. Pure: the loop only feeds it.
+pub fn fold(queue: Vec<Queued>) -> (Vec<Download>, Totals) {
     let mut out: Vec<Download> = vec![];
     let mut at: HashMap<String, usize> = HashMap::new();
-    let mut used: Vec<String> = vec![];
     for q in queue {
-        let key = q.download_id.clone().unwrap_or_else(|| format!("arr:{}:{}", q.service_id, q.title));
+        // Several records with one download id are one download: a season pack, and the episodes it holds.
+        // Without an id (a client that forgot it) a record can only stand for itself.
+        let key = match &q.download_id {
+            Some(id) => format!("{id}:{}", q.service_id),
+            None => format!("arr:{}:{}:{}", q.service_id, q.title, q.sub.as_deref().unwrap_or("")),
+        };
         if let Some(&i) = at.get(&key) {
-            // Several episodes behind one hash: one download, and the parts are what it holds.
             let d: &mut Download = &mut out[i];
             d.parts += 1;
             if let Some(s) = q.season
@@ -242,44 +226,27 @@ pub fn merge(queue: Vec<Queued>, torrents: Vec<(String, Torrent)>) -> (Vec<Downl
                 d.seasons.push(s);
             }
             d.size = d.size.max(q.size);
+            d.left = d.left.max(q.left);
             if rank(q.state) < rank(d.state) {
                 d.state = q.state;
             }
             d.error = d.error.take().or(q.error);
             continue;
         }
-        let torrent = q.download_id.as_ref().and_then(|h| by_hash.get(h));
-        if let Some(h) = &q.download_id {
-            used.push(h.clone());
-        }
-        let progress = match (&torrent, q.size) {
-            (Some((_, t)), _) if t.size > 0 => t.progress,
-            (_, size) if size > 0 => ((size - q.left) as f64 / size as f64).clamp(0.0, 1.0),
-            _ => 0.0,
-        };
-        // The queue knows about importing and failing; the client knows about stalling and speed.
-        let state = match (q.state, torrent.map(|(_, t)| t.state)) {
-            ("importing" | "failed", _) => q.state,
-            // Deluge has no word for "stalled": when Sonarr says so and nothing is moving, say so.
-            ("stalled", Some("downloading")) if torrent.is_some_and(|(_, t)| t.down_bps == 0) => "stalled",
-            (_, Some(t)) if t != "unknown" && t != "seeding" => t,
-            (s, _) => s,
-        };
         at.insert(key.clone(), out.len());
         out.push(Download {
             key,
             title: q.title,
             sub: q.sub,
-            state,
-            progress,
-            size: if q.size > 0 { q.size } else { torrent.map(|(_, t)| t.size).unwrap_or(0) },
-            eta_s: torrent.and_then(|(_, t)| t.eta_s).or(q.eta_s),
-            down_bps: torrent.map(|(_, t)| t.down_bps).unwrap_or(0),
-            up_bps: torrent.map(|(_, t)| t.up_bps).unwrap_or(0),
-            ratio: torrent.map(|(_, t)| t.ratio),
-            peers: torrent.map(|(_, t)| t.peers),
-            release: torrent.map(|(_, t)| t.name.clone()),
-            client: torrent.map(|(c, _)| c.clone()).or(q.client),
+            state: q.state,
+            progress: if q.size > 0 { ((q.size - q.left) as f64 / q.size as f64).clamp(0.0, 1.0) } else { 0.0 },
+            size: q.size,
+            left: q.left,
+            eta_s: q.eta_s,
+            down_bps: 0,
+            release: q.release,
+            client: q.client,
+            protocol: q.protocol,
             service_name: Some(q.service_name),
             arr: q.arr_media_id.map(|m| (q.service_id, m)),
             media_type: Some(q.media_type),
@@ -287,43 +254,25 @@ pub fn merge(queue: Vec<Queued>, torrents: Vec<(String, Torrent)>) -> (Vec<Downl
             tvdb_id: q.tvdb_id,
             seasons: q.season.into_iter().collect(),
             parts: 1,
-            error: q.error.or_else(|| torrent.and_then(|(_, t)| t.error.clone())),
-            known: true,
+            error: q.error,
         });
     }
 
-    // Torrents nobody in Sonarr or Radarr is waiting for: somebody added them by hand. Finished ones are counted only.
-    for (hash, (client, t)) in by_hash {
-        if used.contains(&hash) || matches!(t.state, "seeding") {
-            continue;
+    // A pack knows what it holds only once every one of its records has been seen.
+    let mut totals = Totals::default();
+    for d in &mut out {
+        if d.parts > 1 {
+            let episodes = format!("{} episodes", d.parts);
+            d.seasons.sort_unstable();
+            d.sub = Some(match d.seasons.as_slice() {
+                [s] => format!("Season {s} · {episodes}"),
+                [] => episodes,
+                seasons => format!("{} seasons · {episodes}", seasons.len()),
+            });
         }
-        out.push(Download {
-            key: hash,
-            title: t.name.clone(),
-            sub: None,
-            state: t.state,
-            progress: t.progress,
-            size: t.size,
-            eta_s: t.eta_s,
-            down_bps: t.down_bps,
-            up_bps: t.up_bps,
-            ratio: Some(t.ratio),
-            peers: Some(t.peers),
-            release: Some(t.name),
-            client: Some(client),
-            service_name: None,
-            arr: None,
-            media_type: None,
-            tmdb_id: None,
-            tvdb_id: None,
-            seasons: vec![],
-            parts: 1,
-            error: t.error,
-            known: false,
-        });
-    }
-
-    for d in &out {
+        if d.size > 0 {
+            d.progress = ((d.size - d.left) as f64 / d.size as f64).clamp(0.0, 1.0);
+        }
         match d.state {
             "downloading" | "stalled" => totals.downloading += 1,
             "queued" | "paused" | "checking" => totals.queued += 1,
@@ -332,20 +281,25 @@ pub fn merge(queue: Vec<Queued>, torrents: Vec<(String, Torrent)>) -> (Vec<Downl
             _ => {}
         }
     }
-    // A pack knows what it holds only once every record has been seen.
-    for d in out.iter_mut().filter(|d| d.parts > 1) {
-        let episodes = format!("{} episodes", d.parts);
-        d.seasons.sort_unstable();
-        d.sub = Some(match d.seasons.as_slice() {
-            [s] => format!("Season {s} · {episodes}"),
-            [] => episodes,
-            seasons => format!("{} seasons · {episodes}", seasons.len()),
-        });
-    }
-    debug_assert!(out.iter().all(|d| crate::torrents::STATES.contains(&d.state) || d.state == "importing"), "a state nobody has a word for");
+    debug_assert!(out.iter().all(|d| STATES.contains(&d.state) || d.state == "unknown"), "a state nobody has a word for");
     out.sort_by(|a, b| rank(a.state).cmp(&rank(b.state)).then(b.progress.partial_cmp(&a.progress).unwrap_or(std::cmp::Ordering::Equal)).then_with(|| a.title.cmp(&b.title)));
     out.truncate(MAX_ROWS);
     (out, totals)
+}
+
+/// How fast it is going: what a queue never says. Bytes that moved since the last reading, divided by the
+/// time between them. Nothing is claimed from a reading that is too close, too far apart, or of another size
+/// (an upgrade replacing a download keeps the id but starts again).
+pub fn speeds(rows: &mut [Download], before: &HashMap<String, (i64, i64)>, now: i64) -> HashMap<String, (i64, i64)> {
+    for d in rows.iter_mut() {
+        if let Some((left, at)) = before.get(&d.key) {
+            let (moved, seconds) = (left - d.left, now - at);
+            if (2..=180).contains(&seconds) && moved > 0 && moved <= d.size.max(*left) {
+                d.down_bps = moved / seconds;
+            }
+        }
+    }
+    rows.iter().map(|d| (d.key.clone(), (d.left, now))).collect()
 }
 
 // ---------------------------------------------------------------- the snapshot
@@ -416,9 +370,8 @@ fn download_json(d: &Download, wishes: &Wishes) -> Value {
         _ => Value::Null,
     };
     json!({
-        "key": d.key, "title": d.title, "sub": d.sub, "state": d.state, "progress": d.progress, "size": d.size, "eta_s": d.eta_s,
-        "down_bps": d.down_bps, "up_bps": d.up_bps, "ratio": d.ratio, "peers": d.peers, "release": d.release, "client": d.client,
-        "service_name": d.service_name, "known": d.known, "error": d.error, "poster": poster,
+        "key": d.key, "title": d.title, "sub": d.sub, "state": d.state, "progress": d.progress, "size": d.size, "left": d.left, "eta_s": d.eta_s,
+        "down_bps": d.down_bps, "release": d.release, "client": d.client, "protocol": d.protocol, "service_name": d.service_name, "error": d.error, "poster": poster,
         "requested_by": who.map(|(id, name)| json!({ "user_id": id, "user_name": name })),
         "item_id": item,
     })
@@ -453,71 +406,48 @@ pub fn own_progress(app: &App, media_type: &str, tmdb: Option<i64>, tvdb: Option
 
 // ---------------------------------------------------------------- the loop
 
-fn services_for(app: &App) -> (Vec<Arc<services::Service>>, Vec<Arc<services::Service>>) {
-    (services::enabled(app, Kind::is_arr), services::enabled(app, Kind::is_client))
-}
-
-async fn tick(app: &App, all: bool) {
-    let (arrs, clients) = services_for(app);
-    if arrs.is_empty() && clients.is_empty() {
+async fn tick(app: &App, before: &HashMap<String, (i64, i64)>) -> HashMap<String, (i64, i64)> {
+    let arrs = services::enabled(app, Kind::is_arr);
+    if arrs.is_empty() {
         *app.downloads.write().unwrap() = Arc::new(Snapshot { at: crate::db::now(), ..Default::default() });
-        return;
+        return HashMap::new();
     }
     let queues = futures_util::future::join_all(arrs.iter().map(|svc| async move {
         let out = tokio::time::timeout(PER_SERVICE_TIMEOUT, read_queue(app, svc)).await.unwrap_or_else(|_| Err(anyhow::anyhow!("{} did not answer in time", svc.name)));
         (svc.clone(), out)
     }))
     .await;
-    let torrents = futures_util::future::join_all(clients.iter().map(|svc| async move {
-        let out = tokio::time::timeout(PER_SERVICE_TIMEOUT, crate::torrents::fetch(app, svc, all)).await.unwrap_or_else(|_| Err(anyhow::anyhow!("{} did not answer in time", svc.name)));
-        (svc.clone(), out)
-    }))
-    .await;
 
-    let mut queue_rows = vec![];
-    let mut torrent_rows = vec![];
-    let mut problems = vec![];
-    let mut sources = 0;
+    let (mut rows, mut problems, mut sources) = (vec![], vec![], 0);
     for (svc, out) in queues {
         match out {
-            Ok(rows) => {
+            Ok(records) => {
                 sources += 1;
-                queue_rows.extend(rows);
+                rows.extend(records);
             }
-            Err(e) => problems.push((svc.name.clone(), e.to_string())),
+            Err(e) => {
+                tracing::debug!("{}: {e}", svc.name);
+                problems.push((svc.name.clone(), e.to_string()));
+            }
         }
     }
-    for (svc, out) in torrents {
-        match out {
-            Ok(rows) => {
-                sources += 1;
-                torrent_rows.extend(rows.into_iter().map(|t| (svc.name.clone(), t)));
-            }
-            Err(e) => problems.push((svc.name.clone(), e.to_string())),
-        }
-    }
-    // Only the slow tick has the whole picture; a fast one would otherwise report every finished torrent as gone.
-    let (rows, mut totals) = merge(queue_rows, torrent_rows);
-    if !all {
-        let before = app.downloads.read().unwrap().clone();
-        totals.seeding = before.totals.seeding;
-        totals.torrents = totals.torrents.max(before.totals.torrents);
-    }
-    for (name, why) in &problems {
-        tracing::debug!("{name}: {why}");
-    }
-    *app.downloads.write().unwrap() = Arc::new(Snapshot { rows, totals, at: crate::db::now(), problems, sources });
+    let now = crate::db::now();
+    let (mut rows, mut totals) = fold(rows);
+    let after = speeds(&mut rows, before, now);
+    totals.down_bps = rows.iter().map(|d| d.down_bps).sum();
+    *app.downloads.write().unwrap() = Arc::new(Snapshot { rows, totals, at: now, problems, sources });
+    after
 }
 
 /// Its own loop, like the collector: a queue that moves every second is no business of the 60-second scheduler.
 pub async fn run(app: App) {
     let mut wishes_at = 0i64;
-    let mut slow_at = 0i64;
+    // What was left of each download when it was last read, so a speed can be worked out.
+    let mut seen: HashMap<String, (i64, i64)> = HashMap::new();
     // Something changed (a connection, a read of Seerr): look again, and ask who wished for what.
     let mut woken = true;
     loop {
-        let (arrs, clients) = services_for(&app);
-        let anything = !arrs.is_empty() || !clients.is_empty();
+        let anything = !services::enabled(&app, Kind::is_arr).is_empty();
         let now = crate::db::now();
         if anything {
             // Who asked for what changes slowly, and reading it is the only database work here.
@@ -527,15 +457,17 @@ pub async fn run(app: App) {
                     *app.wishes.write().unwrap() = Arc::new(w);
                 }
             }
-            let full = now - slow_at >= IDLE_EVERY_S as i64;
-            if full {
-                slow_at = now;
-            }
-            tick(&app, full).await;
+            seen = tick(&app, &seen).await;
         }
         // Fast only while a page is actually showing this.
         let watching = now - *app.downloads_watched.lock().unwrap() <= WATCHING_FOR_S;
-        let wait = if !anything { IDLE_EVERY_S } else if watching { WATCHED_EVERY_S } else { IDLE_EVERY_S };
+        let wait = if !anything {
+            IDLE_EVERY_S
+        } else if watching {
+            WATCHED_EVERY_S
+        } else {
+            IDLE_EVERY_S
+        };
         woken = tokio::select! {
             _ = app.downloads_wake.notified() => true,
             _ = tokio::time::sleep(Duration::from_secs(wait)) => false,
@@ -569,7 +501,7 @@ pub async fn downloads(State(app): State<App>, DownloadsViewer(_): DownloadsView
     let t = &snap.totals;
     Ok(Json(json!({
         "rows": snap.rows.iter().map(|d| download_json(d, &wishes)).collect::<Vec<_>>(),
-        "totals": { "down_bps": t.down_bps, "up_bps": t.up_bps, "downloading": t.downloading, "queued": t.queued, "importing": t.importing, "failed": t.failed, "seeding": t.seeding, "torrents": t.torrents },
+        "totals": { "down_bps": t.down_bps, "downloading": t.downloading, "queued": t.queued, "importing": t.importing, "failed": t.failed },
         "at": snap.at, "sources": snap.sources,
         "problems": snap.problems.iter().map(|(name, why)| json!({ "service": name, "error": why })).collect::<Vec<_>>(),
     })))
@@ -580,92 +512,91 @@ mod tests {
     use super::*;
     use serde_json::json;
 
-    fn queued(id: i64, title: &str, hash: Option<&str>, season: Option<i64>, state: &'static str, size: i64, left: i64) -> Queued {
+    fn queued(id: i64, title: &str, download_id: Option<&str>, season: Option<i64>, state: &'static str, size: i64, left: i64) -> Queued {
         Queued {
-            service_id: 1, service_name: "Sonarr".into(), arr_media_id: Some(7), download_id: hash.map(|h| h.to_ascii_lowercase()), title: title.into(),
+            service_id: 1, service_name: "Sonarr".into(), arr_media_id: Some(7), download_id: download_id.map(|h| h.to_ascii_lowercase()), title: title.into(),
             sub: season.map(|s| format!("S{s:02}E01")), media_type: "tv", tmdb_id: None, tvdb_id: Some(id), season, size, left, eta_s: Some(600),
-            state, protocol: if hash.is_some() { "torrent".into() } else { "usenet".into() }, client: Some("qBittorrent".into()), error: None,
+            state, protocol: Some("torrent".into()), client: Some("qBittorrent".into()), release: Some(format!("{title}.1080p.WEB-DL").replace(' ', ".")), error: None,
         }
-    }
-
-    fn torrent(hash: &str, state: &'static str, progress: f64) -> Torrent {
-        Torrent { hash: hash.into(), name: format!("{hash}.release.1080p"), state, progress, size: 1000, left: ((1.0 - progress) * 1000.0) as i64, down_bps: 5_000_000, up_bps: 1000, eta_s: Some(120), ratio: 0.5, peers: 12, error: None }
     }
 
     #[test]
     fn a_season_pack_is_one_download_however_many_episodes_it_holds() {
         let queue = vec![queued(1, "Low Orbit", Some("AABB"), Some(3), "downloading", 900, 300), queued(1, "Low Orbit", Some("aabb"), Some(3), "downloading", 900, 300), queued(1, "Low Orbit", Some("aabb"), Some(3), "importing", 900, 300)];
-        let (rows, totals) = merge(queue, vec![("qBittorrent".into(), torrent("aabb", "downloading", 0.66))]);
-        assert_eq!(rows.len(), 1, "one hash is one download");
-        assert_eq!((rows[0].sub.as_deref(), rows[0].state, rows[0].known), (Some("Season 3 · 3 episodes"), "importing", true), "the most interesting state wins");
-        assert_eq!((rows[0].down_bps, rows[0].peers), (5_000_000, Some(12)), "the client fills in what the queue cannot say");
-        assert_eq!(totals.importing, 1);
+        let (rows, totals) = fold(queue);
+        assert_eq!(rows.len(), 1, "one download id is one download");
+        assert_eq!((rows[0].sub.as_deref(), rows[0].state), (Some("Season 3 · 3 episodes"), "importing"), "the most interesting state wins");
+        assert_eq!((rows[0].progress, rows[0].parts, totals.importing), (0.6666666666666666, 3, 1));
+        // The same id in two instances is two downloads: they are each waiting for their own copy.
+        let (rows, _) = fold(vec![queued(1, "Low Orbit", Some("aabb"), Some(3), "downloading", 900, 300), Queued { service_id: 2, ..queued(1, "Low Orbit", Some("aabb"), Some(3), "downloading", 900, 300) }]);
+        assert_eq!(rows.len(), 2);
     }
 
     #[test]
-    fn usenet_needs_no_torrent_and_a_stranger_torrent_is_listed_as_what_it_is() {
-        let (rows, totals) = merge(vec![queued(2, "Northern Static", None, None, "downloading", 1000, 250)], vec![("Deluge".into(), torrent("ffff", "downloading", 0.1))]);
-        let usenet = rows.iter().find(|r| r.title == "Northern Static").unwrap();
-        assert_eq!((usenet.progress, usenet.down_bps, usenet.known, usenet.eta_s), (0.75, 0, true, Some(600)), "progress from the queue alone");
-        let stranger = rows.iter().find(|r| !r.known).unwrap();
-        assert_eq!((stranger.title.as_str(), stranger.client.as_deref(), stranger.media_type), ("ffff.release.1080p", Some("Deluge"), None));
-        assert_eq!(totals.down_bps, 5_000_000);
-        // Anything that is only seeding is counted, not listed.
-        let (rows, totals) = merge(vec![], vec![("Deluge".into(), torrent("eeee", "seeding", 1.0))]);
-        assert!(rows.is_empty() && totals.seeding == 1 && totals.torrents == 1);
+    fn a_record_without_a_download_id_still_stands_for_itself() {
+        let (rows, totals) = fold(vec![queued(2, "Northern Static", None, None, "downloading", 1000, 250), queued(3, "Tiny Giants", None, Some(1), "queued", 100, 100)]);
+        assert_eq!(rows.len(), 2, "two nameless records are not one download");
+        let film = rows.iter().find(|r| r.title == "Northern Static").unwrap();
+        assert_eq!((film.progress, film.eta_s, film.client.as_deref()), (0.75, Some(600), Some("qBittorrent")), "progress and the client come from the queue");
+        assert_eq!((totals.downloading, totals.queued), (1, 1));
     }
 
     #[test]
-    fn a_download_that_says_it_is_going_but_is_not_is_reported_as_stalled() {
-        let mut idle = torrent("beef", "downloading", 0.3);
-        idle.down_bps = 0;                                    // Deluge has no word for stalled
-        let (rows, _) = merge(vec![queued(9, "Paper Lanterns", Some("beef"), Some(1), "stalled", 100, 70)], vec![("Deluge".into(), idle)]);
-        assert_eq!(rows[0].state, "stalled");
-        // But a torrent that is actually moving is downloading, whatever the queue's warning says.
-        let (rows, _) = merge(vec![queued(9, "Paper Lanterns", Some("beef"), Some(1), "stalled", 100, 70)], vec![("Deluge".into(), torrent("beef", "downloading", 0.3))]);
-        assert_eq!(rows[0].state, "downloading");
+    fn what_needs_attention_is_on_top() {
+        let rows = fold(vec![
+            queued(1, "Queued thing", Some("a"), None, "queued", 10, 10),
+            queued(2, "Failed thing", Some("b"), None, "failed", 10, 5),
+            queued(3, "Downloading thing", Some("c"), None, "downloading", 10, 5),
+            queued(4, "Importing thing", Some("d"), None, "importing", 10, 0),
+        ])
+        .0;
+        assert_eq!(rows.iter().map(|r| r.state).collect::<Vec<_>>(), ["failed", "importing", "downloading", "queued"]);
     }
 
     #[test]
-    fn the_hash_is_the_same_hash_whatever_its_case_and_a_stalled_torrent_says_so() {
-        let (rows, _) = merge(vec![queued(3, "Tiny Giants", Some("CaFe"), Some(1), "downloading", 100, 50)], vec![("qBittorrent".into(), torrent("cafe", "stalled", 0.5))]);
-        assert_eq!((rows.len(), rows[0].state, rows[0].known), (1, "stalled", true));
-        // What the queue knows beats what the client thinks: importing and failing happen after the torrent is done.
-        let (rows, _) = merge(vec![queued(3, "Tiny Giants", Some("cafe"), Some(1), "importing", 100, 0)], vec![("qBittorrent".into(), torrent("cafe", "seeding", 1.0))]);
-        assert_eq!(rows[0].state, "importing");
-    }
-
-    #[test]
-    fn every_clients_vocabulary_lands_in_ours() {
-        use crate::torrents::{dl_state, qb_state, tr_state};
-        for (raw, want) in [("stalledDL", "stalled"), ("metaDL", "downloading"), ("missingFiles", "failed"), ("pausedUP", "seeding"), ("checkingResumeData", "checking"), ("nonsense", "unknown")] {
-            assert_eq!(qb_state(raw), want, "qBittorrent {raw}");
-        }
-        assert_eq!(tr_state(4, false, 0), "downloading");
-        assert_eq!(tr_state(4, true, 0), "stalled");
-        assert_eq!(tr_state(6, false, 3), "failed", "an error beats the status");
-        assert_eq!(tr_state(0, false, 0), "paused");
-        assert_eq!(dl_state("Downloading"), "downloading");
-        assert_eq!(dl_state("Error"), "failed");
-        for s in [qb_state("downloading"), tr_state(6, false, 0), dl_state("Queued")] {
-            assert!(crate::torrents::STATES.contains(&s));
-        }
+    fn a_speed_is_what_moved_between_two_readings_and_nothing_is_invented() {
+        let mut rows = fold(vec![queued(1, "Low Orbit", Some("aa"), Some(3), "downloading", 1000, 400)]).0;
+        let key = rows[0].key.clone();
+        // Nothing to compare with yet.
+        let after = speeds(&mut rows, &HashMap::new(), 1000);
+        assert_eq!((rows[0].down_bps, after[&key]), (0, (400, 1000)));
+        // 100 bytes moved in 10 seconds.
+        let mut rows = fold(vec![queued(1, "Low Orbit", Some("aa"), Some(3), "downloading", 1000, 300)]).0;
+        speeds(&mut rows, &after, 1010);
+        assert_eq!(rows[0].down_bps, 10);
+        // Too long ago, and going backwards (an upgrade that starts again), say nothing.
+        let mut rows = fold(vec![queued(1, "Low Orbit", Some("aa"), Some(3), "downloading", 1000, 300)]).0;
+        speeds(&mut rows, &after, 1000 + 4000);
+        assert_eq!(rows[0].down_bps, 0);
+        let mut rows = fold(vec![queued(1, "Low Orbit", Some("aa"), Some(3), "downloading", 1000, 900)]).0;
+        speeds(&mut rows, &after, 1010);
+        assert_eq!(rows[0].down_bps, 0);
     }
 
     #[test]
     fn a_queue_record_says_what_it_is_waiting_for() {
         let r = json!({ "seriesId": 7, "seasonNumber": 3, "episode": { "seasonNumber": 3, "episodeNumber": 9, "title": "The Long Way Down" },
             "series": { "title": "Low Orbit", "tvdbId": 371002 }, "size": 2000.0, "sizeleft": 500.0, "timeleft": "00:12:30", "downloadId": "ABC123",
-            "status": "downloading", "trackedDownloadState": "downloading", "trackedDownloadStatus": "ok", "protocol": "torrent", "downloadClient": "qBittorrent" });
+            "title": "Low.Orbit.S03E09.1080p.WEB-DL", "status": "downloading", "trackedDownloadState": "downloading", "trackedDownloadStatus": "ok", "protocol": "torrent", "downloadClient": "qBittorrent" });
         let q = queue_row(1, "Sonarr", Kind::Sonarr, &r).unwrap();
         assert_eq!((q.title.as_str(), q.sub.as_deref(), q.season, q.tvdb_id), ("Low Orbit", Some("S03E09 · The Long Way Down"), Some(3), Some(371002)));
         assert_eq!((q.download_id.as_deref(), q.eta_s, q.state), (Some("abc123"), Some(750), "downloading"));
+        assert_eq!((q.release.as_deref(), q.client.as_deref(), q.protocol.as_deref()), (Some("Low.Orbit.S03E09.1080p.WEB-DL"), Some("qBittorrent"), Some("torrent")));
 
         let film = json!({ "movieId": 21, "movie": { "title": "Northern Static", "year": 2026, "tmdbId": 981001 }, "size": 10.0, "sizeleft": 0.0,
-            "status": "completed", "trackedDownloadState": "importPending", "trackedDownloadStatus": "warning", "statusMessages": [{ "title": "Not an upgrade for existing file" }], "protocol": "usenet" });
+            "status": "completed", "trackedDownloadState": "importPending", "trackedDownloadStatus": "warning", "statusMessages": [{ "title": "Not an upgrade for existing file" }], "protocol": "usenet", "downloadClient": "SABnzbd" });
         let q = queue_row(2, "Radarr", Kind::Radarr, &film).unwrap();
         assert_eq!((q.title.as_str(), q.sub.as_deref(), q.state, q.media_type), ("Northern Static", Some("2026"), "importing", "movie"));
-        assert_eq!(q.error.as_deref(), Some("Not an upgrade for existing file"));
+        assert_eq!((q.error.as_deref(), q.protocol.as_deref()), (Some("Not an upgrade for existing file"), Some("usenet")));
+
+        // What the queue is doing, in our words.
+        assert_eq!(queue_state("downloading", "downloading", "ok"), "downloading");
+        assert_eq!(queue_state("completed", "importPending", "ok"), "importing");
+        assert_eq!(queue_state("warning", "downloading", "warning"), "stalled");
+        assert_eq!(queue_state("warning", "downloading", "error"), "failed");
+        assert_eq!(queue_state("downloading", "failedPending", "ok"), "failed");
+        assert_eq!(queue_state("paused", "downloading", "ok"), "paused");
+        assert_eq!(queue_state("nonsense", "", ""), "unknown");
 
         assert_eq!(timespan(&json!("01:02:03")), Some(3723));
         assert_eq!(timespan(&json!("1.00:00:30")), Some(86_430));

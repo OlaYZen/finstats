@@ -67,19 +67,19 @@ machine and the map is drawn by finstats itself, so no address or coordinate is 
 
 <img src="docs/screenshots/pipeline.png" alt="Pipeline page: requests from Seerr with how long each took and whether it was watched, the upcoming calendar, and the live download list" width="100%">
 
-finstats can also watch the rest of your setup, read-only: **Sonarr**, **Radarr**, **Seerr** and your torrent client
-(**qBittorrent**, **Transmission** or **Deluge**), several of a kind if you have them. The **Pipeline** page then answers
-the questions statistics alone cannot:
+finstats can also watch the rest of your setup, read-only: **Sonarr**, **Radarr** and **Seerr**, several of a kind if you
+have them. Your download client needs no setup of its own — Sonarr and Radarr already talk to it, and finstats reads what
+they know. The **Pipeline** page then answers the questions statistics alone cannot:
 
 - **Was it worth getting?** Every request with who asked, how long it took to arrive, and whether they ever watched it —
   plus the list nobody likes to see: what arrived weeks ago and has never been played.
 - **What is coming?** A calendar of new episodes and film releases, marked with who is actually watching that show, so a
   Friday episode of something three people follow stands out from one nobody has touched in a year.
-- **What is arriving right now?** The live queue with speeds, progress and what went wrong on import, joined from Sonarr,
-  Radarr and the client, plus what came in over the last week, month or year, by indexer, quality and client.
+- **What is arriving right now?** The live queue with progress, speed and what went wrong on import, plus what came in
+  over the last week, month or year, by indexer, quality and download client.
 
-Your own requests are yours to see; other people's need a permission, and the download queue another. Keys and passwords
-are stored in finstats' own database, are never shown again, and are never part of a backup.
+Your own requests are yours to see; other people's need a permission, and the download queue another. API keys are stored
+in finstats' own database, are never shown again, and are never part of a backup.
 
 ### Every play, down to the pause button
 
@@ -137,9 +137,9 @@ whatever permissions they hold, and there is no recap of the whole server.
   address are not counted as remote. It carries no information about you or your server, and one
   switch in Settings turns it off. The Security map needs a geolocation database; downloading it is
   off until you ask for it, and addresses are always looked up on your own machine. Sonarr, Radarr, Seerr and torrent
-  clients are reached at the addresses you enter, on your own network.
+  are reached at the addresses you enter, on your own network.
 - **Read-only.** finstats never changes anything on your Jellyfin server and never starts a library scan. The same goes for
-  the services you connect (Sonarr, Radarr, Seerr, your torrent client): it reads, and that is all.
+  the services you connect (Sonarr, Radarr, Seerr): it reads, and that is all.
 
 ## Get started
 
@@ -217,7 +217,7 @@ Everything works out of the box. If you want to tune it, **Settings** in the app
 | **Check every…** | How often finstats looks at what is playing: every second while someone is watching, every 5 seconds while nobody is. |
 | **Treat a restart as the same play** | A stream that stops and resumes within 10 minutes counts as one viewing. |
 | **Home network** | Which plays count as local. Private addresses always do; with *Recognise my own public address* on (the default), so does your household's public IP, looked up every 15 minutes and remembered as it changes. You can add more addresses by hand. |
-| **Connections** | Sonarr, Radarr, Seerr and a torrent client (qBittorrent, Transmission, Deluge), several of a kind if you have them. Each is tested before it is saved; keys and passwords are never shown again and never part of a backup. Jellyfin administrators only. |
+| **Connections** | Sonarr, Radarr and Seerr, several of a kind if you have them. Each is tested before it is saved; API keys are never shown again and never part of a backup. Jellyfin administrators only. |
 | **Security** | The city database that places addresses: download DB-IP's free one with a click and keep it fresh monthly, or drop your own `.mmdb` into `data/geoip/`. Also how fast (900 km/h) and how far apart (500 km) two sightings must be to count as impossible travel. |
 | **Count it as watching together within** | How close together different people must start the same title to count as a group. Default 60 seconds. |
 | **Ignore plays shorter than** | Leave accidental clicks out of the statistics. |

@@ -34,7 +34,6 @@ pub struct AppState {
     /// torrent clients' sessions. Loops read these, never the database.
     pub services: RwLock<Arc<Vec<Arc<crate::services::Service>>>>,
     pub service_health: RwLock<HashMap<i64, crate::services::Health>>,
-    pub client_sessions: crate::services::Sessions,
     /// Their own HTTP clients: no redirect is ever followed with a key in hand.
     pub services_http: crate::services::Http,
     /// What is downloading right now, and who wished for it: in memory only, worthless a minute later.

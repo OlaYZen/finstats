@@ -699,7 +699,7 @@ in track order, `"und"` for a track without a language. Filled by the library re
 
 ---
 
-# v1.3 — Connections (Sonarr, Radarr, Seerr, torrent clients)
+# v1.3 — Connections (Sonarr, Radarr, Seerr)
 
 finstats reads from these services and never changes anything in them. **Jellyfin administrators only** (`403` for everyone else, including
 `manage`). A key or password is write-only: the API says `has_secret`, never the value, and none of this is part of a backup.
@@ -707,18 +707,17 @@ finstats reads from these services and never changes anything in them. **Jellyfi
 `GET /api/services`
 ```jsonc
 { "services": [ {"id": 1, "kind": "sonarr", "label": "Sonarr", "name": "Sonarr", "url": "http://192.168.1.10:8989",
-                 "username": null, "has_secret": true, "accept_invalid_certs": false, "enabled": true,
+                 "has_secret": true, "accept_invalid_certs": false, "enabled": true,
                  "version": "4.0.9" | null, "last_ok_at": 0 | null, "last_error": "Sonarr refused the API key" | null} ],
-  "kinds": [ {"key": "sonarr" | "radarr" | "seerr" | "qbittorrent" | "transmission" | "deluge", "label", "what", "example",
-              "auth": "api_key" | "login" | "password"} ] }
+  "kinds": [ {"key": "sonarr" | "radarr" | "seerr", "label", "what", "example"} ] }
 ```
 Every write answers with the same list.
 
-- `POST /api/services/test` `{kind, url, username?, secret?, accept_invalid_certs?}` or `{id, …}` (whatever is left out is taken from the stored
+- `POST /api/services/test` `{kind, url, secret?, accept_invalid_certs?}` or `{id, …}` (whatever is left out is taken from the stored
   connection, so a key need not be retyped) → `{"ok": true, "app": "Sonarr", "version": "4.0.9"}`, or `502` with a sentence that says what is wrong.
 - `POST /api/services` — the same body plus `name?`. The connection is tested first and only saved when it answers (`502` otherwise). A missing
   name becomes the kind's, then "Radarr 2". At most 20.
-- `PUT /api/services/{id}` — any of `name`, `url`, `username`, `secret`, `accept_invalid_certs`, `enabled`; the kind never changes. Changing what
+- `PUT /api/services/{id}` — any of `name`, `url`, `secret`, `accept_invalid_certs`, `enabled`; the kind never changes. Changing what
   is needed to connect tests again. Pointing a connection at another host, port or base path throws away everything read from the old one.
 - `DELETE /api/services/{id}` — also removes everything that was read from it.
 
@@ -751,7 +750,8 @@ The same episode in two Sonarrs, or the same film in an HD and a 4K Radarr, is o
 say nothing. Without `see_everyone` there is no count either: on a small server a number is a name.
 
 - `GET /api/img/arr/{service_id}/{media_id}?w=` — the poster of a title that is not in the library yet, proxied from Sonarr or Radarr and cached on
-  disk. Both ids are numbers, only posters of titles finstats itself lists are served (`404` otherwise), and the browser never talks to TMDB.
+  disk. Both ids are numbers; only posters of titles finstats itself lists are served — what is on a calendar, what somebody asked for, and (for
+  people with `see_downloads`) what is downloading now — and the browser never talks to TMDB.
 - `GET /api/items/{id}` gains `item.upcoming` for a series or film with something due in the next 90 days: entries as above, without any of the
   keys about people.
 
@@ -794,31 +794,33 @@ for a series only in the seasons that were asked for.
 `GET /api/items/{id}` gains `item.request` — the oldest request for that title, but only the caller's own unless they have `see_everyone`;
 otherwise the key is absent, "arrived after" included.
 
-## Downloads (Sonarr, Radarr and the torrent clients)
+## Downloads (Sonarr and Radarr)
 
-Live, from memory: Sonarr's and Radarr's queues joined with the torrent clients at the torrent hash. Nothing is stored. Needs the new
+Live, from memory: the queues of every connected Sonarr and Radarr. They already talk to the download client, whichever it is, and report a
+torrent and a usenet download the same way, so finstats reads them rather than each client's own API. Nothing is stored. Needs the
 permission **`see_downloads`** (`403` without it; Jellyfin administrators always have it).
 
 `GET /api/downloads?live=1` — `live=1` means "a page is showing this": the snapshot is then refreshed every 5 seconds for the next 20,
 and every 60 seconds otherwise. The prefetcher never asks for it.
 ```jsonc
-{ "rows": [ {"key": "<torrent hash>" | "arr:<service>:<title>",
+{ "rows": [ {"key": "<download id>:<service>" | "arr:<service>:<title>:<sub>",
              "title": "Low Orbit", "sub": "Season 3 · 3 episodes" | "2026" | null,
-             "state": "downloading" | "stalled" | "queued" | "paused" | "checking" | "importing" | "failed" | "unknown",
-             "progress": 0.66, "size": 9000000000, "eta_s": 1300,
-             "down_bps": 8400000, "up_bps": 120000, "ratio": 0.2, "peers": 24,      // the last four only when a client knows the torrent
-             "release": "Low.Orbit.S03.1080p.WEB-DL" | null, "client": "qBittorrent" | null, "service_name": "Sonarr" | null,
-             "known": true,                                    // false: a torrent no Sonarr or Radarr is waiting for
+             "state": "failed" | "importing" | "downloading" | "stalled" | "queued" | "paused" | "checking" | "unknown",
+             "progress": 0.66, "size": 9000000000, "left": 3000000000, "eta_s": 1300,
+             "down_bps": 8400000,                              // worked out from what moved since the last reading, 0 when it cannot be
+             "release": "Low.Orbit.S03.1080p.WEB-DL" | null,   // what the release is called
+             "client": "qBittorrent" | null,                   // the client Sonarr or Radarr handed it to
+             "protocol": "torrent" | "usenet" | null, "service_name": "Sonarr" | null,
              "error": "One file was not imported" | null,
              "poster": {"item_id": "…"} | {"service_id": 1, "media_id": 12} | null,
              "item_id": "…" | null,
              "requested_by": {"user_id": "…" | null, "user_name": "maria"} | null} ],
-  "totals": {"down_bps": 0, "up_bps": 0, "downloading": 3, "queued": 1, "importing": 1, "failed": 0, "seeding": 12, "torrents": 140},
-  "at": 0, "sources": 5,
-  "problems": [{"service": "Deluge", "error": "…"}] }
+  "totals": {"down_bps": 0, "downloading": 3, "queued": 1, "importing": 1, "failed": 0},
+  "at": 0, "sources": 2,
+  "problems": [{"service": "Radarr", "error": "…"}] }
 ```
-A season pack is one row, however many episodes it holds. A usenet download has no torrent and is described from the queue alone
-(progress from `size`/`sizeleft`). Torrents that are only seeding are counted, not listed, and at most 500 rows are returned.
+Several records with one download id are one row (a season pack, and the episodes it holds); the same id in two instances is two rows,
+because each is waiting for its own copy. Worst first: what needs attention is on top. At most 500 rows.
 
 **Without `see_downloads`** a person still learns how far their *own* request has got: rows of `GET /api/requests` and
 `item.request` of `GET /api/items/{id}` carry `"download": {"state": "downloading", "progress": 0.66, "eta_s": 1300}` when something in the

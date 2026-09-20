@@ -1,7 +1,7 @@
-// What is arriving right now. Shared by the Pipeline tab and the dashboard.
+// What is arriving right now, as Sonarr and Radarr report it. Shared by the Pipeline tab and the dashboard.
 //
 // The list is polled while a page shows it; the server keeps its snapshot fresh only for as long as somebody is
-// actually looking (`?live=1`), so a forgotten tab or the prefetcher never keeps three services busy.
+// actually looking (`?live=1`), so a forgotten tab or the prefetcher never keeps those services busy.
 
 import { h, icon, num, bytes, duration, relTime } from './dom.js';
 import { api } from './api.js';
@@ -17,7 +17,6 @@ const STATE = {
   paused: { cls: 'sev-info', icon: 'pause', label: 'Paused' },
   checking: { cls: 'sev-info', icon: 'refresh', label: 'Checking' },
   failed: { cls: 'sev-critical', icon: 'alert', label: 'Failed' },
-  seeding: { cls: 'sev-good', icon: 'upload', label: 'Seeding' },
   unknown: { cls: 'sev-info', icon: 'info', label: 'Unknown' },
 };
 
@@ -43,13 +42,10 @@ function row(d) {
         d.sub ? h('span', { class: 'muted' }, ' · ' + d.sub) : null),
       h('div', { class: 'dl-meta' },
         h('span', { class: 'sev ' + st.cls }, icon(st.icon, 13), st.label),
-        // In the wrapping line, not next to the title: a long torrent name plus a chip pushed the page sideways.
-        !d.known ? h('span', { class: 'chip', title: 'No Sonarr or Radarr is waiting for this one' }, 'Not from Sonarr or Radarr') : null,
         d.size ? h('span', { class: 'mono' }, `${bytes(d.size * (d.progress || 0))} of ${bytes(d.size)}`) : null,
         d.down_bps > 0 ? h('span', { class: 'mono dl-down' }, icon('download', 12), speed(d.down_bps)) : null,
-        d.up_bps > 0 ? h('span', { class: 'mono dl-up' }, icon('upload', 12), speed(d.up_bps)) : null,
         d.eta_s ? h('span', { class: 'mono' }, duration(d.eta_s) + ' left') : null,
-        d.client ? h('span', { class: 'muted' }, d.client) : null,
+        d.client ? h('span', { class: 'muted', title: `${d.service_name || 'Sonarr'} handed it to ${d.client}` }, d.client) : null,
         who ? h('span', { class: 'dl-who' }, icon('inbox', 12), who.user_id ? h('a', { href: `/users/${who.user_id}` }, who.user_name) : who.user_name) : null),
       d.error ? h('p', { class: 'dl-error' }, icon('alert', 13), d.error) : null,
       progressBar(d.progress),
@@ -61,13 +57,11 @@ export function downloadsList(d, { compact = false, limit = 0 } = {}) {
   const rows = (d.rows || []).slice(0, limit || undefined);
   const t = d.totals || {};
   const totals = compact ? null : h('div', { class: 'dl-totals' },
-    h('span', { class: 'mono dl-down' }, icon('download', 13), speed(t.down_bps)),
-    h('span', { class: 'mono dl-up' }, icon('upload', 13), speed(t.up_bps)),
+    h('span', { class: 'mono dl-down', title: 'Worked out from how much moved since the last reading' }, icon('download', 13), speed(t.down_bps)),
     h('span', null, `${num(t.downloading || 0)} downloading`),
     t.queued ? h('span', null, `${num(t.queued)} queued`) : null,
     t.importing ? h('span', null, `${num(t.importing)} importing`) : null,
     t.failed ? h('span', { class: 'sev sev-critical' }, icon('alert', 13), `${num(t.failed)} failed`) : null,
-    t.seeding ? h('span', { class: 'muted' }, `${num(t.seeding)} seeding`) : null,
     d.at ? h('span', { class: 'muted dl-when' }, 'updated ', relTime(d.at)) : null);
   const problems = (d.problems || []).map((p) => h('p', { class: 'dl-error' }, icon('alert', 13), `${p.service}: ${p.error}`));
   return [totals, ...problems, rows.length ? h('ul', { class: 'dl-list' }, rows.map(row)) : null];
