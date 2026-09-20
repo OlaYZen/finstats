@@ -726,3 +726,31 @@ Addresses: `http://` or `https://`, a base path is kept (`/sonarr`), no `user:pa
 service: a redirect is reported as the error it is. `accept_invalid_certs` switches certificate verification off for that one connection.
 
 `GET /api/auth/me` → `user.features: {"upcoming": true, "requests": true}`: which optional pages have a connected service behind them.
+
+## Upcoming (Sonarr, Radarr)
+
+Read every 15 minutes (task `sync_upcoming`, which `POST /api/tasks/sync_upcoming/run` starts by hand): monitored episodes and film releases from
+7 days back to 90 days ahead. For everyone signed in: a calendar is about the library, like Recently added.
+
+`GET /api/upcoming?days=14&user_id=&mine=` — `days` 1..90 from today (local days); `user_id` is whose shows "follow" refers to (the caller's own
+without `see_everyone`, whatever is asked); `mine=true` keeps only what that person follows.
+```jsonc
+{ "days": 14, "user_id": "<whose>", "entries": [
+  {"kind": "episode" | "movie", "release": "air" | "cinema" | "digital" | "physical",
+   "day": "2026-09-25",                 // local day; a film only has a day (Radarr's midnight UTC is not a moment)
+   "at": 0 | null,                      // episodes: when it airs
+   "series_title": "Low Orbit" | null, "title": "Re-entry", "season": 3, "episode": 10, "finale": "season" | "series" | "midseason" | null, "year": 2026 | null,
+   "has_file": false,                   // already downloaded
+   "item_id": "<series or film in the library>" | null,
+   "poster": {"item_id": "…"} | {"service_id": 1, "media_id": 15},   // the second kind is served by /api/img/arr
+   "you_follow": true,                  // that person played an episode of the show in the last 120 days (never true for a film)
+   "followers": 2, "follower_names": ["alice", "bob"]                  // only with `see_everyone`; otherwise the keys are absent
+  } ] }
+```
+The same episode in two Sonarrs, or the same film in an HD and a 4K Radarr, is one entry (on disk if it is anywhere). Switched-off connections
+say nothing. Without `see_everyone` there is no count either: on a small server a number is a name.
+
+- `GET /api/img/arr/{service_id}/{media_id}?w=` — the poster of a title that is not in the library yet, proxied from Sonarr or Radarr and cached on
+  disk. Both ids are numbers, only posters of titles finstats itself lists are served (`404` otherwise), and the browser never talks to TMDB.
+- `GET /api/items/{id}` gains `item.upcoming` for a series or film with something due in the next 90 days: entries as above, without any of the
+  keys about people.

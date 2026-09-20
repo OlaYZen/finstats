@@ -339,6 +339,35 @@ pub(crate) const MIGRATIONS: &[&str] = &[
     ) WITHOUT ROWID;
     CREATE INDEX idx_item_external ON item_external(source, value);
     "#,
+    // 14 — what Sonarr and Radarr expect: episodes about to air, films about to be released. One row per
+    //      instance, title and kind of release; the same episode in two Sonarrs is folded when it is read.
+    //      An episode has a moment (`at`, UTC). A film has a *day*: Radarr gives midnight UTC, which as a
+    //      moment would be the evening before in every zone west of Greenwich.
+    r#"
+    CREATE TABLE upcoming (
+        service_id   INTEGER NOT NULL REFERENCES services(id) ON DELETE CASCADE,
+        kind         TEXT NOT NULL,              -- episode | movie
+        external_id  INTEGER NOT NULL,           -- Sonarr's episode id, Radarr's movie id
+        release      TEXT NOT NULL,              -- air | cinema | digital | physical
+        at           INTEGER,                    -- episodes
+        day          TEXT,                       -- films: YYYY-MM-DD
+        series_title TEXT,
+        title        TEXT NOT NULL,
+        season       INTEGER,
+        episode      INTEGER,
+        finale       TEXT,                       -- season | series | midseason
+        year         INTEGER,
+        tvdb_id      INTEGER,
+        tmdb_id      INTEGER,
+        imdb_id      TEXT,
+        arr_media_id INTEGER NOT NULL,           -- Sonarr's series id, Radarr's movie id: where the poster is
+        has_file     INTEGER NOT NULL DEFAULT 0,
+        item_id      TEXT,                       -- the series or film in the library, once it is there
+        PRIMARY KEY (service_id, kind, external_id, release)
+    ) WITHOUT ROWID;
+    CREATE INDEX idx_upcoming_at ON upcoming(at);
+    CREATE INDEX idx_upcoming_day ON upcoming(day);
+    "#,
 ];
 
 impl Db {

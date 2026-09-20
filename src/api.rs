@@ -22,7 +22,7 @@ use tower_http::compression::predicate::{DefaultPredicate, NotForContentType, Pr
 use crate::auth::{self, AuthUser, JellyfinAdmin, Manager};
 use crate::state::{ApiError, ApiResult, App, Settings};
 use crate::db::rusqlite::OptionalExtension;
-use crate::{changelog, db, groups, import, profile, recap, recent, security, services, stats, sync, timeline};
+use crate::{changelog, db, groups, import, pipeline, profile, recap, recent, security, services, stats, sync, timeline};
 
 #[derive(RustEmbed)]
 #[folder = "$CARGO_MANIFEST_DIR/web"]
@@ -71,6 +71,8 @@ pub fn router(app: App) -> Router {
         .route("/security/database", post(security::download_database))
         .route("/img/item/{id}", get(item_image))
         .route("/img/user/{id}", get(user_image))
+        .route("/img/arr/{service_id}/{media_id}", get(arr_image))
+        .route("/upcoming", get(pipeline::upcoming))
         .route("/settings", get(get_settings).put(put_settings))
         .route("/permissions", get(get_permissions))
         .route("/permissions/defaults", axum::routing::put(put_default_permissions))
@@ -196,6 +198,17 @@ fn image_response(bytes: Vec<u8>) -> Response {
 /// Proxy + disk cache, so browsers never need to reach Jellyfin themselves (it is often
 /// only reachable from the Docker network) and posters cost Jellyfin one resize each.
 async fn cached_image(app: &App, cache_name: String, jf_path: String, width: u32) -> ApiResult<Response> {
+    let jf = app.jellyfin();
+    cached(app, cache_name, "Jellyfin", jf.map(|jf| async move { Ok(jf.image(&jf_path, width).await?.map(|(bytes, _)| bytes)) })).await
+}
+
+/// The disk cache around any image source: a fresh file is served as it is, a miss is remembered (as an empty
+/// file) so grids of poster-less titles stay cheap, and when the source is down a stale poster beats a broken one.
+/// `fetch` is `None` when there is nowhere to ask; it is only polled when the cache has no answer.
+async fn cached<F>(app: &App, cache_name: String, source: &str, fetch: Option<F>) -> ApiResult<Response>
+where
+    F: std::future::Future<Output = anyhow::Result<Option<Vec<u8>>>>,
+{
     let dir: PathBuf = app.data_dir.join("cache").join("img");
     let file = dir.join(&cache_name);
     if let Ok(meta) = tokio::fs::metadata(&file).await {
@@ -209,28 +222,26 @@ async fn cached_image(app: &App, cache_name: String, jf_path: String, width: u32
             }
         }
     }
-    let jf = app.jellyfin().ok_or_else(|| ApiError::not_found("Image"))?;
-    let fetched = jf.image(&jf_path, width).await;
+    let fetch = fetch.ok_or_else(|| ApiError::not_found("Image"))?;
+    let fetched = fetch.await;
     tokio::fs::create_dir_all(&dir).await.ok();
     match fetched {
-        Ok(Some((bytes, _))) => {
+        Ok(Some(bytes)) => {
             tokio::fs::write(&file, &bytes).await.ok();
             Ok(image_response(bytes))
         }
         Ok(None) => {
-            // Remember the miss (as an empty file) so grids of poster-less items stay cheap.
             tokio::fs::write(&file, b"").await.ok();
             Err(ApiError::not_found("Image"))
         }
         Err(e) => {
-            // Jellyfin is down: a stale poster beats a broken one.
             if let Ok(bytes) = tokio::fs::read(&file).await {
                 if !bytes.is_empty() {
                     return Ok(image_response(bytes));
                 }
             }
             tracing::debug!("image fetch failed: {e:#}");
-            Err(ApiError::new(StatusCode::BAD_GATEWAY, "Could not load the image from Jellyfin"))
+            Err(ApiError::new(StatusCode::BAD_GATEWAY, format!("Could not load the image from {source}")))
         }
     }
 }
@@ -259,6 +270,24 @@ async fn user_image(State(app): State<App>, _user: AuthUser, Path(id): Path<Stri
     let id = valid_id(&id)?;
     let width = pick_width(q.w.or(Some(96)));
     cached_image(&app, format!("user-{id}-{width}"), format!("/Users/{id}/Images/Primary"), width).await
+}
+
+/// The poster of a title that is not in the library yet: only Sonarr or Radarr has it. Both path segments
+/// are numbers, the upstream path is a constant, and only posters of titles finstats itself has listed are
+/// served, so this is no window into everything Sonarr and Radarr know.
+async fn arr_image(State(app): State<App>, _user: AuthUser, Path((service_id, media_id)): Path<(i64, i64)>, Query(q): Query<ImageQuery>) -> ApiResult<Response> {
+    let width = if q.w.unwrap_or(250) <= 250 { 250 } else { 500 };
+    let svc = services::all(&app).iter().find(|s| s.id == service_id && s.enabled && s.kind.is_arr()).cloned().ok_or_else(|| ApiError::not_found("Image"))?;
+    if media_id <= 0 || !app.db.call(move |c| pipeline::poster_is_listed(c, service_id, media_id)).await? {
+        return Err(ApiError::not_found("Image"));
+    }
+    let worker = app.clone();
+    cached(&app, format!("arr-{service_id}-{media_id}-{width}"), svc.kind.label(), Some(async move {
+        let bytes = services::get_bytes(&worker, &svc, &crate::arr::poster_path(media_id, width), 6 * 1024 * 1024).await?;
+        // Whatever comes back is only passed on if it is an image.
+        Ok(bytes.filter(|b| sniff(b) != "application/octet-stream"))
+    }))
+    .await
 }
 
 /// Drop cached images nobody has refreshed in a month.
@@ -377,16 +406,14 @@ async fn get_tasks(State(app): State<App>, Manager(_): Manager) -> ApiResult {
     Ok(Json(json!({ "tasks": app.tasks.snapshot(), "collector": collector, "db": dbinfo })))
 }
 
+/// Every task that can be started by hand. `Tasks::try_start` panics on an id it does not know, so a test
+/// holds this list against `TASK_IDS`.
+const RUNNABLE: [&str; 6] = ["sync_users", "sync_libraries", "sync_events", "sync_server", "sync_userdata", "sync_upcoming"];
+
 async fn run_task(State(app): State<App>, Manager(_): Manager, Path(id): Path<String>) -> ApiResult<Response> {
-    let id: &'static str = match id.as_str() {
-        "sync_users" => "sync_users",
-        "sync_libraries" => "sync_libraries",
-        "sync_events" => "sync_events",
-        "sync_server" => "sync_server",
-        "sync_userdata" => "sync_userdata",
-        _ => return Err(ApiError::not_found("Task")),
-    };
-    if !sync::spawn(&app, id) {
+    let Some(id) = RUNNABLE.into_iter().find(|t| *t == id) else { return Err(ApiError::not_found("Task")) };
+    // One way in: the Jellyfin reads, then the ones that read from connected services.
+    if !sync::spawn(&app, id) && !services::spawn(&app, id) {
         return Err(ApiError::new(StatusCode::CONFLICT, "That task is already running"));
     }
     Ok((StatusCode::ACCEPTED, Json(json!({ "ok": true }))).into_response())
@@ -665,4 +692,20 @@ async fn import_jellystat(State(app): State<App>, Manager(_): Manager, req: Requ
         );
     });
     Ok((StatusCode::ACCEPTED, Json(json!({ "ok": true }))).into_response())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_task_that_can_be_started_is_known_and_has_exactly_one_runner() {
+        for id in RUNNABLE {
+            assert!(crate::state::TASK_IDS.contains(&id), "`{id}` would panic in Tasks::try_start");
+            assert_eq!(sync::TASKS.contains(&id) as u8 + services::TASKS.contains(&id) as u8, 1, "`{id}` needs one runner");
+        }
+        for id in sync::TASKS.iter().chain(services::TASKS.iter()) {
+            assert!(RUNNABLE.contains(id), "`{id}` cannot be started by hand");
+        }
+    }
 }

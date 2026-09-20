@@ -1,4 +1,5 @@
 mod api;
+mod arr;
 mod auth;
 mod backup;
 mod changelog;
@@ -11,6 +12,7 @@ mod import;
 mod jellyfin;
 mod media;
 mod network;
+mod pipeline;
 mod playback;
 mod profile;
 mod recap;

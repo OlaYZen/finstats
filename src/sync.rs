@@ -19,7 +19,13 @@ fn opt_str(v: &Value) -> Option<String> {
 }
 
 /// Runs a task unless it is already running. Returns false in that case.
+/// The tasks that read from Jellyfin. (`services::TASKS` are the ones that read from Sonarr and friends.)
+pub const TASKS: [&str; 5] = ["sync_users", "sync_libraries", "sync_events", "sync_server", "sync_userdata"];
+
 pub fn spawn(app: &App, id: &'static str) -> bool {
+    if !TASKS.contains(&id) {
+        return false;
+    }
     let Some(jf) = app.jellyfin() else { return false };
     if !app.tasks.try_start(id, "Starting…") {
         return false;
@@ -94,6 +100,9 @@ pub async fn scheduler(app: App) {
                 crate::network::refresh(&app).await;
                 crate::geo::refresh(&app).await;
                 crate::services::check_all(&app).await;
+                if !crate::services::enabled(&app, crate::services::Kind::is_arr).is_empty() {
+                    crate::services::spawn(&app, "sync_upcoming");
+                }
                 spawn(&app, "sync_users");
                 spawn(&app, "sync_events");
                 spawn(&app, "sync_server");
@@ -338,6 +347,8 @@ pub fn backfill_playbacks(conn: &Connection) -> Result<()> {
          WHERE runtime_s IS NULL;",
     )?;
     crate::relink::relink_orphans(conn)?;
+    // New titles may be what Sonarr, Radarr or a request were waiting for.
+    crate::pipeline::link(conn)?;
     Ok(())
 }
 

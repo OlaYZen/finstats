@@ -103,6 +103,12 @@ pub struct Scope {
     pub perms: crate::auth::Perms,
 }
 
+/// Whose rows a request may be about: without "see everyone" the caller's own, whatever the URL asks for;
+/// with it, the person asked for, or everybody (`None`). The one place this rule is written down.
+pub fn pinned_user(user: &AuthUser, asked: Option<&str>) -> Option<String> {
+    if user.perms.see_everyone { asked.map(db::norm_id).filter(|s| !s.is_empty()) } else { Some(user.id.clone()) }
+}
+
 impl Scope {
     pub fn new(app: &App, user: &AuthUser, q: &FilterQuery) -> Self {
         let clean = |s: &Option<String>| s.as_deref().map(db::norm_id).filter(|s| !s.is_empty());
@@ -110,7 +116,7 @@ impl Scope {
             days: q.days.unwrap_or(0).clamp(0, 36_500),
             since: None,
             // Without "see everyone" a request is pinned to the caller, whatever the URL asks for.
-            user_id: if user.perms.see_everyone { clean(&q.user_id) } else { Some(user.id.clone()) },
+            user_id: pinned_user(user, q.user_id.as_deref()),
             library_id: clean(&q.library_id),
             min_play_s: app.settings().min_play_s,
             perms: user.perms,
@@ -925,7 +931,8 @@ pub async fn item_detail(State(app): State<App>, user: AuthUser, Path(id): Path<
         }
         // A show or a season has no tracks of its own: say how many of its episodes have each language,
         // which is what tells a complete dub from one that stops after season one.
-        let item_type = item.get("type").and_then(Value::as_str).unwrap_or("");
+        let item_type = item.get("type").and_then(Value::as_str).unwrap_or("").to_string();
+        let item_type = item_type.as_str();
         if matches!(item_type, "Series" | "Season") {
             let parent = if item_type == "Series" { "e.series_id" } else { "e.season_id" };
             let files = format!("FROM items e WHERE {parent} = ?1 AND e.type = 'Episode' AND e.removed = 0 AND e.size_bytes IS NOT NULL");
@@ -936,6 +943,13 @@ pub async fn item_detail(State(app): State<App>, user: AuthUser, Path(id): Path<
                     Ok(rows_json(c, &sql, &[id.clone().into()])?.into_iter().map(Value::Object).collect())
                 };
                 item.insert("language_coverage".into(), json!({ "episodes": total, "audio": per("audio_languages")?, "subtitles": per("subtitle_languages")? }));
+            }
+        }
+        // What Sonarr or Radarr expect next for this title. About the title, not about people.
+        if matches!(item_type, "Series" | "Movie") {
+            let next = crate::pipeline::upcoming_for_item(c, &id)?;
+            if !next.is_empty() {
+                item.insert("upcoming".into(), json!(next));
             }
         }
         let (series, bucket) = daily(c, scope, &cond)?;

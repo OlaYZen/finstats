@@ -261,6 +261,22 @@ pub async fn get_json(app: &App, svc: &Service, path: &str, query: &[(&str, Stri
     resp.json::<Value>().await.map_err(|e| explain(e, svc))
 }
 
+/// Bytes from Sonarr or Radarr (a poster). `None` for a 404 and for anything larger than `cap`.
+pub async fn get_bytes(app: &App, svc: &Service, path: &str, cap: usize) -> Result<Option<Vec<u8>>> {
+    let resp = app.services_http.of(svc).get(format!("{}{path}", svc.url)).header("X-Api-Key", svc.secret()).header(ACCEPT, "image/*").send().await.map_err(|e| explain(e, svc))?;
+    if resp.status() == StatusCode::NOT_FOUND {
+        return Ok(None);
+    }
+    if !resp.status().is_success() {
+        return Err(refuse(resp.status(), resp.headers(), svc));
+    }
+    if resp.content_length().is_some_and(|n| n as usize > cap) {
+        return Ok(None);
+    }
+    let bytes = resp.bytes().await.map_err(|e| explain(e, svc))?;
+    Ok((bytes.len() <= cap).then(|| bytes.to_vec()))
+}
+
 /// Does the address answer like the service it is meant to be, and does it accept the secret? → (what it is, its version)
 pub async fn test(app: &App, svc: &Service) -> Result<(String, String)> {
     match svc.kind {
@@ -344,6 +360,26 @@ pub async fn record(app: &App, id: i64, outcome: std::result::Result<Option<Stri
     if changed {
         let _ = app.db.call(move |c| Ok(c.execute("UPDATE services SET version = ?1, last_ok_at = ?2, last_error = ?3 WHERE id = ?4", params![after.version, after.last_ok_at, after.last_error, id])?)).await;
     }
+}
+
+/// The tasks that read from these services. `sync::spawn` has its own list, and insists on a Jellyfin connection.
+pub const TASKS: [&str; 1] = ["sync_upcoming"];
+
+/// Runs a task unless it is already running (or is not one of ours). Returns false in that case.
+pub fn spawn(app: &App, id: &str) -> bool {
+    let Some(id) = TASKS.into_iter().find(|t| *t == id) else { return false };
+    if !app.tasks.try_start(id, "Starting…") {
+        return false;
+    }
+    let app = app.clone();
+    tokio::spawn(async move {
+        let outcome = match id {
+            "sync_upcoming" => crate::arr::sync_upcoming(&app).await,
+            other => Err(anyhow!("unknown task {other}")),
+        };
+        app.tasks.finish(id, outcome.map(|m| (m, None)));
+    });
+    true
 }
 
 /// With the other small, regular jobs: is every connection still answering? This is what keeps the status
