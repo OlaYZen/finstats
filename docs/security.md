@@ -70,3 +70,16 @@ from outlines bundled with finstats; no map tiles or map service are involved, s
 **What the Security page is, and is not.** A place is the centre of a city or of an ISP's region, never a household, and it can be
 hundreds of kilometres off; a VPN or a phone on mobile data looks like a trip. Alerts (*impossible travel*, *new country*) are a
 reason to look, not proof. The page needs both *see network details* and *see everyone's activity*; resolving alerts needs *manage*.
+
+**The services you connect.** Under **Settings → Connections** a Jellyfin administrator can point finstats at Sonarr, Radarr, Seerr and a torrent
+client (qBittorrent, Transmission, Deluge). These are requests to addresses *you* enter, normally on your own network; finstats contacts nothing
+on its own account, and the two outside requests above stay the only ones.
+- **Read-only.** Towards Sonarr, Radarr and Seerr finstats sends `GET` and nothing else. The torrent clients only speak `POST` (a login, an RPC
+  envelope), so there the rule is a fixed list of calls that all read (`torrents/info`, `torrent-get`, `web.update_ui` and the like), and a test
+  fails if anything else is added. finstats never approves a request, starts a search, or adds, pauses or removes a download.
+- **Keys and passwords** are stored in finstats' database next to the Jellyfin key, are never sent back to the browser (the settings page only
+  learns that one is stored), never written to a log and never part of a backup. They travel in headers or request bodies, never in an address.
+- **No redirect is followed.** A key would travel along a redirect to wherever it points, so finstats reports a redirect as an error and asks for
+  the final address instead.
+- **Certificates are verified.** A service with a self-signed certificate needs "Accept a self-signed certificate" switched on for that one
+  connection; finstats then does not verify who answers there. Plain `http://` on your own network needs no switch.

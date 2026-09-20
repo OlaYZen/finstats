@@ -118,8 +118,10 @@ whatever permissions they hold, and there is no recap of the whole server.
   makes by default is a plain "what is my IP" lookup, so that people watching at home through your public
   address are not counted as remote. It carries no information about you or your server, and one
   switch in Settings turns it off. The Security map needs a geolocation database; downloading it is
-  off until you ask for it, and addresses are always looked up on your own machine.
-- **Read-only.** finstats never changes anything on your Jellyfin server and never starts a library scan.
+  off until you ask for it, and addresses are always looked up on your own machine. Sonarr, Radarr, Seerr and torrent
+  clients are reached at the addresses you enter, on your own network.
+- **Read-only.** finstats never changes anything on your Jellyfin server and never starts a library scan. The same goes for
+  the services you connect (Sonarr, Radarr, Seerr, your torrent client): it reads, and that is all.
 
 ## Get started
 
@@ -197,6 +199,7 @@ Everything works out of the box. If you want to tune it, **Settings** in the app
 | **Check every…** | How often finstats looks at what is playing: every second while someone is watching, every 5 seconds while nobody is. |
 | **Treat a restart as the same play** | A stream that stops and resumes within 10 minutes counts as one viewing. |
 | **Home network** | Which plays count as local. Private addresses always do; with *Recognise my own public address* on (the default), so does your household's public IP, looked up every 15 minutes and remembered as it changes. You can add more addresses by hand. |
+| **Connections** | Sonarr, Radarr, Seerr and a torrent client (qBittorrent, Transmission, Deluge), several of a kind if you have them. Each is tested before it is saved; keys and passwords are never shown again and never part of a backup. Jellyfin administrators only. |
 | **Security** | The city database that places addresses: download DB-IP's free one with a click and keep it fresh monthly, or drop your own `.mmdb` into `data/geoip/`. Also how fast (900 km/h) and how far apart (500 km) two sightings must be to count as impossible travel. |
 | **Count it as watching together within** | How close together different people must start the same title to count as a group. Default 60 seconds. |
 | **Ignore plays shorter than** | Leave accidental clicks out of the statistics. |
