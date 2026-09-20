@@ -219,6 +219,10 @@ Your data lives in the `data` folder and upgrades itself on start-up; finstats a
 backups there. After an update, the **Patch notes** tab shows a dot until you have read what changed. The same
 notes are on the [releases page](https://github.com/OlaYZen/finstats/releases) and in [CHANGELOG.md](CHANGELOG.md).
 
+Updates only go forward. The database remembers the newest version that has opened it, and an older finstats
+refuses to start on it rather than risk your history; the message says how to get going again. To really go back to
+an older version, start it on an empty data folder and restore one of the backups (`finstats restore <file>`).
+
 ## Questions
 
 **Does it slow Jellyfin down?**

@@ -47,6 +47,9 @@ there, not from the crate, to stay on the version `r2d2_sqlite` uses.
 
 **Migrations** are the `MIGRATIONS` array in `db.rs`, applied by index against `PRAGMA user_version`. Released
 migrations are immutable — deployed databases have already run them. Add a new entry; never edit or reorder one.
+`Db::open` also refuses a database from the future (`refuse_downgrade`): the settings key `app_version` holds the newest
+version that has opened it, and a binary older than that, or one with fewer migrations than `user_version`, bails before
+writing anything. Releases up to 1.0.4 predate the check and cannot be stopped. The key is not part of backups on purpose.
 
 **Library reads must ask for real items.** `items_page` passes `CollapseBoxSetItems=false` (otherwise servers with
 "group movies into collections" return the BoxSet *instead of* its films, which then get flagged removed) and
