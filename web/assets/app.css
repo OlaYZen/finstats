@@ -1378,3 +1378,24 @@ select.input { appearance: none; padding-right: 30px; background-image: linear-g
 select.input:disabled { opacity: .6; }
 .conn-form, .conn-form .form-grid > * { min-width: 0; }
 .conn-form .input { width: 100%; max-width: 100%; }
+
+/* ---------------------------------------------------------------- pipeline: the agenda of what is coming */
+.card-agenda[hidden] { display: none; }
+.agenda { display: flex; flex-direction: column; gap: 18px; }
+.agenda-head { display: flex; align-items: baseline; gap: 8px; font-size: 13px; font-weight: 600; color: var(--text); margin: 0 0 6px; padding-bottom: 6px; border-bottom: 1px solid var(--border-soft); }
+.agenda-count { font-size: 11.5px; font-weight: 400; color: var(--text-faint); }
+.up-list { display: flex; flex-direction: column; }
+.up-row { display: flex; align-items: center; gap: 12px; padding: 7px 0; min-width: 0; }
+.up-row + .up-row { border-top: 1px solid var(--border-soft); }
+.up-row .poster-sm { width: 38px; }
+.up-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.up-line { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.up-title { font-weight: 550; color: var(--text); }
+.up-what { color: var(--text-muted); font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.up-tags { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; font-size: 12.5px; }
+.up-tags:empty { display: none; }
+.up-follow .icon { color: var(--accent-hi); }
+.up-people { display: inline-flex; align-items: center; gap: 6px; color: var(--text-muted); min-width: 0; }
+.up-people .icon { color: var(--text-faint); flex: none; }
+.up-when { flex: none; color: var(--text-muted); font-size: 12.5px; }
+span.shelf-card { cursor: default; }

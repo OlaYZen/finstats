@@ -6,6 +6,7 @@ import { card, filterBar, dataView, sk, poster, avatar, chip, statTile, playsTab
 import { activityCard } from '../widgets.js';
 import { openPlayModal } from '../playmodal.js';
 import { plainTable } from '../tables.js';
+import { agenda } from '../upcoming.js';
 
 const TYPE_LABEL = { Movie: 'Movie', Series: 'Series', Episode: 'Episode', Season: 'Season', Audio: 'Track', MusicAlbum: 'Album' };
 
@@ -79,6 +80,7 @@ export default function itemPage(ctx) {
           statTile({ label: 'Watched by', value: `${num(t.users)} ${t.users === 1 ? 'user' : 'users'}`, hint: ' ' })),
         activityCard({ daily: d.daily, bucket: d.bucket, title: 'Plays over time' }),
         castCard(d.people),
+        comingCard(it),
         d.seasons && d.seasons.length ? card({ title: 'Seasons', sub: 'Plays per episode in this range', body: seasons(d.seasons) }) : null,
         card({ title: 'Watched by', cls: 'card-flush', body: watchers(d.watchers) }),
         playedBy(d.played_by),
@@ -93,6 +95,13 @@ export default function itemPage(ctx) {
   filtersSlot.append(filterBar({ days, onDays: (v) => { days = v; saveDays(v); replaceQuery({ days }); dv.load(); } }));
   ctx.root.append(filtersSlot, view);
   dv.load();
+}
+
+/** What Sonarr or Radarr expect next for this title. Absent without a connection or without anything due. */
+function comingCard(it) {
+  const list = Array.isArray(it.upcoming) ? it.upcoming : [];
+  if (!list.length) return null;
+  return card({ title: it.type === 'Series' ? 'Next episodes' : 'Coming releases', sub: 'From Sonarr and Radarr', cls: 'card-agenda', body: agenda(list) });
 }
 
 /**

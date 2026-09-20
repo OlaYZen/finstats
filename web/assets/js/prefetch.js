@@ -63,7 +63,7 @@ async function warmUp() {
   const gen = generation, me = state.user;
   if (!me || frugal()) return;
   const step = async (href) => { await visible(); await idle(); return gen === generation && state.user === me ? prefetch(href) : null; };
-  const top = ['/', `/users/${me.id}`, '/activity', '/libraries', '/users', '/playback', `/users/${me.id}/timeline`, '/changelog', '/server', '/events', '/recap'];
+  const top = ['/', `/users/${me.id}`, '/activity', '/libraries', '/users', '/playback', `/users/${me.id}/timeline`, '/changelog', '/server', '/events', '/recap', '/pipeline'];
   const got = {};
   for (const href of top) got[href] = await step(href);
   // Few enough to fetch one by one. Films, shows and episodes are not: they wait for a pointer.

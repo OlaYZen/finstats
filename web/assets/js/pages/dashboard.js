@@ -3,10 +3,15 @@ import { api, isAbort, soft } from '../api.js';
 import { state, readDays, saveDays, can } from '../state.js';
 import { replaceQuery } from '../router.js';
 import { pageHeader, card, filterBar, dataView, sk, topList, playsTable, emptyState, poster } from '../components.js';
-import { activityCard, heatmapCard, overviewTiles, nowPlayingView, insightTiles, genresCard, failedLoginsCard } from '../widgets.js';
+import { activityCard, heatmapCard, overviewTiles, nowPlayingView, insightTiles, genresCard, failedLoginsCard, shelfRow } from '../widgets.js';
 import { openPlayModal } from '../playmodal.js';
 import { recapBanner } from './recap.js';
+import { loadUpcoming, entryCard } from '../upcoming.js';
 import { groupsCard } from '../widgets.js';
+
+// Coming up: the same loader for the card and the prefetcher. Nothing is asked when no Sonarr or Radarr is connected.
+const hasComing = () => !!(state.user && state.user.features && state.user.features.upcoming);
+const loadComing = (signal) => soft(loadUpcoming({ days: 7 }, signal));
 
 /** Everything the filter row scopes. Shared with the prefetcher, so both ask for exactly the same URLs. */
 export async function loadDashboard({ days, userId }, signal) {
@@ -28,7 +33,7 @@ export async function loadDashboard({ days, userId }, signal) {
 const scopeOf = (query) => ({ days: readDays(query), userId: can('see_everyone') ? query.get('user_id') || '' : '' });
 /** Newest arrivals in the libraries: the same for every range and person, so it loads apart from the filters. */
 const loadRecent = (signal) => soft(api.get('/library/recent', { limit: 30 }, { signal }));
-export const prefetchDashboard = ({ query, signal }) => [() => loadDashboard(scopeOf(query), signal), () => loadRecent(signal)];
+export const prefetchDashboard = ({ query, signal }) => [() => loadDashboard(scopeOf(query), signal), () => loadRecent(signal), ...(hasComing() ? [() => loadComing(signal)] : [])];
 
 export default function dashboard(ctx) {
   ctx.title('Dashboard');
@@ -74,6 +79,26 @@ export default function dashboard(ctx) {
     },
   }).load();
 
+  // ---- coming up: what Sonarr and Radarr expect this week. About the calendar, not about plays: no filter applies. Hides
+  // itself when nothing is connected or nothing is due.
+  const comingBody = h('div');
+  const comingArrows = h('span', { class: 'shelf-arrows', hidden: true });
+  const comingCard = card({ title: 'Coming up', sub: 'The next seven days in Sonarr and Radarr', cls: 'shelf-section', body: comingBody,
+    actions: [comingArrows, h('a', { class: 'btn btn-ghost btn-sm', href: '/pipeline?tab=upcoming' }, 'Calendar')] });
+  comingCard.hidden = true;
+  if (hasComing()) {
+    dataView({
+      container: comingBody, signal: ctx.signal,
+      skeleton: () => null,
+      fetch: () => loadComing(ctx.signal),
+      render: (d) => {
+        const list = ((d && d.entries) || []).slice(0, 30);
+        comingCard.hidden = !list.length;
+        return list.length ? shelfRow(list.map(entryCard), comingArrows, 'Coming up, soonest first') : null;
+      },
+    }).load();
+  }
+
   // ---- everything the filter row scopes
   const view = h('div', { class: 'stack' });
   const dv = dataView({
@@ -86,13 +111,14 @@ export default function dashboard(ctx) {
         return [emptyState('No plays recorded yet',
           can('manage') ? 'finstats is now watching your Jellyfin server — new plays show up here as they happen. You can also bring in your history from Jellystat.'
                 : 'Your plays show up here as they happen.',
-          can('manage') ? h('a', { class: 'btn btn-primary', href: '/settings#import' }, icon('upload', 14), 'Import from Jellystat') : null), shelfCard];
+          can('manage') ? h('a', { class: 'btn btn-primary', href: '/settings#import' }, icon('upload', 14), 'Import from Jellystat') : null), shelfCard, comingCard];
       }
       const usersMode = admin && !userId;
       return [
         overviewTiles({ totals: overview.totals, previous: overview.previous, daily: overview.daily, days, scoped: !admin || !!userId }),
         insightTiles(insights),
         shelfCard,
+        comingCard,
         activityCard({ daily: overview.daily, bucket: overview.bucket }),
         h('div', { class: 'grid-3' },
           card({ title: 'Top series', sub: 'By watch time', body: topList(series.rows) }),
@@ -125,74 +151,14 @@ export default function dashboard(ctx) {
   dv.load();
 }
 
-/** A row of posters that scrolls sideways inside itself; the arrows (put into `arrows`) move it by most of a screen. */
+/** Recently added: one card per arrival. */
 function shelf(items, arrows) {
-  const list = h('ul', { class: 'shelf', tabindex: 0, 'aria-label': 'Recently added, newest first' }, items.map((it) => h('li', null, h('a', { class: 'shelf-card', href: `/items/${it.id}` },
+  return shelfRow(items.map((it) => h('a', { class: 'shelf-card', href: `/items/${it.id}` },
     poster(it.image_item_id || it.id, it.name, { w: 300, cls: 'poster-grid' }),
     h('span', { class: 'shelf-when' }, relEl(it.added_at, '')),
     h('span', { class: 'shelf-name' }, it.name),
     it.sub ? h('span', { class: 'shelf-sub' }, it.sub) : null,
-    h('span', { class: 'shelf-sub' }, whatArrived(it))))));
-  // Scrolling is done by hand. CSS scroll-snap swallowed a wheel notch that moved less than half a card (the row sprang back),
-  // native arrow keys moved 40 px at a time and Home/End not at all. Everything goes through one glide towards a target, so
-  // fast repeated input adds up instead of restarting an animation.
-  const calm = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
-  let target = 0, frame = 0;
-  const max = () => Math.max(0, list.scrollWidth - list.clientWidth);
-  const step = () => { const li = list.firstElementChild; return li ? li.getBoundingClientRect().width + (parseFloat(getComputedStyle(list).columnGap) || 0) : 148; };
-  function glide(to) {
-    target = Math.max(0, Math.min(max(), to));
-    if (calm) { list.scrollLeft = target; return; }
-    if (frame) return;
-    const tick = () => {
-      const d = target - list.scrollLeft, before = list.scrollLeft;
-      if (Math.abs(d) < 1.5) { list.scrollLeft = target; frame = 0; return; }
-      list.scrollLeft = before + Math.sign(d) * Math.max(1, Math.abs(d) * 0.24);
-      frame = list.scrollLeft === before ? 0 : requestAnimationFrame(tick); // an edge we cannot pass: stop
-    };
-    frame = requestAnimationFrame(tick);
-  }
-  const from = () => (frame ? target : list.scrollLeft); // mid-glide, the next input continues from where the glide is heading
-  const page = (dir) => glide(from() + dir * Math.max(step(), list.clientWidth - step()));
-
-  const prev = h('button', { type: 'button', class: 'icon-btn', 'aria-label': 'Scroll back', onClick: () => page(-1) }, icon('chevronLeft', 16));
-  const next = h('button', { type: 'button', class: 'icon-btn', 'aria-label': 'Scroll on', onClick: () => page(1) }, icon('chevronRight', 16));
-  arrows.replaceChildren(prev, next);
-
-  // Shift + wheel (a mouse has no sideways wheel). A trackpad's own sideways swipe and the
-  // plain wheel are left to the browser, so the page still scrolls normally with the pointer over the row.
-  list.addEventListener('wheel', (e) => {
-    if (!e.shiftKey || e.ctrlKey || e.metaKey) return;
-    const raw = e.deltaX || e.deltaY; // Chromium turns shift+wheel into deltaX, Firefox leaves it in deltaY
-    if (!raw || max() <= 0) return;
-    e.preventDefault();
-    const px = Math.abs(e.deltaMode === 1 ? raw * 16 : e.deltaMode === 2 ? raw * list.clientWidth : raw);
-    // One notch is one poster, like one press of an arrow key, however many pixels the browser calls a notch (48 to 100). People
-    // flick several notches at a time, so anything more per notch overshoots. The small deltas of a trackpad or a free-spinning
-    // wheel scale instead, a notch's worth of them adding up to the same poster.
-    glide(from() + Math.sign(raw) * (px >= 30 ? step() : px * step() / 50));
-  }, { passive: false });
-
-  // Arrow keys move one poster, Page Up/Down a screenful, Home/End to the ends — on the row itself or on a card in it.
-  list.addEventListener('keydown', (e) => {
-    if (e.altKey || e.ctrlKey || e.metaKey) return;
-    const to = { ArrowRight: () => from() + step(), ArrowLeft: () => from() - step(), PageDown: () => from() + list.clientWidth - step(),
-      PageUp: () => from() - list.clientWidth + step(), Home: () => 0, End: () => max() }[e.key];
-    if (!to) return;
-    e.preventDefault();
-    glide(to());
-  });
-
-  // The arrows stay clickable at either end (aria-disabled says why nothing happens) and vanish when everything fits.
-  const paint = () => {
-    arrows.hidden = max() <= 4;
-    prev.setAttribute('aria-disabled', String(list.scrollLeft <= 2));
-    next.setAttribute('aria-disabled', String(list.scrollLeft >= max() - 2));
-  };
-  list.addEventListener('scroll', paint, { passive: true });
-  if ('ResizeObserver' in window) new ResizeObserver(paint).observe(list);
-  requestAnimationFrame(paint);
-  return list;
+    h('span', { class: 'shelf-sub' }, whatArrived(it)))), arrows, 'Recently added, newest first');
 }
 
 function whatArrived(it) {

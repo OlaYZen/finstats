@@ -4,6 +4,7 @@
 import { h, icon, num, relTime, dateTime, mount, logo } from './dom.js';
 import { api, isAbort } from './api.js';
 import { state, resetCaches, hasUnseenVersion, onVersionSeen, noteRunningVersion, can } from './state.js';
+import { hasPipeline } from './pages/pipeline.js';
 import { navigate, onRouteChange } from './router.js';
 import { avatar } from './components.js';
 import { openPalette } from './palette.js';
@@ -22,6 +23,7 @@ function navItems() {
     can('see_everyone') ? { href: '/users', label: 'Users', icon: 'users', not: `/users/${me.id}` } : null,
     { href: '/libraries', label: 'Libraries', icon: 'library', also: ['/items'] },
     { href: '/playback', label: 'Playback', icon: 'sliders' },
+    hasPipeline() ? { href: '/pipeline', label: 'Pipeline', icon: 'layers' } : null,
     can('see_server') ? { href: '/server', label: 'Server', icon: 'server' } : null,
     can('see_server') ? { href: '/events', label: 'Server log', icon: 'log' } : null,
     can('see_network') && can('see_everyone') ? { href: '/security', label: 'Security', icon: 'shield' } : null,
@@ -148,7 +150,7 @@ function buildShell() {
   const el = h('div', { class: 'app' }, topbar, sidebar, scrim, main, statusbar, toTop);
 
   return {
-    el, content, userId: me.id + ':' + me.is_admin + ':' + JSON.stringify(me.permissions || {}),
+    el, content, userId: me.id + ':' + me.is_admin + ':' + JSON.stringify(me.permissions || {}) + JSON.stringify(me.features || {}),
     setActive(path) {
       setDrawer(false);
       for (const a of navLinks) {
@@ -181,7 +183,7 @@ export function layout(kind) {
     if (!bare.isConnected) mount(appRoot, bare);
     return bare;
   }
-  const key = state.user.id + ':' + state.user.is_admin + ':' + JSON.stringify(state.user.permissions || {});
+  const key = state.user.id + ':' + state.user.is_admin + ':' + JSON.stringify(state.user.permissions || {}) + JSON.stringify(state.user.features || {});
   if (shell && shell.userId !== key) { shell.destroy(); shell = null; }
   if (!shell) {
     shell = buildShell();

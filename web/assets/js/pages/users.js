@@ -8,6 +8,7 @@ import { bucketList, methodsBar } from '../charts.js';
 import { openPlayModal } from '../playmodal.js';
 import { profileAllTime } from './showprogress.js';
 import { dataTable, plainTable } from '../tables.js';
+import { loadUpcoming, agenda } from '../upcoming.js';
 
 // Loaders are shared with the prefetcher, so a prefetched view has exactly the address the page asks for.
 const loadUsers = (days, signal) => api.get('/users', { days }, { signal });
@@ -21,7 +22,10 @@ async function loadUser(id, days, signal) {
   return { detail, recent, groups };
 }
 export const prefetchUsers = ({ query, signal }) => [() => loadUsers(readDays(query), signal)];
-export const prefetchUser = ({ params, query, signal }) => [() => loadUser(params.id, readDays(query), signal)];
+// What is coming for the shows this person watches. Only asked for when a Sonarr is connected.
+const hasComing = () => !!(state.user && state.user.features && state.user.features.upcoming);
+const loadComing = (id, signal) => soft(loadUpcoming({ days: 30, userId: id, mine: true }, signal));
+export const prefetchUser = ({ params, query, signal }) => [() => loadUser(params.id, readDays(query), signal), ...(hasComing() ? [() => loadComing(params.id, signal)] : [])];
 
 // ---------------------------------------------------------------- /users
 export function usersPage(ctx) {
@@ -72,6 +76,23 @@ export function userPage(ctx) {
   const view = h('div', { class: 'stack' });
   const allTime = profileAllTime({ userId: id, signal: ctx.signal });
 
+  // Loads on its own and is slotted into every render below, like the all-time cards. Hidden when there is nothing to wait for.
+  const comingBody = h('div');
+  const comingCard = card({ title: 'Coming up', sub: 'New episodes of the shows watched here, in the next 30 days', cls: 'card-agenda', body: comingBody,
+    actions: h('a', { class: 'btn btn-ghost btn-sm', href: `/pipeline?tab=upcoming&mine=1${can('see_everyone') ? `&user_id=${encodeURIComponent(id)}` : ''}` }, 'Calendar') });
+  comingCard.hidden = true;
+  if (hasComing()) {
+    dataView({
+      container: comingBody, signal: ctx.signal, skeleton: () => null,
+      fetch: () => loadComing(id, ctx.signal),
+      render: (d) => {
+        const list = ((d && d.entries) || []).slice(0, 8);
+        comingCard.hidden = !list.length;
+        return list.length ? agenda(list) : null;
+      },
+    }).load();
+  }
+
   const dv = dataView({
     container: view, signal: ctx.signal,
     skeleton: () => [sk.tiles(4), sk.cardBlock(260), h('div', { class: 'grid-2' }, sk.cardRows(4), sk.cardRows(4))],
@@ -102,6 +123,7 @@ export function userPage(ctx) {
           card({ title: 'Play methods', sub: 'Share of plays', body: methodsBar(d.methods) }),
           card({ title: 'Clients', sub: 'By plays', body: bucketList(d.clients) })),
         allTime.shows,
+        comingCard,
         Array.isArray(d.genres) ? genresCard(d.genres) : null,
         groupsCard(groups, { forUser: id }),
         card({ title: 'Devices', cls: 'card-flush', body: devicesTable(d.devices) }),

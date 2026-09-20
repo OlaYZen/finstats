@@ -1,10 +1,11 @@
 import { h, icon, num, bytes, relTime, dateTime, mount, humanize } from '../dom.js';
 import { api, isAbort, uploadRaw } from '../api.js';
-import { isAdmin } from '../state.js';
+import { isAdmin, state } from '../state.js';
 import { pageHeader, card, sk, toggle, setBusy, inlineError, errorState, facts, spinner, avatar } from '../components.js';
 import { connectionsPanel } from '../connections.js';
 import { dataTable, plainTable } from '../tables.js';
 
+const SERVICE_TASKS = { sync_upcoming: 'upcoming' };   // task → the feature it belongs to
 const TASK_LABEL = {
   sync_users: ['Sync users', 'Names, roles and last-seen times from Jellyfin'],
   sync_libraries: ['Read libraries and items', 'Copies titles and file details from Jellyfin. Read-only: it never starts a scan on Jellyfin'],
@@ -14,6 +15,7 @@ const TASK_LABEL = {
   import: ['Jellystat import', 'Runs when you upload a backup below'],
   backup: ['Backup', 'Writes a finstats backup. Runs by itself on the schedule under Backups'],
   restore: ['Restore', 'Runs when you restore a finstats backup under Backups'],
+  sync_upcoming: ['Read Sonarr and Radarr calendars', 'What is about to air or be released. Read-only, every 15 minutes'],
   geoip: ['Geolocation database', 'Downloads the city database the Security page places addresses with. Started under Security below'],
 };
 /** "in 6 days" — relTime only looks backwards. */
@@ -488,6 +490,9 @@ export default function settings(ctx) {
 
   let tasksSig = '';
   function renderTasks(tasks, force = false) {
+    // A task that reads from a service nobody has connected would only ever say so.
+    const feat = (state.user && state.user.features) || {};
+    tasks = tasks.filter((t) => !SERVICE_TASKS[t.id] || feat[SERVICE_TASKS[t.id]]);
     const sig = JSON.stringify([tasks, [...runBusy], taskErr]);
     if (!force && sig === tasksSig) return; // don't rebuild (and drop focus) when nothing changed
     tasksSig = sig;
