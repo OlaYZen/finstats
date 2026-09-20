@@ -7,6 +7,11 @@ Format: `## [version] - date`, a one-paragraph summary (required for an `x.y.0` 
 headline of that series in the app; optional otherwise), then `### Added`,
 `### Changed`, `### Fixed` or `### Removed` with one bullet per change.
 
+## [1.0.3] - 2026-09-20
+
+### Added
+- **Episode pictures.** The page of an episode now shows that episode's own picture, the same one Jellyfin shows in its episode list, instead of the show's poster, which was identical for every episode. An episode Jellyfin has no picture for keeps the show's poster.
+
 ## [1.0.2] - 2026-09-20
 
 ### Fixed
