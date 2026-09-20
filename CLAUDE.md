@@ -180,7 +180,15 @@ Pages load through `dataView()` (`components.js`), which is stale-while-revalida
 `fetch()` issues (they must be fired synchronously when `fetch()` is called), uses them as the cache key, paints a
 remembered result at once, refreshes behind it and only re-renders when the JSON differs. Skeletons appear only after
 150 ms and then stay at least 300 ms. The cache is in-memory per tab and is cleared by `resetCaches()` (sign-out) and
-by any non-GET request. Esc is handled globally in `shell.js` (steps back out of `/libraries/:id`, `/users/:id`,
+by any non-GET request. **Prefetch (`prefetch.js`).** Fills that same cache before a page is asked for: a warm-up about a second after the first page (top-level
+pages, then each library and the 12 most active people, one at a time while the browser is idle; at most every 2 min; not on
+`saveData`/2g), and on intent (pointer resting 90 ms on a link, focus, touch). Titles and people are fetched on intent only, never in bulk.
+It only works because page and prefetcher call the *same loader*: every page module exports `prefetchX(ctx) → [() => load…]` next to
+the loader its `dataView` uses, and `main.js` passes it as `route(…, { prefetch })`. A page whose `fetch` is written inline cannot be
+prefetched, and a loader copied into `prefetch.js` would drift from the page's URLs and silently miss. Clearing the cache bumps a
+generation and aborts what is on its way, so an answer from before a sign-out or a write is never stored. Pages join a prefetch
+already in flight (`shareRequestsOf`); only the prefetcher's requests can be joined, because a page's signal dies with the page.
+Esc is handled globally in `shell.js` (steps back out of `/libraries/:id`, `/users/:id`,
 `/items/:id`); overlays must keep calling `stopPropagation()` on their own Esc.
 Each screen is held to the UX patterns from <https://uxgoodpatterns.com>. A generated copy, `ux-rules.md`, may sit in the working
 tree for reference; it is someone else's work, is git-ignored and must never be committed. The look is Obsidian's dark theme via the tokens at the top of
