@@ -7,6 +7,18 @@ Format: `## [version] - date`, a one-paragraph summary (required for an `x.y.0` 
 headline of that series in the app; optional otherwise), then `### Added`,
 `### Changed`, `### Fixed` or `### Removed` with one bullet per change.
 
+## [1.1.0] - 2026-09-20
+
+A timeline of everything you have watched. Every profile has a new **Timeline** tab: your watching as one trail from today back to the first play finstats knows about, with an evening of episodes folded into a single stop. On a wide screen the trail winds across the page like a snake, three stops to a row; on a phone it is one straight line.
+
+### Added
+- **Timeline**, next to **Overview** on every profile. Each stop is a poster with what was watched and when: "Season 2 · Episodes 3–6", a film (and whether it took more than one sitting), an album and how many tracks of it. Episodes of the same season that were watched one after the other are one stop; anything watched in between starts a new one. A stop opens the show, film or track.
+- The trail follows the width of the window: three stops in a row on a wide screen, two on a narrower one, every other row running backwards with a bend joining it to the next, down to a single straight line on a phone. The first stop of each month carries the month.
+- Older stops load by themselves as you scroll, all the way back to where the history starts.
+- **Libraries** switches above the trail leave out what you do not want to see, such as music. The choice is part of the address, so it survives a reload and can be bookmarked.
+- Something that is still playing says **Playing now**.
+- The same rules as everywhere else apply: you see your own timeline, and other people's only with the "see everyone" permission.
+
 ## [1.0.5] - 2026-09-20
 
 ### Added
