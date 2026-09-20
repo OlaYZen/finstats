@@ -15,7 +15,7 @@
 </p>
 
 <p align="center">
-  <img src="docs/screenshots/dashboard.png" alt="The finstats dashboard: two live streams, watch-time tiles and an activity chart" width="100%">
+  <img src="docs/screenshots/dashboard.png" alt="The finstats dashboard: two live streams, watch-time tiles and the newest arrivals in the library" width="100%">
 </p>
 
 ## Why finstats
@@ -44,13 +44,22 @@ directly or transcodes, and why. A status bar keeps the essentials in sight on e
 - **Which apps cause transcoding?** Every client, split by direct play, remux and transcode, with the reasons Jellyfin reports.
 - **How much leaves the house?** Local versus remote plays and an estimate of data streamed. finstats knows your
   household's public address, so a phone on the Wi-Fi that goes through your public name still counts as home.
-- **Is that really them?** The **Security** page puts every play and sign-in on a world map, shows failed sign-ins from
-  outside, and raises an alert for *impossible travel* (home at eight, another continent twenty minutes later, or two
-  places at once) and for the first time someone shows up in a new country. Mark a VPN or a holiday as fine and it stays quiet.
 - **Do people finish what they start?** See how far viewers get before they stop.
 - **Want it in a different order?** Every table sorts by any column with a click, and long ones can be filtered as you type.
 - **What is my library made of?** Resolutions, codecs, HDR, size per decade, what was added when —
   and the big one: **titles nobody has ever watched**, sorted by how much space they take.
+
+### Is that really them?
+
+<img src="docs/screenshots/security.png" alt="Security page: a world map with a dot for every place people watch from, home in green, a live stream pulsing, a dashed line for an impossible trip from London to New York, and the alerts underneath" width="100%">
+
+The **Security** page puts every play and sign-in on a world map: home is one dot, places away from
+home another colour, streams running right now pulse, and failed sign-ins from outside show up in red.
+When an account is somewhere it cannot be (home at eight, another continent twenty minutes later, or
+two places at once), finstats raises an *impossible travel* alert with both sightings, the distance and
+the speed it would have taken; the first time someone shows up in a new country is flagged too. Mark a
+VPN or a holiday as fine and it stays quiet. Addresses are looked up in a database file on your own
+machine and the map is drawn by finstats itself, so no address or coordinate is sent anywhere.
 
 ### Every play, down to the pause button
 
