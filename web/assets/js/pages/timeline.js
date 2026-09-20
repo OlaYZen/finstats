@@ -16,21 +16,28 @@ const dayfy = new Intl.DateTimeFormat(undefined, { day: 'numeric', month: 'short
 const timef = new Intl.DateTimeFormat(undefined, { hour: '2-digit', minute: '2-digit', hour12: false });
 const TYPE_CLASS = { Movie: 'is-movie', Episode: 'is-episode', Audio: 'is-audio' };
 
+/** null = every library; otherwise exactly these (never none: switching the last one off shows all again). */
+function pickedOf(query) {
+  const picked = new Set(String(query.get('libraries') || '').split(',').filter((l) => /^[0-9a-f]{32}$/.test(l)));
+  return picked.size ? picked : null;
+}
+const pageParams = (picked, extra = {}) => ({ ...(picked ? { libraries: [...picked].join(',') } : {}), ...extra });
+const loadTimeline = (id, picked, signal) => api.get(`/users/${id}/timeline`, pageParams(picked), { signal });
+export const prefetchTimeline = ({ params, query, signal }) => [() => loadTimeline(params.id, pickedOf(query), signal)];
+
 export function timelinePage(ctx) {
   const id = ctx.params.id;
   ctx.title('Timeline');
-  // null = every library; otherwise exactly these (never none: switching the last one off shows all again).
-  let picked = new Set(String(ctx.query.libraries || '').split(',').filter((l) => /^[0-9a-f]{32}$/.test(l)));
-  if (!picked.size) picked = null;
+  let picked = pickedOf(ctx.query);
   const headerSlot = h('div');
   const filterSlot = h('div');
   const view = h('div');
-  const params = (extra = {}) => ({ ...(picked ? { libraries: [...picked].join(',') } : {}), ...extra });
+  const params = (extra) => pageParams(picked, extra);
 
   const dv = dataView({
     container: view, signal: ctx.signal,
     skeleton: () => h('div', { class: 'trail-sk' }, [0, 1, 2, 3, 4, 5].map(() => h('span', { class: 'sk trail-sk-stop' }))),
-    fetch: () => api.get(`/users/${id}/timeline`, params(), { signal: ctx.signal }),
+    fetch: () => loadTimeline(id, picked, ctx.signal),
     render: (d) => {
       paintHeader(d.user);
       paintFilter(d.libraries || []);
