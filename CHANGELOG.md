@@ -7,6 +7,18 @@ Format: `## [version] - date`, a one-paragraph summary (required for an `x.y.0` 
 headline of that series in the app; optional otherwise), then `### Added`,
 `### Changed`, `### Fixed` or `### Removed` with one bullet per change.
 
+## [1.2.0] - 2026-09-20
+
+See where people watch from. A new Security page puts plays, sign-ins and live streams on a world map and raises an alert when an account is somewhere it cannot be.
+
+### Added
+- **Security page** (for people who may see network details and everyone's activity): a world map with a dot for every place your users watch from, sized by how much happens there. Home is one green dot, places away from home are purple, streams running right now pulse, and failed sign-ins from outside are red. Drag to move, zoom with the buttons, the keys or Ctrl + wheel; dots that overlap merge until you zoom in. Below it: every place with its people, plays, watch time and sign-ins, and the countries by plays.
+- **Impossible travel.** When the same account is seen in two places that no flight connects (home at eight, New York twenty minutes later) or in two distant places at once, finstats raises an alert with both sightings, the distance, the time between them and the speed that would have taken. **Show on map** draws the trip.
+- **New country.** The first time someone plays or signs in from a country they have never been seen in.
+- **Resolve, with a memory.** Resolve an alert with a note, or tick "never report these two places for this person again" for a VPN or a phone whose carrier is "in" the capital. Alerts found in old history (after an import, or the first time a database is installed) are filed as resolved instead of flooding the list. Alerts and what you decided about them are part of backups.
+- **Places come from a file on your machine.** Addresses are looked up in a city database finstats reads locally; no address is ever sent anywhere, and the map is drawn from outlines bundled with finstats, not from a map service. Download DB-IP's free database with one click on the Security page or under **Settings → Security**, let finstats refresh it monthly (off until you switch it on), or drop your own `.mmdb` file (DB-IP, MaxMind GeoLite2-City) into `data/geoip/`. `FINSTATS_GEOIP_DB` names a file elsewhere.
+- **Settings → Security**: the database in use, the monthly update, and how fast (900 km/h) and how far apart (500 km) two sightings must be to count as impossible travel. City databases are often a few hundred kilometres off, which is what the distance is for.
+
 ## [1.1.3] - 2026-09-20
 
 ### Added
