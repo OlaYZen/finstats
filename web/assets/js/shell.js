@@ -93,8 +93,9 @@ function buildShell() {
   const sbStream = h('a', { href: '/', class: 'sb-item sb-link' }, sbDot, h('span', null, 'connecting…'));
   const sbPlays = h('span', { class: 'sb-item' });
   const sbSync = h('span', { class: 'sb-item' });
-  const sbVer = h('a', { class: 'sb-item sb-right sb-link', href: '/changelog', title: 'Patch notes' }, state.status && state.status.version ? 'v' + state.status.version : '');
-  const statusbar = h('footer', { class: 'statusbar', role: 'status', 'aria-label': 'Collector status' }, sbStream, sbPlays, sbSync, sbVer);
+  const sbRepo = h('a', { class: 'sb-item sb-right sb-link', href: 'https://github.com/OlaYZen/finstats', target: '_blank', rel: 'noopener noreferrer', title: 'finstats on GitHub' }, icon('github', 12), 'Repo');
+  const sbVer = h('a', { class: 'sb-item sb-link', href: '/changelog', title: 'Patch notes' }, state.status && state.status.version ? 'v' + state.status.version : '');
+  const statusbar = h('footer', { class: 'statusbar', role: 'status', 'aria-label': 'Collector status' }, sbStream, sbPlays, sbSync, sbRepo, sbVer);
 
   let sbTimer = null, sbAbort = null, dead = false;
   async function pollSummary() {
