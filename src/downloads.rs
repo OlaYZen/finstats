@@ -424,6 +424,12 @@ fn download_json(d: &Download, wishes: &Wishes) -> Value {
     })
 }
 
+/// Is this title in the queue right now? The queue is a listing finstats itself makes, so its posters are
+/// ones it may show — to the people who are allowed to see the queue in the first place.
+pub fn in_queue(app: &App, service_id: i64, media_id: i64) -> bool {
+    app.downloads.read().unwrap().rows.iter().any(|d| d.arr == Some((service_id, media_id)))
+}
+
 /// Add "how far along is it" to a request row. This is all somebody without `see_downloads` ever learns: never
 /// what the release is called, which client has it, how fast it is going or what else is in the queue.
 pub fn attach_progress(app: &App, row: &mut Value) {

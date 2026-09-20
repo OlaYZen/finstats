@@ -282,7 +282,13 @@ async fn user_image(State(app): State<App>, _user: AuthUser, Path(id): Path<Stri
 async fn arr_image(State(app): State<App>, user: AuthUser, Path((service_id, media_id)): Path<(i64, i64)>, Query(q): Query<ImageQuery>) -> ApiResult<Response> {
     let width = if q.w.unwrap_or(250) <= 250 { 250 } else { 500 };
     let svc = services::all(&app).iter().find(|s| s.id == service_id && s.enabled && s.kind.is_arr()).cloned().ok_or_else(|| ApiError::not_found("Image"))?;
-    if media_id <= 0 || !app.db.call(move |c| pipeline::poster_is_listed(c, service_id, media_id, &user)).await? {
+    // Only posters of titles finstats itself has listed: what is on the calendar, what somebody asked for, and
+    // what is downloading now (for the people who may see that). Anything else and the proxy would be a way to
+    // walk through the whole Arr library by counting upwards.
+    let listed = media_id > 0
+        && ((user.perms.see_downloads && crate::downloads::in_queue(&app, service_id, media_id))
+            || app.db.call(move |c| pipeline::poster_is_listed(c, service_id, media_id, &user)).await?);
+    if !listed {
         return Err(ApiError::not_found("Image"));
     }
     let worker = app.clone();
