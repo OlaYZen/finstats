@@ -1,5 +1,11 @@
 blank_issues_enabled: false
 contact_links:
+  - name: Ask a question
+    url: https://github.com/OlaYZen/finstats/discussions/categories/q-a
+    about: Installing, running or understanding finstats. Questions are answered in Discussions, not in issues.
+  - name: Float an idea
+    url: https://github.com/OlaYZen/finstats/discussions/categories/ideas
+    about: Not sure yet whether it is a feature request? Think out loud here first.
   - name: Report a security problem privately
     url: https://github.com/OlaYZen/finstats/security/advisories/new
     about: Please do not open a public issue for a vulnerability. SECURITY.md explains what to include.

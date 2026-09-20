@@ -1,0 +1,37 @@
+title: ""
+labels: []
+body:
+  - type: markdown
+    attributes:
+      value: |
+        A place to think out loud before anything becomes a feature request. The most useful ideas start from
+        **a question you could not answer about your server**, not from a screen you imagine.
+
+        Worth knowing first: finstats never writes to Jellyfin, stays one small container, sends nothing anywhere,
+        and has no front-end build step. [CONTRIBUTING.md](https://github.com/OlaYZen/finstats/blob/main/CONTRIBUTING.md)
+        explains why. Ideas that fit get turned into issues.
+  - type: textarea
+    id: question
+    attributes:
+      label: What did you want to find out, or do?
+      placeholder: "When my server transcodes, is it the client's fault or the file's? I can see both lists, but not together."
+    validations:
+      required: true
+  - type: textarea
+    id: today
+    attributes:
+      label: How do you get by today?
+      description: Another tool, a spreadsheet, the Jellyfin dashboard, not at all.
+  - type: textarea
+    id: idea
+    attributes:
+      label: Your idea, if you have one
+      description: Optional. Where it would live, what it would show. A sketch is welcome (with invented data).
+  - type: dropdown
+    id: help
+    attributes:
+      label: Would you like to help build it?
+      options:
+        - "Just thinking out loud"
+        - "Yes, with some guidance"
+        - "Yes"

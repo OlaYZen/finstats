@@ -1,0 +1,37 @@
+title: ""
+labels: []
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Ask anything about installing, running or understanding finstats. The README's
+        [Questions](https://github.com/OlaYZen/finstats#questions) section covers the common ones (data folder
+        permissions, reverse proxies, backups, timezones, starting over). If something is *broken*, a
+        [bug report](https://github.com/OlaYZen/finstats/issues/new?template=bug_report.yml) gets it fixed faster.
+
+        **Before you paste anything:** logs and screenshots contain the user names, titles, device names and IP
+        addresses of the people on your server. Blur or replace them, and never attach a database, a backup or a
+        Jellystat export.
+  - type: textarea
+    id: question
+    attributes:
+      label: What are you trying to do, and where did you get stuck?
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: finstats version and how you run it
+      description: Bottom right of every page. Image tag, or from source.
+      placeholder: "1.0.2, ghcr.io/olayzen/finstats:latest, behind Caddy"
+  - type: input
+    id: jellyfin
+    attributes:
+      label: Jellyfin version
+      placeholder: "10.11.0"
+  - type: textarea
+    id: tried
+    attributes:
+      label: What have you tried?
+      description: Commands, settings, and what happened. Log lines with names and addresses removed.
+      render: text
