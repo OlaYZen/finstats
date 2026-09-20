@@ -40,9 +40,12 @@ export default function itemPage(ctx) {
         it.audio ? h('span', { class: 'chip mono' }, it.audio) : null,
         it.removed ? chip('No longer in library') : null,
       ];
+      // An episode shows its own still (16:9); without one it borrows the show's poster.
+      const still = it.type === 'Episode' && it.has_image;
       const hero = h('div', { class: ['item-hero', it.has_backdrop && 'has-backdrop'] },
         it.has_backdrop ? h('div', { class: 'item-backdrop', 'aria-hidden': 'true' }, h('img', { src: imgItem(it.id, 1280, 'backdrop'), alt: '', decoding: 'async', onError: (e) => e.target.parentNode.remove() })) : null,
-        poster(it.type === 'Episode' && it.series_id ? it.series_id : it.id, it.name, { w: 300, cls: 'poster-lg' }),
+        still ? poster(it.id, it.name, { w: 480, cls: 'poster-lg poster-still' })
+          : poster(it.type === 'Episode' && it.series_id ? it.series_id : it.id, it.name, { w: 300, cls: 'poster-lg' }),
         h('div', { class: 'item-hero-text' },
           it.series_name && it.series_id ? h('a', { class: 'item-series', href: `/items/${it.series_id}` }, it.series_name, code ? h('span', { class: 'mono' }, ' · ' + code) : null) : null,
           h('h1', { class: 'page-title' }, it.name),

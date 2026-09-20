@@ -396,6 +396,7 @@ kbd {
 .poster-md .poster-fallback, .poster-np .poster-fallback { font-size: 16px; }
 .poster-np { width: 76px; border-radius: 6px; align-self: flex-start; }
 .poster-lg { width: 168px; border-radius: var(--radius); box-shadow: 0 10px 30px rgba(0, 0, 0, .45); }
+.poster-still { width: 300px; aspect-ratio: 16 / 9; }
 .poster-lg .poster-fallback, .poster-grid .poster-fallback { font-size: 26px; }
 .poster-grid { width: 100%; border-radius: 6px; }
 
@@ -802,6 +803,7 @@ a.chip-link:hover { border-color: var(--accent); color: var(--text); text-decora
   .item-hero { flex-direction: column; align-items: flex-start; gap: 16px; }
   .item-hero.has-backdrop { padding: 40px 16px 16px; }
   .poster-lg { width: 120px; }
+  .poster-still { width: min(100%, 320px); }
   .setting-row { flex-direction: column; gap: 10px; }
   .task { flex-direction: column; gap: 10px; }
   .task-side { justify-content: flex-start; }
