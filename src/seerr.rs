@@ -32,9 +32,14 @@ const OVERLAP_S: i64 = 600;
 const FULL_EVERY_S: i64 = 86_400;
 /// Open requests that the listings did not return are asked for one by one, this many per pass.
 const RECHECK_MAX: usize = 60;
-/// Titles looked up per pass, and how long an unanswered lookup rests.
+/// Titles looked up per pass, and how long one rests before finstats looks again.
+///
+/// A request that is still moving is worth another look soon: Seerr creates it before Sonarr or Radarr have
+/// been told about it, so the first look often finds nothing through no fault of anyone's. One that is
+/// settled — declined, failed, or here — is not going to turn up in an Arr app now.
 const LOOKUPS_PER_PASS: usize = 30;
-const LOOKUP_REST_S: i64 = 6 * 3600;
+const LOOKUP_REST_S: i64 = 30 * 60;
+const LOOKUP_REST_SETTLED_S: i64 = 24 * 3600;
 
 pub const MEDIA_AVAILABLE: i64 = 5;
 
@@ -294,16 +299,25 @@ async fn name_the_unnamed(app: &App, seerr: &Service) -> Result<usize> {
         .call(move |c| {
             Ok(c.prepare(
                 "SELECT request_id, media_type, tmdb_id, tvdb_id FROM requests
-                 WHERE service_id = ?1 AND removed_at IS NULL AND item_id IS NULL AND (title IS NULL OR arr_media_id IS NULL) AND COALESCE(looked_up_at, 0) < ?2
-                 ORDER BY requested_at DESC LIMIT ?3",
+                 WHERE service_id = ?1 AND removed_at IS NULL AND item_id IS NULL AND (title IS NULL OR arr_media_id IS NULL)
+                   AND COALESCE(looked_up_at, 0) < (CASE WHEN status IN (3, 4) OR media_status >= 5 THEN ?2 ELSE ?3 END)
+                 ORDER BY requested_at DESC LIMIT ?4",
             )?
-            .query_map(params![sid, now - LOOKUP_REST_S, LOOKUPS_PER_PASS as i64], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))?
+            .query_map(params![sid, now - LOOKUP_REST_SETTLED_S, now - LOOKUP_REST_S, LOOKUPS_PER_PASS as i64], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))?
             .collect::<Result<_, _>>()?)
         })
         .await?;
     let mut named = 0;
     for (request_id, media_type, tmdb, tvdb) in todo {
-        let found = crate::arr::find(app, &media_type, tmdb, tvdb).await;
+        // Could not ask: leave the row exactly as it was, so the next pass tries again in a few minutes
+        // instead of writing off the title until tomorrow.
+        let found = match crate::arr::find(app, &media_type, tmdb, tvdb).await {
+            Ok(found) => found,
+            Err(e) => {
+                tracing::debug!("looking up a title: {e:#}");
+                continue;
+            }
+        };
         let (mut title, mut year) = (found.as_ref().map(|f| f.title.clone()), found.as_ref().and_then(|f| f.year));
         if title.is_none()
             && let Some(tmdb) = tmdb

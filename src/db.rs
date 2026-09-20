@@ -460,6 +460,16 @@ impl Db {
         Ok(db)
     }
 
+    /// A migrated database that exists only for the length of a test.
+    #[cfg(test)]
+    pub fn open_in_memory() -> Result<Self> {
+        let manager = SqliteConnectionManager::memory().with_init(|c| c.execute_batch("PRAGMA foreign_keys = ON;"));
+        // One connection: every caller must see the same in-memory database.
+        let db = Db { pool: r2d2::Pool::builder().max_size(1).build(manager)? };
+        db.migrate()?;
+        Ok(db)
+    }
+
     fn migrate(&self) -> Result<()> {
         let mut conn = self.pool.get()?;
         let current: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;

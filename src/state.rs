@@ -240,6 +240,33 @@ impl Tasks {
     }
 }
 
+/// An app with an empty database and no connections, for tests that need one.
+#[cfg(test)]
+pub fn test_app() -> App {
+    Arc::new(AppState {
+        db: db::Db::open_in_memory().expect("in-memory database"),
+        data_dir: std::env::temp_dir(),
+        http: crate::jellyfin::http_client(),
+        device_id: "test".into(),
+        trust_proxy: false,
+        config: RwLock::new(None),
+        settings: RwLock::new(Settings::default()),
+        tasks: Tasks::new(),
+        live: RwLock::new(vec![]),
+        collector: RwLock::new(CollectorStatus::default()),
+        login_attempts: Mutex::new(Default::default()),
+        geo: Default::default(),
+        services: Default::default(),
+        service_health: Default::default(),
+        services_http: crate::services::Http::new(),
+        downloads: Default::default(),
+        wishes: Default::default(),
+        downloads_watched: Mutex::new(0),
+        downloads_wake: Notify::new(),
+        wake: Notify::new(),
+    })
+}
+
 // ---------------------------------------------------------------- errors
 
 pub struct ApiError(pub StatusCode, pub String);

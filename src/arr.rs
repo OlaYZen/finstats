@@ -190,22 +190,36 @@ pub struct Found {
 }
 
 /// Does a connected Sonarr (by TVDB id) or Radarr (by TMDB id) have this title? It then also has its poster.
-pub async fn find(app: &App, media_type: &str, tmdb: Option<i64>, tvdb: Option<i64>) -> Option<Found> {
-    let (kind, path, key, id) = match media_type {
-        "movie" => (Kind::Radarr, "/api/v3/movie", "tmdbId", tmdb?),
-        _ => (Kind::Sonarr, "/api/v3/series", "tvdbId", tvdb?),
+///
+/// `Ok(None)` means they answered and do not have it; an error means nobody could be asked, which is a
+/// different thing entirely — the caller must not write that down as "looked for it and it is not there".
+pub async fn find(app: &App, media_type: &str, tmdb: Option<i64>, tvdb: Option<i64>) -> Result<Option<Found>> {
+    let (kind, path, key, id) = match (media_type, tmdb, tvdb) {
+        ("movie", Some(id), _) => (Kind::Radarr, "/api/v3/movie", "tmdbId", id),
+        ("movie", None, _) => return Ok(None),
+        (_, _, Some(id)) => (Kind::Sonarr, "/api/v3/series", "tvdbId", id),
+        _ => return Ok(None), // a show Seerr knows no TVDB number for: Sonarr cannot be asked about it
     };
-    for svc in services::enabled(app, |k| k == kind) {
-        let Ok(list) = services::get_json(app, &svc, path, &[(key, id.to_string())]).await else { continue };
+    let list_of = services::enabled(app, |k| k == kind);
+    let mut answered = list_of.is_empty(); // nothing to ask is not a failure to ask
+    for svc in list_of {
+        let list = match services::get_json(app, &svc, path, &[(key, id.to_string())]).await {
+            Ok(list) => list,
+            Err(e) => {
+                tracing::debug!("{} could not be asked about {key}={id}: {e:#}", svc.name);
+                continue;
+            }
+        };
+        answered = true;
         // Older versions ignore the filter and answer with everything: take the one that matches, not the first.
         let hit = list.as_array().and_then(|a| a.iter().find(|m| m[key].as_i64() == Some(id)));
         if let Some(m) = hit
             && let (Some(media_id), Some(title)) = (self::id(&m["id"]), text(&m["title"]))
         {
-            return Some(Found { service_id: svc.id, media_id, title, year: self::id(&m["year"]) });
+            return Ok(Some(Found { service_id: svc.id, media_id, title, year: self::id(&m["year"]) }));
         }
     }
-    None
+    if answered { Ok(None) } else { bail!("no {} answered", kind.label()) }
 }
 
 // ---------------------------------------------------------------- what came in
@@ -433,6 +447,22 @@ mod tests {
         }
         assert!(grab_from(Kind::Radarr, &json!({ "id": 1, "eventType": "episodeFileRenamed", "date": "2026-09-19T21:04:11Z" })).is_none());
         assert!(grab_from(Kind::Radarr, &json!({ "id": 1, "eventType": "grabbed", "date": "not a date" })).is_none());
+    }
+
+    #[tokio::test]
+    async fn a_question_nobody_could_answer_is_not_an_answer() {
+        // No Sonarr or Radarr connected at all: there is nothing to ask, and nothing to wait for either.
+        let app = crate::state::test_app();
+        assert!(matches!(find(&app, "movie", Some(10991), None).await, Ok(None)));
+        assert!(matches!(find(&app, "tv", None, Some(371002)).await, Ok(None)));
+        // A show Seerr knows no TVDB number for: Sonarr cannot be asked, and that is an answer of sorts.
+        assert!(matches!(find(&app, "tv", Some(880001), None).await, Ok(None)));
+        // One that is connected but unreachable: an error, so the caller keeps the row for another try.
+        let conn = app.db.conn().unwrap();
+        conn.execute("INSERT INTO services(kind, name, url, secret, created_at) VALUES ('radarr', 'Radarr', 'http://127.0.0.1:9', 'k', 1)", []).unwrap();
+        drop(conn);
+        crate::services::reload(&app).await.unwrap();
+        assert!(find(&app, "movie", Some(10991), None).await.is_err(), "an unreachable Radarr must not look like `not there`");
     }
 
     #[test]
