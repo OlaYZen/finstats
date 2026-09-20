@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Report a security problem privately
+    url: https://github.com/OlaYZen/finstats/security/advisories/new
+    about: Please do not open a public issue for a vulnerability. SECURITY.md explains what to include.
+  - name: Setting it up, and common questions
+    url: https://github.com/OlaYZen/finstats#questions
+    about: '"Cannot write to its data directory", reverse proxies, backups, timezones, starting over.'

@@ -1,0 +1,35 @@
+name: Feature request
+description: Something finstats cannot tell you yet
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        The most useful requests describe **the question you could not answer**, not the screen you imagine. There is
+        often a smaller way to get there. CONTRIBUTING.md lists what finstats deliberately will not become (no writes to
+        Jellyfin, no second container, no telemetry, no front-end build step): worth a look first.
+  - type: textarea
+    id: question
+    attributes:
+      label: What did you want to find out or do?
+      placeholder: "Which of my users still use the old Android app, so I know who to nag before I drop its codec."
+    validations:
+      required: true
+  - type: textarea
+    id: today
+    attributes:
+      label: How do you get by today?
+      description: Another tool, a spreadsheet, the Jellyfin dashboard, not at all.
+  - type: textarea
+    id: idea
+    attributes:
+      label: Your idea, if you have one
+      description: Optional. Where it would live, what it would show.
+  - type: dropdown
+    id: help
+    attributes:
+      label: Would you like to build it?
+      options:
+        - "No, just suggesting"
+        - "Yes, with some guidance"
+        - "Yes"
