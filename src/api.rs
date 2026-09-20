@@ -22,7 +22,7 @@ use tower_http::compression::predicate::{DefaultPredicate, NotForContentType, Pr
 use crate::auth::{self, AuthUser, JellyfinAdmin, Manager};
 use crate::state::{ApiError, ApiResult, App, Settings};
 use crate::db::rusqlite::OptionalExtension;
-use crate::{changelog, db, groups, import, profile, recap, recent, security, stats, sync, timeline};
+use crate::{changelog, db, groups, import, profile, recap, recent, security, services, stats, sync, timeline};
 
 #[derive(RustEmbed)]
 #[folder = "$CARGO_MANIFEST_DIR/web"]
@@ -75,6 +75,9 @@ pub fn router(app: App) -> Router {
         .route("/permissions", get(get_permissions))
         .route("/permissions/defaults", axum::routing::put(put_default_permissions))
         .route("/permissions/users/{id}", axum::routing::put(put_user_permissions))
+        .route("/services", get(services::list).post(services::create))
+        .route("/services/test", post(services::test_connection))
+        .route("/services/{id}", axum::routing::put(services::update).delete(services::remove))
         .route("/tasks", get(get_tasks))
         .route("/tasks/{id}/run", post(run_task))
         // Backups run to hundreds of MB and are streamed to disk, never buffered.

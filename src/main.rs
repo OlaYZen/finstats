@@ -17,10 +17,12 @@ mod recap;
 mod recent;
 mod relink;
 mod security;
+mod services;
 mod state;
 mod stats;
 mod sync;
 mod timeline;
+mod torrents;
 
 use std::net::SocketAddr;
 use std::path::PathBuf;
@@ -196,8 +198,14 @@ async fn serve(db: db::Db, data_dir: PathBuf) -> Result<()> {
         collector: RwLock::new(CollectorStatus::default()),
         login_attempts: Mutex::new(Default::default()),
         geo: Default::default(),
+        services: Default::default(),
+        service_health: Default::default(),
+        client_sessions: Default::default(),
+        services_http: services::Http::new(),
         wake: Notify::new(),
     });
+
+    services::reload(&app).await?;
 
     // Before the collector: a play that begins in the first second is looked at like any other.
     if geo::load(&app) {

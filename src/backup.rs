@@ -380,7 +380,8 @@ mod tests {
                  INSERT INTO manual_seen(user_id, item_id, created_at) VALUES ('u1', 'e1', 5);
                  INSERT INTO user_permissions(user_id, permissions, updated_at) VALUES ('u2', '[\"see_everyone\"]', 5);
                  INSERT INTO settings(key, value) VALUES ('settings', '{\"min_play_s\": 42, \"home_addresses\": [\"203.0.113.7\"]}'), ('jellyfin_api_key', 'secret-key'), ('jellyfin_url', 'http://jellyfin.internal:8096'), ('device_id', 'secret-device');
-                 INSERT INTO sessions(token_hash, user_id, user_name, is_admin, created_at, expires_at) VALUES ('secret-session-hash', 'u1', 'alice', 1, 1, 9999999999);",
+                 INSERT INTO sessions(token_hash, user_id, user_name, is_admin, created_at, expires_at) VALUES ('secret-session-hash', 'u1', 'alice', 1, 1, 9999999999);
+                 INSERT INTO services(kind, name, url, username, secret, created_at) VALUES ('sonarr', 'Sonarr', 'http://sonarr.internal:8989', 'secret-service-user', 'secret-service-key', 1);",
             )
             .unwrap();
         }
@@ -389,7 +390,7 @@ mod tests {
         let file = dir(&tmp).join(&made.name);
         let mut text = String::new();
         GzDecoder::new(File::open(&file).unwrap()).read_to_string(&mut text).unwrap();
-        for secret in ["secret-key", "jellyfin.internal", "secret-device", "secret-session-hash"] {
+        for secret in ["secret-key", "jellyfin.internal", "secret-device", "secret-session-hash", "secret-service-key", "secret-service-user", "sonarr.internal"] {
             assert!(!text.contains(secret), "{secret} must never be in a backup");
         }
 

@@ -211,7 +211,8 @@ async fn user_json(app: &App, id: &str, name: &str, is_admin: bool, perms: Perms
         })
         .await
         .unwrap_or(false);
-    json!({ "id": id, "name": name, "is_admin": is_admin, "has_image": has_image, "permissions": perms })
+    // `features`: which optional pages have something behind them (a connected Sonarr, a Seerr, …).
+    json!({ "id": id, "name": name, "is_admin": is_admin, "has_image": has_image, "permissions": perms, "features": crate::services::features(app) })
 }
 
 async fn start_session(

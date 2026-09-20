@@ -58,9 +58,14 @@ pub fn http_client() -> Client {
 
 /// Accepts what people actually type: missing scheme, trailing slash, a pasted `/web/` path.
 pub fn normalize_url(input: &str) -> Result<String> {
+    normalize_url_of(input, "your Jellyfin server")
+}
+
+/// The same forgiving reading for any service a person types the address of.
+pub fn normalize_url_of(input: &str, what: &str) -> Result<String> {
     let mut s = input.trim().to_string();
     if s.is_empty() {
-        bail!("Enter the address of your Jellyfin server");
+        bail!("Enter the address of {what}");
     }
     if !s.starts_with("http://") && !s.starts_with("https://") {
         s = format!("http://{s}");

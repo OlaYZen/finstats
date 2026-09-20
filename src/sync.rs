@@ -93,6 +93,7 @@ pub async fn scheduler(app: App) {
                 refresh_server_info(&app).await;
                 crate::network::refresh(&app).await;
                 crate::geo::refresh(&app).await;
+                crate::services::check_all(&app).await;
                 spawn(&app, "sync_users");
                 spawn(&app, "sync_events");
                 spawn(&app, "sync_server");

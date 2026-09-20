@@ -310,6 +310,35 @@ pub(crate) const MIGRATIONS: &[&str] = &[
     ALTER TABLE items ADD COLUMN subtitle_languages TEXT;
     DELETE FROM settings WHERE key = 'library_synced_at';
     "#,
+    // 13 — connections to the services around Jellyfin (Sonarr, Radarr, Seerr, torrent clients). Their keys
+    //      and passwords live here and nowhere else: never in the settings blob, never in a backup.
+    //      AUTOINCREMENT: an id is never handed out twice, so rows of a deleted service cannot be adopted.
+    //      `item_external` is the library's provider ids turned sideways (one id can belong to several
+    //      items: the same film in an HD and a 4K library), so that a TMDB or TVDB id finds its items by index.
+    r#"
+    CREATE TABLE services (
+        id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+        kind                 TEXT NOT NULL,           -- sonarr | radarr | seerr | qbittorrent | transmission | deluge
+        name                 TEXT NOT NULL,
+        url                  TEXT NOT NULL,
+        username             TEXT,
+        secret               TEXT NOT NULL,           -- API key or password
+        accept_invalid_certs INTEGER NOT NULL DEFAULT 0,
+        enabled              INTEGER NOT NULL DEFAULT 1,
+        created_at           INTEGER NOT NULL,
+        version              TEXT,
+        last_ok_at           INTEGER,
+        last_error           TEXT
+    );
+
+    CREATE TABLE item_external (
+        item_id TEXT NOT NULL,
+        source  TEXT NOT NULL,                        -- Tmdb | Tvdb | Imdb, as Jellyfin spells them
+        value   TEXT NOT NULL,
+        PRIMARY KEY (item_id, source)
+    ) WITHOUT ROWID;
+    CREATE INDEX idx_item_external ON item_external(source, value);
+    "#,
 ];
 
 impl Db {

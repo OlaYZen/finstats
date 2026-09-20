@@ -696,3 +696,33 @@ in track order, `"und"` for a track without a language. Filled by the library re
   over its episodes that exist as files (absent when there are none). Each row of `seasons[].episodes[]` gains `audio_languages`.
 - `GET /api/library/insights` gains `audio_languages` and `subtitle_languages`: `[{"name": "jpn", "count": 29, "size_bytes": 0}]`, video
   files that have a track in the language (a file with two languages counts in both), at most 12 and then `"Other"`.
+
+---
+
+# v1.3 — Connections (Sonarr, Radarr, Seerr, torrent clients)
+
+finstats reads from these services and never changes anything in them. **Jellyfin administrators only** (`403` for everyone else, including
+`manage`). A key or password is write-only: the API says `has_secret`, never the value, and none of this is part of a backup.
+
+`GET /api/services`
+```jsonc
+{ "services": [ {"id": 1, "kind": "sonarr", "label": "Sonarr", "name": "Sonarr", "url": "http://192.168.1.10:8989",
+                 "username": null, "has_secret": true, "accept_invalid_certs": false, "enabled": true,
+                 "version": "4.0.9" | null, "last_ok_at": 0 | null, "last_error": "Sonarr refused the API key" | null} ],
+  "kinds": [ {"key": "sonarr" | "radarr" | "seerr" | "qbittorrent" | "transmission" | "deluge", "label", "what", "example",
+              "auth": "api_key" | "login" | "password"} ] }
+```
+Every write answers with the same list.
+
+- `POST /api/services/test` `{kind, url, username?, secret?, accept_invalid_certs?}` or `{id, …}` (whatever is left out is taken from the stored
+  connection, so a key need not be retyped) → `{"ok": true, "app": "Sonarr", "version": "4.0.9"}`, or `502` with a sentence that says what is wrong.
+- `POST /api/services` — the same body plus `name?`. The connection is tested first and only saved when it answers (`502` otherwise). A missing
+  name becomes the kind's, then "Radarr 2". At most 20.
+- `PUT /api/services/{id}` — any of `name`, `url`, `username`, `secret`, `accept_invalid_certs`, `enabled`; the kind never changes. Changing what
+  is needed to connect tests again. Pointing a connection at another host, port or base path throws away everything read from the old one.
+- `DELETE /api/services/{id}` — also removes everything that was read from it.
+
+Addresses: `http://` or `https://`, a base path is kept (`/sonarr`), no `user:password@`, `?` or `#` (`400`). finstats follows no redirect to a
+service: a redirect is reported as the error it is. `accept_invalid_certs` switches certificate verification off for that one connection.
+
+`GET /api/auth/me` → `user.features: {"upcoming": true, "requests": true}`: which optional pages have a connected service behind them.
