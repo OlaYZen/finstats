@@ -39,6 +39,11 @@ but finishing it requires a Jellyfin administrator's credentials.
 proxied from your own Jellyfin, and a strict Content-Security-Policy is sent with every response.
 Requests that change anything are refused when their `Origin` does not match.
 
+**The container** runs finstats as an unprivileged user (1000:1000, or `PUID`:`PGID`). It starts as root for one
+step only: making the data directory belong to that user, because Docker creates a missing bind-mount folder as root.
+It then drops privileges with `su-exec` and cannot get them back; finstats itself never runs as root. Start the
+container with `--user` and even that step is skipped.
+
 **Backups** (`data/backups`, and whatever you download from **Settings → Backups**) hold the full viewing history
 with IP addresses, the permissions and the settings. They never contain the Jellyfin address or API key, nor any
 sign-in session, so a leaked backup exposes history but grants no access. Only Jellyfin administrators can list,

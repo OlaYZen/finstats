@@ -10,6 +10,9 @@ services:
     environment:
       # Used for "plays per day" and the hour-of-day heatmap.
       TZ: Europe/London
+      # The user finstats runs as and that owns ./data. Change it if your files belong to someone else.
+      # PUID: "1000"
+      # PGID: "1000"
       # Behind a reverse proxy? Let finstats read the real client address.
       # FINSTATS_TRUST_PROXY: "1"
       # Optional: skip the setup wizard.

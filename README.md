@@ -147,7 +147,9 @@ Then open **http://your-server:8080** and:
 1. Enter your Jellyfin address and test the connection.
 2. Sign in with a Jellyfin administrator account.
 
-That's it. finstats starts watching immediately and fills in your library in the background.
+That's it. finstats starts watching immediately and fills in your library in the background. The `data` folder is
+created for you; finstats makes it its own and then runs as an ordinary, unprivileged user (1000:1000, or whatever
+you set with `PUID` and `PGID`).
 Set `TZ` to your own timezone so "today" and "evening" mean what you expect.
 
 > Inside a container, `localhost` is the container itself. Use your server's address
@@ -191,6 +193,7 @@ Everything works out of the box. If you want to tune it, **Settings** in the app
 | `TZ` | UTC | Your timezone, for per-day and hour-of-day statistics. |
 | `FINSTATS_BIND` | `0.0.0.0:8080` | Address to listen on. |
 | `FINSTATS_DATA_DIR` | `/data` | Where the database and poster cache live. |
+| `PUID`, `PGID` | `1000` | The user and group finstats runs as inside the container, and that will own the `data` folder. Set them to the owner of your files if that is not 1000. (`--user` works too; the folder must then already be writable for that user.) |
 | `FINSTATS_TRUST_PROXY` | off | Set to `1` behind a reverse proxy so sign-in rate limiting sees real client addresses. |
 | `JELLYFIN_URL` + `JELLYFIN_API_KEY` | – | Skip the setup wizard. Set both or neither. |
 | `FINSTATS_PUBLIC_IP_URL` | – | Your own "what is my IP" service (any URL answering with the caller's address as plain text), used instead of the built-in ones. |
@@ -226,6 +229,11 @@ Jellyfin has finished its own scan.
 finstats backs itself up every week into `data/backups` and keeps the newest five; download them under
 **Settings → Backups**, where you can also restore one into a new install. A backup has your whole history,
 settings and permissions, but never your Jellyfin API key. The database itself is the single file `data/finstats.db`.
+
+**It says "cannot write to its data directory".**
+The `data` folder belongs to a different user than the one finstats runs as. This happens when you start the
+container with `--user` (or `user:` in Compose) on a folder Docker created as root. Either drop that setting, so
+finstats can fix the folder itself, or run `sudo chown -R 1000:1000 ./data`.
 
 **Can I put it behind a reverse proxy?**
 Yes. Forward to port 8080 and set `FINSTATS_TRUST_PROXY=1`. Sign-in cookies are marked secure
