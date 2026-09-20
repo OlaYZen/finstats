@@ -46,6 +46,8 @@ directly or transcodes, and why. A status bar keeps the essentials in sight on e
   household's public address, so a phone on the Wi-Fi that goes through your public name still counts as home.
 - **Do people finish what they start?** See how far viewers get before they stop.
 - **Want it in a different order?** Every table sorts by any column with a click, and long ones can be filtered as you type.
+- **Is it dubbed?** Every title shows the languages of its audio and subtitle tracks. A show says how far a dub goes
+  ("English: 13 of 26 episodes"), and each episode lists its own, so you know before you start.
 - **What is my library made of?** Resolutions, codecs, HDR, size per decade, what was added when —
   and the big one: **titles nobody has ever watched**, sorted by how much space they take.
 

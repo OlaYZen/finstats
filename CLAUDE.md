@@ -56,6 +56,12 @@ writing anything. Releases up to 1.0.4 predate the check and cannot be stopped. 
 `ExcludeLocationTypes=Virtual` (missing/unaired placeholders). Anything a read does not return is marked `removed`,
 so a query that silently hides items is a data-loss bug, not a cosmetic one.
 
+**Track languages.** `items.audio_languages` / `subtitle_languages` are JSON arrays from `media::track_languages` (every track, each code once,
+`und` for an untagged one), written by both item producers (`sync::upsert_item`, the import's `jf_item_info`). A series or season has none of its
+own: `item_detail` answers `language_coverage` (episodes per language, files only), which is what shows a dub that stops half way. finstats never
+claims "dubbed": it does not know a title's original language, so it lists the languages and lets the reader decide. Names come from the browser
+(`languageName` in `dom.js`: `Intl.DisplayNames` plus the bibliographic codes it lacks), so no language table is shipped.
+
 **Jellyfin client (`jellyfin.rs`).** Every request asks for `Accept: application/json; profile="PascalCase"` because
 10.x servers answer PascalCase and newer ones camelCase by default. All JSON access in the codebase assumes
 PascalCase keys. Jellyfin ids are normalised with `db::norm_id` (no dashes, lowercase) everywhere.
