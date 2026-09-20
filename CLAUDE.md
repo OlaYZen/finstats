@@ -105,6 +105,13 @@ asks Jellyfin to exclude virtual items, and season 0 is skipped). "Seen" merges 
 play ≥ 80%, Jellyfin's played flag (`user_items`), a manual mark (`manual_seen`, written via `POST /api/me/seen` for
 the caller only — finstats never writes to Jellyfin). Streaks are all-time and share `recap::longest_run`.
 
+**Timeline (`timeline.rs`, `/users/:id/timeline`).** One person's plays, newest first, folded by the pure `fold()`: plays that follow
+each other with the same key (series + season, album + artist, else the item) are one stop. Pages use a `(started_at, id)` cursor
+and only give out a stop once the play after it has been read, so a stop is never split and the stops do not depend on the page
+size. In the UI (`pages/timeline.js`) the column count comes from a `ResizeObserver`: rows alternate direction by being `direction: rtl`
+(their cards reset to `ltr`), a bend joins each row to the next, and below 620 px it becomes one straight line (`.is-line`). DOM
+order stays chronological, so keyboard and screen readers follow the trail.
+
 **Recap (`recap.rs`)** is one person's year: the caller's own, or, for a Jellyfin administrator only (`is_admin`, not a
 permission), the user in `user_id`. There is deliberately no whole-server edition. It excludes Live TV item types and
 defaults to the year that is "ready": the current year in December, otherwise the previous one.
