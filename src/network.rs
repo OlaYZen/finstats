@@ -120,14 +120,37 @@ async fn lookup(http: &reqwest::Client) -> Option<String> {
     None
 }
 
-/// Runs with the other small, frequent reads. Does nothing when the owner has switched it off.
+/// Has a lookup ever produced an address on this install? Then there is nothing to ask about.
+pub fn ever_looked_up(conn: &Connection) -> Result<bool> {
+    Ok(conn.prepare_cached("SELECT 1 FROM home_addresses WHERE source = 'lookup' LIMIT 1")?.exists([])?)
+}
+
+/// At start-up, and only on an install that has never learned an address. A household's public
+/// address is not news that needs re-checking: one question, answered, and finstats stops asking.
+/// When it does change, the owner presses "Look up now" or types the new one in.
+pub async fn refresh_if_unknown(app: &App) {
+    if !app.settings().public_ip_lookup {
+        return;
+    }
+    match app.db.call(|c| ever_looked_up(c)).await {
+        Ok(true) => return,
+        Ok(false) => {}
+        Err(e) => {
+            tracing::warn!("could not tell whether this network's address is known: {e:#}");
+            return;
+        }
+    }
+    refresh(app).await;
+}
+
+/// One lookup: at start-up on a fresh install, or because somebody asked for it. Never on a timer.
 pub async fn refresh(app: &App) {
     if !app.settings().public_ip_lookup {
         return;
     }
     static WARNED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
     let Some(ip) = lookup(&app.http).await else {
-        // Said once, not every 15 minutes: usually a DNS blocklist, and then it stays that way.
+        // Said once: usually a DNS blocklist, and then it stays that way.
         if !WARNED.swap(true, std::sync::atomic::Ordering::Relaxed) {
             tracing::warn!("could not look up this network's public address (no service answered; a DNS blocklist?). Plays from it will count as remote until it is added under Settings → Home network");
         }

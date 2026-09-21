@@ -99,7 +99,6 @@ pub async fn scheduler(app: App) {
                 // Users, the activity log and server details are tiny; keep them fresh.
                 last_light = now;
                 refresh_server_info(&app).await;
-                crate::network::refresh(&app).await;
                 crate::geo::refresh(&app).await;
                 crate::services::check_all(&app).await;
                 if !crate::services::enabled(&app, crate::services::Kind::is_arr).is_empty() {

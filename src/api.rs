@@ -78,6 +78,7 @@ pub fn router(app: App) -> Router {
         .route("/downloads", get(crate::downloads::downloads))
         .route("/downloads/history", get(pipeline::download_history))
         .route("/settings", get(get_settings).put(put_settings))
+        .route("/settings/public-ip", post(lookup_public_ip))
         .route("/permissions", get(get_permissions))
         .route("/permissions/defaults", axum::routing::put(put_default_permissions))
         .route("/permissions/users/{id}", axum::routing::put(put_user_permissions))
@@ -345,6 +346,16 @@ async fn settings_response(app: &App) -> ApiResult {
 }
 
 async fn get_settings(State(app): State<App>, Manager(_): Manager) -> ApiResult {
+    settings_response(&app).await
+}
+
+/// Ask a public service for this network's address, now, because somebody pressed the button.
+/// It is the only thing that asks after the first answer: there is no timer behind this.
+async fn lookup_public_ip(State(app): State<App>, Manager(_): Manager) -> ApiResult {
+    if !app.settings().public_ip_lookup {
+        return Err(ApiError::bad_request("Turn on \"Recognise my own public address\" first"));
+    }
+    crate::network::refresh(&app).await;
     settings_response(&app).await
 }
 

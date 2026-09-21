@@ -219,6 +219,13 @@ async fn serve(db: db::Db, data_dir: PathBuf) -> Result<()> {
         security::check(&app, None).await;
     }
 
+    // One question about this network's public address, on an install that has never had an answer,
+    // and never again unless the owner asks in Settings. It must not hold up the server.
+    tokio::spawn({
+        let app = app.clone();
+        async move { network::refresh_if_unknown(&app).await }
+    });
+
     tokio::spawn(collector::run(app.clone()));
     tokio::spawn(downloads::run(app.clone()));
     tokio::spawn(sync::scheduler(app.clone()));
