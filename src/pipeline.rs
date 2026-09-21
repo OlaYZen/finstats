@@ -106,6 +106,13 @@ pub fn fold(rows: Vec<Entry>) -> Vec<Entry> {
     out
 }
 
+/// A disc date for a film that is already on disk is no news: Radarr keeps reporting the physical release of a copy
+/// that arrived weeks ago. Every other date still says something — a cinema or digital day is when it can be seen
+/// elsewhere — and a film that is *not* here yet keeps its disc date, because that is when it will be.
+fn still_to_come(e: &Entry) -> bool {
+    !(e.kind == "movie" && e.release == "physical" && e.has_file)
+}
+
 fn entries(conn: &Connection, days: i64, only_item: Option<&str>) -> Result<Vec<Entry>> {
     // Days are local days, like every "per day" number in finstats; a film already carries its day.
     let sql = format!(
@@ -125,7 +132,8 @@ fn entries(conn: &Connection, days: i64, only_item: Option<&str>) -> Result<Vec<
             })
         })?
         .collect::<Result<Vec<_>, _>>()?;
-    Ok(fold(rows))
+    // After folding, so "on disk anywhere" is what decides it.
+    Ok(fold(rows).into_iter().filter(still_to_come).collect())
 }
 
 /// TVDB id of a show → who played an episode of it lately (any of its items: the HD and the 4K copy are one show).
@@ -556,7 +564,7 @@ mod tests {
             c.execute_batch(m).unwrap();
         }
         c.execute_batch(
-            "INSERT INTO services(id, kind, name, url, secret, created_at) VALUES (1, 'sonarr', 'Sonarr', 'http://nas:8989', 'k', 1), (2, 'sonarr', 'Sonarr anime', 'http://nas:8990', 'k', 1), (3, 'radarr', 'Radarr', 'http://nas:7878', 'k', 1);
+            "INSERT INTO services(id, kind, name, url, secret, created_at) VALUES (1, 'sonarr', 'Sonarr', 'http://nas:8989', 'k', 1), (2, 'sonarr', 'Sonarr anime', 'http://nas:8990', 'k', 1), (3, 'radarr', 'Radarr', 'http://nas:7878', 'k', 1), (4, 'radarr', 'Radarr 4K', 'http://nas:7879', 'k', 1);
              INSERT INTO users(id, name, is_admin, updated_at) VALUES ('ua', 'alice', 1, 1), ('ub', 'bob', 0, 1);
              INSERT INTO items(id, type, name, provider_ids, removed, updated_at) VALUES
                 ('s-hd', 'Series', 'Low Orbit', '{\"Tvdb\":\"370001\",\"Imdb\":\"tt9900001\"}', 0, 1),
@@ -611,6 +619,23 @@ mod tests {
         // A switched-off connection says nothing.
         c.execute("UPDATE services SET enabled = 0 WHERE id = 3", []).unwrap();
         assert!(entries(&c, 60, None).unwrap().iter().all(|e| e.kind == "episode"));
+    }
+
+    #[test]
+    fn a_disc_date_for_a_film_that_is_already_here_is_not_listed() {
+        let c = conn();
+        // The same film in an HD and a 4K Radarr: only the 4K one is still waiting for it.
+        add(&c, 3, "movie", 7, "physical", 5, None, Some(990001), true);
+        add(&c, 4, "movie", 7, "physical", 5, None, Some(990001), false);
+        add(&c, 3, "movie", 9, "physical", 6, None, Some(990002), false);
+        add(&c, 3, "movie", 9, "digital", 4, None, Some(990002), true);
+        link(&c).unwrap();
+        let week = entries(&c, 14, None).unwrap();
+        assert_eq!(
+            week.iter().map(|e| (e.release.as_str(), e.tmdb_id)).collect::<Vec<_>>(),
+            [("digital", Some(990002)), ("physical", Some(990002))],
+            "the disc date of the film on disk is gone; the one still to come stays, and a digital day is never dropped"
+        );
     }
 
     #[test]

@@ -746,8 +746,9 @@ without `see_everyone`, whatever is asked); `mine=true` keeps only what that per
    "followers": 2, "follower_names": ["alice", "bob"]                  // only with `see_everyone`; otherwise the keys are absent
   } ] }
 ```
-The same episode in two Sonarrs, or the same film in an HD and a 4K Radarr, is one entry (on disk if it is anywhere). Switched-off connections
-say nothing. Without `see_everyone` there is no count either: on a small server a number is a name.
+The same episode in two Sonarrs, or the same film in an HD and a 4K Radarr, is one entry (on disk if it is anywhere). A `physical` release of a
+film that is already on disk is left out — a disc date for a copy that arrived weeks ago is no news; its other dates, and the disc date of a film
+that is not here yet, are listed as before. Switched-off connections say nothing. Without `see_everyone` there is no count either: on a small server a number is a name.
 
 - `GET /api/img/arr/{service_id}/{media_id}?w=` — the poster of a title that is not in the library yet, proxied from Sonarr or Radarr and cached on
   disk. Both ids are numbers; only posters of titles finstats itself lists are served — what is on a calendar, what somebody asked for, and (for
