@@ -79,6 +79,7 @@ pub fn router(app: App) -> Router {
         .route("/downloads/history", get(pipeline::download_history))
         .route("/settings", get(get_settings).put(put_settings))
         .route("/settings/public-ip", post(lookup_public_ip))
+        .route("/outbound", get(crate::outbound::outbound))
         .route("/permissions", get(get_permissions))
         .route("/permissions/defaults", axum::routing::put(put_default_permissions))
         .route("/permissions/users/{id}", axum::routing::put(put_user_permissions))

@@ -13,6 +13,7 @@ mod import;
 mod jellyfin;
 mod media;
 mod network;
+mod outbound;
 mod pipeline;
 mod playback;
 mod profile;
