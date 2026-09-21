@@ -60,6 +60,7 @@ export default function settings(ctx) {
   const importSlot = h('div');
   const dbSlot = h('div', null, sk.rows(1));
   const backupsSlot = h('div', { class: 'net-stack' }, sk.rows(2));
+  const outboundSlot = h('div', { class: 'net-stack' }, sk.rows(3));
 
   ctx.root.append(pageHeader('Settings', 'Connection, access, collection and data'),
     h('div', { class: 'stack settings' },
@@ -69,6 +70,7 @@ export default function settings(ctx) {
       card({ title: 'Collection', sub: 'How finstats gathers data from Jellyfin', body: collectSlot }),
       card({ title: 'Home network', sub: 'Which plays count as local and which as remote', body: networkSlot }),
       card({ title: 'Security', sub: 'Where addresses are, and what counts as impossible travel', body: securitySlot, id: 'security' }),
+      isAdmin() ? card({ title: 'Outbound connections', sub: 'Everywhere finstats can reach, and whether it is switched on', body: outboundSlot, id: 'outbound' }) : null,
       card({ title: 'Tasks', body: tasksSlot }),
       isAdmin() ? card({ title: 'Backups', sub: 'Your history, settings and permissions in one file, to keep safe or to move to another finstats', body: backupsSlot, id: 'backups' }) : null,
       card({ title: 'Import from Jellystat', sub: 'Bring your playback history with you', body: importSlot, id: 'import' }),
@@ -79,7 +81,7 @@ export default function settings(ctx) {
   async function loadSettings() {
     try {
       settingsData = await api.get('/settings', null, { signal: ctx.signal });
-      renderAccess(); renderCollect(); renderNetwork(); renderSecurity(); renderConn(); loadBackups();
+      renderAccess(); renderCollect(); renderNetwork(); renderSecurity(); renderConn(); loadBackups(); loadOutbound();
     } catch (e) {
       if (isAbort(e) || e.status === 401) return;
       mount(accessSlot, errorState(e, loadSettings)); mount(collectSlot, ''); mount(networkSlot, ''); mount(connSlot, '');
@@ -131,6 +133,34 @@ export default function settings(ctx) {
     return [h('div', { class: 'setting-row' },
       h('div', null, h('div', { class: 'setting-label', id: `${key}-label` }, label), h('p', { class: 'help', id: `${key}-help` }, help)),
       h('div', { class: 'setting-control' }, note, sw)), err];
+  }
+
+  // ------------------------------------------------------------ outbound connections
+  // The privacy promise in the README, assembled from what the running program knows. Nothing is
+  // recorded for this list: every line is read from something finstats already kept.
+  const STATE_LABEL = { always: ['is-always', 'Always on'], on: ['is-on', 'On'], off: ['', 'Off'] };
+  async function loadOutbound() {
+    if (!isAdmin()) return;
+    try {
+      const data = await api.get('/outbound', null, { signal: ctx.signal });
+      const rows = (data.destinations || []).map((d) => {
+        const [cls, label] = STATE_LABEL[d.state] || STATE_LABEL.off;
+        return h('div', { class: 'out-row' },
+          h('div', { class: 'out-head' },
+            h('span', { class: 'out-what' }, d.what),
+            h('span', { class: 'out-state ' + cls }, label)),
+          d.hosts && d.hosts.length ? h('div', { class: 'out-hosts mono' }, d.hosts.join(', ')) : null,
+          h('p', { class: 'help' }, d.why),
+          d.last_at ? h('p', { class: 'help' }, ['Last answered ', h('span', { title: dateTime(d.last_at) }, relTime(d.last_at))]) : null,
+          d.error ? h('p', { class: 'help' }, `Last attempt failed: ${d.error}`) : null);
+      });
+      const off = (data.total || 0) - (data.reachable || 0);
+      mount(outboundSlot, rows,
+        h('p', { class: 'help' }, `${num(data.reachable || 0)} of ${num(data.total || 0)} switched on${off ? `, ${num(off)} off` : ''}. finstats never sends anything about you or your server to any of these, and there is nothing else: no telemetry, no update check, no fonts or scripts from the internet.`));
+    } catch (e) {
+      if (isAbort(e) || e.status === 401 || e.status === 403) return;
+      mount(outboundSlot, errorState(e, loadOutbound));
+    }
   }
 
   // ------------------------------------------------------------ access & permissions
