@@ -93,12 +93,20 @@ export default function settings(ctx) {
     const status = !c ? h('span', { class: 'muted' }, 'Checking…')
       : c.connected ? h('span', { class: 'sev sev-good' }, icon('check', 13), `Connected · ${num(c.active_sessions)} active ${c.active_sessions === 1 ? 'session' : 'sessions'}`)
       : h('span', { class: 'sev sev-critical' }, icon('alert', 13), 'Not connected' + (c.error ? ` — ${c.error}` : ''));
+    // How the collector is being told, and — when the socket is switched on but not carrying — why not.
+    const live = c && c.transport === 'socket';
+    const how = !c || !c.connected ? null
+      : live ? h('span', { class: 'sev sev-good' }, icon('activity', 13), 'Pushed by Jellyfin, live')
+      : [h('span', null, `Asked for every ${num(settingsData.active_interval_s)} s while watching, every ${num(settingsData.idle_interval_s)} s otherwise`),
+         c.socket_enabled && c.socket_error ? h('p', { class: 'help' }, `The live connection is not carrying: ${c.socket_error}. finstats keeps trying; nothing is missed meanwhile.`) : null];
     mount(connSlot, facts([
       ['Server', settingsData.server_name],
       ['Address', settingsData.jellyfin_url, { mono: true }],
       ['Jellyfin version', settingsData.server_version, { mono: true }],
       ['Collector', status],
+      how ? ['How', how] : null,
       c && c.last_poll_at ? ['Last checked', h('span', { title: dateTime(c.last_poll_at) }, relTime(c.last_poll_at)), { mono: true }] : null,
+      live && c.last_reconcile_at ? ['Last checked the hard way', h('span', { title: dateTime(c.last_reconcile_at) }, relTime(c.last_reconcile_at)), { mono: true }] : null,
     ]), h('p', { class: 'help' }, 'finstats talks to Jellyfin with its own API key, created during setup. To point finstats at another server, start it with a fresh data directory.'));
   }
 
@@ -257,7 +265,10 @@ export default function settings(ctx) {
   function renderCollect() {
     const form = numberForm(FIELDS, 'collect-err');
     mount(collectSlot, toggleRow({ key: 'follow_jellyfin_scan', label: 'Follow Jellyfin’s library scan',
-      help: 'finstats never starts a scan on Jellyfin. With this on, it re-reads your library only after Jellyfin’s own “Scan Media Library” task has finished, so Jellyfin’s schedule is the only schedule.' }), form);
+      help: 'finstats never starts a scan on Jellyfin. With this on, it re-reads your library only after Jellyfin’s own “Scan Media Library” task has finished, so Jellyfin’s schedule is the only schedule.' }),
+      toggleRow({ key: 'live_socket', label: 'Let Jellyfin push what is playing', onSaved: renderConn,
+        help: 'New in this version, and off until you turn it on. Instead of asking Jellyfin what is playing every second, finstats keeps one connection open and is told the moment a play starts, pauses or ends — thousands fewer requests a day, and nothing noticed late. It still checks with a plain request once a minute while something is playing, and goes straight back to asking on a timer if the connection drops, so no viewing is ever missed. The two settings below stay as that fallback.' }),
+      form);
   }
 
   // ------------------------------------------------------------ backups (Jellyfin administrators)

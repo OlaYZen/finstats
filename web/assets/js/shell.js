@@ -111,7 +111,8 @@ function buildShell() {
         sbDot.className = 'sb-dot ' + (ok ? 'ok' : 'bad');
         const n = sum.active_sessions || 0;
         sbStream.lastChild.textContent = ok ? `${num(n)} streaming` : 'collector offline';
-        sbStream.title = ok ? 'Go to now playing' : 'finstats can’t reach Jellyfin right now. Plays are not being recorded.';
+        sbStream.title = !ok ? 'finstats can’t reach Jellyfin right now. Plays are not being recorded.'
+          : sum.collector_live ? 'Jellyfin is pushing what is playing · go to now playing' : 'Go to now playing';
         sbPlays.textContent = `${num(sum.plays_total)} plays`;
         sbSync.textContent = sum.last_sync_at ? `synced ${relTime(sum.last_sync_at)}` : 'not synced yet';
         sbSync.title = sum.last_sync_at ? 'Last library sync: ' + dateTime(sum.last_sync_at) : '';
