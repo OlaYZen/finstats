@@ -430,10 +430,27 @@ export default function settings(ctx) {
       } finally { setBusy(save, false); }
     });
 
+    // The only thing that ever asks again, because a person pressed it.
+    const lookupErr = h('div');
+    const lookup = h('button', { type: 'button', class: 'btn' }, 'Look up now');
+    lookup.addEventListener('click', async () => {
+      mount(lookupErr, '');
+      setBusy(lookup, true, 'Asking\u2026');
+      try {
+        settingsData = await api.post('/settings/public-ip');
+        renderNetwork();
+      } catch (e) {
+        mount(lookupErr, inlineError('lookup-err', `Couldn\u2019t look it up: ${e.message}`));
+      } finally { setBusy(lookup, false); }
+    });
+
     mount(networkSlot,
       toggleRow({ key: 'public_ip_lookup', label: 'Recognise my own public address', onSaved: renderNetwork,
-        help: `A device at home that reaches Jellyfin through its public name shows up with your household’s public IP, which would otherwise look remote. With this on, finstats asks a public “what is my IP” service (${services.join(', ') || 'none configured'}) every 15 minutes and counts plays from that address as local. It remembers earlier addresses, since they change. The request contains nothing about you or your server. With this and the geolocation download under Security both off, finstats makes no outside requests at all.` }),
-      h('div', { class: 'field' }, h('div', { class: 'setting-label' }, 'Known home addresses'), list),
+        help: `A device at home that reaches Jellyfin through its public name shows up with your household’s public IP, which would otherwise look remote. With this on, finstats asks a public “what is my IP” service (${services.join(', ') || 'none configured'}) — once, when it first needs to know, and never again on its own. Plays from that address then count as local, and earlier addresses are remembered, since they change. The request contains nothing about you or your server. With this and the geolocation download under Security both off, finstats makes no outside requests at all.` }),
+      h('div', { class: 'field' },
+        h('div', { class: 'setting-label' }, 'Known home addresses'), list,
+        settingsData.public_ip_lookup ? h('div', { class: 'form-actions' }, lookup, h('span', { class: 'help' }, 'If your address has changed, ask again.')) : null,
+        lookupErr),
       form);
   }
 
