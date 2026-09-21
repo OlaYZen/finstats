@@ -840,3 +840,42 @@ renames, deletions and ignores say nothing about what arrived.
   "quality": [...], "clients": [...], "protocols": [...],
   "failures": [{"at": 0, "title": "Low Orbit", "source": "Low.Orbit.S03E08.1080p", "indexer": "A Tracker", "media_type": "tv"}] }
 ```
+
+---
+
+# v1.4 — Live session tracking
+
+The collector can be *told* what is playing instead of asking. `GET /api/settings` gains `live_socket` (default `false`): with it on,
+finstats keeps one WebSocket open to Jellyfin's `/socket` and the sessions arrive pushed. Nothing else about the API changes — the same
+rows, the same `/api/now-playing`, only sooner. While the socket is live, `/Sessions` is still read once a minute **while something is
+playing** (the push is not filtered by `ActiveWithinSeconds`, so that read is what ends a play whose client vanished); nothing playing
+means nothing is asked. A socket that closes, goes quiet for 15 s, or never answers `SessionsStart` drops finstats back to polling at
+`active_interval_s` / `idle_interval_s` on the next pass, and it keeps trying to reconnect.
+
+`GET /api/tasks` → `collector` gains:
+```jsonc
+{ "connected": true, "last_poll_at": 0, "active_sessions": 1, "error": null,
+  "transport": "socket" | "poll",        // how the list arrived last
+  "socket_enabled": true,                // the setting, so "off" and "on but not connecting" are distinguishable
+  "socket_error": "nothing arrived for 15s" | null,   // why it is not the transport; null while it is
+  "last_reconcile_at": 0 }               // the last /Sessions read while on the socket; 0 when there has been none
+```
+`GET /api/summary` gains `collector_live` (`transport == "socket"`), for the status bar.
+
+`POST /api/settings/public-ip` 🔒 — look this network's public address up **now**, and answer like `GET /api/settings`. This is the only
+thing that asks after the first answer: the lookup no longer runs on the 15-minute timer, only once at start-up on an install that has
+never learned an address, when `public_ip_lookup` is switched on, and when this is called. `400` when the setting is off.
+
+`GET /api/outbound` 🔒 — every destination finstats can reach, for the **Outbound connections** card. Read from what is already kept;
+nothing is recorded for it. Hosts (with ports) only — never a path, never a key.
+```jsonc
+{ "destinations": [
+    {"id": "jellyfin",   "what": "Your Jellyfin server", "hosts": ["jellyfin.example:8096"], "why": "…",
+     "state": "always" | "on" | "off",
+     "last_at": 0 | null,                  // when it last answered, as far as something already recorded knows
+     "error": "…" | null},
+    {"id": "public_ip",  "hosts": ["checkip.amazonaws.com", "…"], "state": "on", …},
+    {"id": "geoip",      "hosts": ["download.db-ip.com"], "state": "off", …},
+    {"id": "service:3",  "what": "Radarr 4K (Radarr)", "hosts": ["nas:7878"], "state": "on", …} ],
+  "reachable": 2, "total": 4 }
+```

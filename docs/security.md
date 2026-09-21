@@ -52,7 +52,8 @@ before it touches the disk. Restoring validates the settings it brings back the 
 
 **No telemetry, and two outside requests: one you can switch off, one that is off until you switch it on.** finstats talks to your Jellyfin server and, by
 default, to a public "what is my IP" service (`checkip.amazonaws.com`, falling back to Cloudflare's `cdn-cgi/trace`, by name and by `1.1.1.1`,
-then `api.ipify.org` and `icanhazip.com`; several because ad-blocking DNS often blocks such services) every 15 minutes. It needs the answer to tell plays from your own household's public address apart
+then `api.ipify.org` and `icanhazip.com`; several because ad-blocking DNS often blocks such services) — **once**, the first time it needs to
+know, and after that only when you press *Look up now*. It needs the answer to tell plays from your own household's public address apart
 from remote ones. The request is a bare `GET` with `User-Agent: finstats` and `Accept: text/plain`: no version, no
 identifiers, nothing about your server or users. What the service necessarily learns is that *something* at your
 address asked. Turn off **Settings → Home network → Recognise my own public address** and finstats makes no
@@ -66,6 +67,10 @@ DB-IP's free "IP to City Lite" file from `download.db-ip.com`, once now and then
 something at your address downloaded its public file. Leave it off and put a file into `<data>/geoip/` yourself (DB-IP's, MaxMind's
 GeoLite2-City, or any other in that format; `FINSTATS_GEOIP_DB` names one elsewhere) and finstats asks nobody. The map is drawn
 from outlines bundled with finstats; no map tiles or map service are involved, so no coordinate ever leaves the browser.
+
+**Settings → Outbound connections** lists both of these, your Jellyfin, and every Sonarr, Radarr or Seerr you have connected: what each is
+for, whether it is switched on, and when it last answered. It is built from what finstats already keeps, so the list itself learns nothing;
+it exists so that the paragraphs above are something you can check rather than something you have to believe.
 
 **What the Security page is, and is not.** A place is the centre of a city or of an ISP's region, never a household, and it can be
 hundreds of kilometres off; a VPN or a phone on mobile data looks like a trip. Alerts (*impossible travel*, *new country*) are a

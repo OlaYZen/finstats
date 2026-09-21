@@ -34,7 +34,7 @@ docker build -t finstats:latest .        # local image; the published one is ghc
 ## Architecture
 
 ```
-Jellyfin ──/Sessions 1 s / 5 s idle─▶ collector ──▶ SQLite ◀── stats / recap API ◀── embedded SPA (web/)
+Jellyfin ──/socket push, else /Sessions 1 s / 5 s idle─▶ collector ──▶ SQLite ◀── stats / recap API ◀── embedded SPA (web/)
          ──/Users /Items /Devices /System/* (scheduler)──▶ sync ──┘        ▲
 Jellystat backup ──▶ import ─────────────────────────────────────┘   relink (after sync/import/start-up)
 Sonarr/Radarr ──calendar, history (15 min)──┐
@@ -69,6 +69,16 @@ claims "dubbed": it does not know a title's original language, so it lists the l
 10.x servers answer PascalCase and newer ones camelCase by default. All JSON access in the codebase assumes
 PascalCase keys. Jellyfin ids are normalised with `db::norm_id` (no dashes, lowercase) everywhere.
 
+**Two transports, one collector (`collector.rs`, `socket.rs`).** The session list arrives either by asking
+(`GET /Sessions` on the `active_interval_s` / `idle_interval_s` timers) or by being told (Jellyfin's `/socket` with
+`SessionsStart`, setting `live_socket`, **off by default in 1.4.0**); `tick()` cannot tell which and must not learn.
+A socket can lie by going quiet, so: no session list for 15 s is death, a server that never answers `SessionsStart`
+does not speak this, and while the socket is live one `/Sessions` read a minute still runs **while something plays** —
+the push is not filtered by `ActiveWithinSeconds`, so that read is what ends a play whose client vanished. Idle costs
+nothing. Any doubt falls back to polling on the next pass, because a play that is never seen cannot be backfilled.
+The handshake cannot ask for `profile="PascalCase"` the way every HTTP read does, so `socket.rs` re-cases keys and
+holds the first pushed snapshot against one real `/Sessions` read before a row is written from it.
+
 **One play-row shape, two producers.** `playback.rs::PlayRecord` + `media.rs` (stream/transcode extraction, labels,
 `effective_play_method`) are shared by the live `collector.rs` and the Jellystat `import.rs`, so both sources
 produce identical columns. The collector inserts a row the moment a play is first seen (`active = 1`), refreshes
@@ -81,7 +91,9 @@ episode; `PositionTicks` is unreliable and not imported (completion = watched ÷
 there is no item type, so Live TV is inferred (video, not in library, no container → `TvChannel`). The import is a
 single transaction, de-duplicated by `source_id = "jellystat:<id>"`, and streams a multi-hundred-MB file line by line.
 
-**Sync scheduling (`sync.rs`).** Small reads (users, activity log, server details/devices) run every 15 min. The
+**Sync scheduling (`sync.rs`).** Small reads (users, activity log, server details/devices) run every 15 min. The public-IP
+lookup is **not** among them: it runs once at start-up on an install that has never learned an address, and otherwise only when
+somebody asks (`POST /api/settings/public-ip`, or switching the setting on). The
 expensive library read *follows Jellyfin's own "Scan Media Library" task* (`library_scan_status`): it runs after
 that task finishes, never mid-scan, with a weekly safety net; the `sync_interval_h` timer is only a fallback
 (setting `follow_jellyfin_scan`). After a library read, `backfill_playbacks` links plays to libraries and
@@ -152,8 +164,9 @@ never by `is_admin`. The recap ignores permissions: own for everyone, any one us
 (`style-src 'self'` — the UI must not use inline `<style>`/`style=""`; `el.style.x` via JS is fine).
 
 **Local vs remote (`network.rs`).** `is_local` = private range (`db::is_local_ip`) or a row in `home_addresses`: this network's own
-public IP, looked up with the light syncs from a plain-text service (the only non-Jellyfin request finstats makes by default; setting
-`public_ip_lookup`, override `FINSTATS_PUBLIC_IP_URL`), plus the manual `home_addresses` setting. Always go through
+public IP, looked up **once** from a plain-text service (the only non-Jellyfin request finstats makes by default; setting
+`public_ip_lookup`, override `FINSTATS_PUBLIC_IP_URL`) — at start-up when no `lookup` row exists, or when somebody presses the button —
+plus the manual `home_addresses` setting. Always go through
 `network::classify(conn, ip)`; after the set changes call `network::reclassify`, which re-decides the whole history. The lookup
 must stay anonymous (no version, no ids in the request) and the docs' privacy claims must stay true to it.
 
@@ -191,6 +204,12 @@ instances is two rows, a record without an id stands for itself. Scoping goes th
 need `see_everyone` (and then no follower *counts* either — on a small server a number is a name), the queue needs `see_downloads`, while own-request
 progress (`state`, `progress`, `eta_s` and nothing else) is always allowed. The poster proxy `/img/arr/{service}/{media}` serves only ids finstats
 itself has listed. None of these tables are in `backup::TABLES`: they are re-readable, and `services` holds secrets.
+
+**Outbound connections (`outbound.rs`, `GET /api/outbound`, Settings card).** One row per destination finstats can reach —
+Jellyfin, the public-IP services, DB-IP, each `services` row — with whether it is on and when it last answered. Built
+entirely from what is already kept (collector status, `home_addresses`, the `.mmdb` on disk, `service_health`): nothing is
+recorded for it, and hosts are shown without paths or keys. A new outbound destination must appear here, and in the promise
+sentences in `README.md` and `docs/security.md`, in the same change that adds it.
 
 **Backups (`backup.rs`).** gzip JSON Lines, one row per line tagged with its table, matched *by column name* both ways so files move
 between versions; a new table that holds something Jellyfin cannot give back must be added to `backup::TABLES`. Secrets (Jellyfin

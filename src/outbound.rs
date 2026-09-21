@@ -48,6 +48,9 @@ pub fn host_of(url: &str) -> String {
     rest.split(['/', '?', '#']).next().unwrap_or(rest).to_string()
 }
 
+/// One connection as this page needs it: id, kind, name, URL, switched on, last good read, last error.
+pub type ServiceRow = (i64, &'static str, String, String, bool, Option<i64>, Option<String>);
+
 const ON: &str = "on";
 const OFF: &str = "off";
 
@@ -62,7 +65,7 @@ pub fn destinations(
     last_lookup_at: Option<i64>,
     geoip_from_env: bool,
     geoip_built_at: Option<i64>,
-    services: &[(i64, &'static str, String, String, bool, Option<i64>, Option<String>)],
+    services: &[ServiceRow],
 ) -> Vec<Dest> {
     let mut out = vec![];
 

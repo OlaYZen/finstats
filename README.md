@@ -133,9 +133,11 @@ whatever permissions they hold, and there is no recap of the whole server.
   managing finstats itself. No permission opens other people's recaps.
 - **Nothing about you leaves your network.** No telemetry, no accounts, no fonts or scripts loaded
   from the internet. Posters are fetched from your own Jellyfin. The one outside request finstats
-  makes by default is a plain "what is my IP" lookup, so that people watching at home through your public
-  address are not counted as remote. It carries no information about you or your server, and one
-  switch in Settings turns it off. The Security map needs a geolocation database; downloading it is
+  makes by default is a plain "what is my IP" lookup — asked **once**, so that people watching at home
+  through your public address are not counted as remote, and after that never again unless you press the
+  button. It carries no information about you or your server, and one switch in Settings turns it off.
+  **Settings → Outbound connections** lists every destination finstats can reach and whether it is
+  switched on, so the promise is one you can check rather than one you have to take. The Security map needs a geolocation database; downloading it is
   off until you ask for it, and addresses are always looked up on your own machine. Sonarr, Radarr, Seerr and torrent
   are reached at the addresses you enter, on your own network.
 - **Read-only.** finstats never changes anything on your Jellyfin server and never starts a library scan. The same goes for
@@ -214,9 +216,10 @@ Everything works out of the box. If you want to tune it, **Settings** in the app
 |---|---|
 | **Access** | Who may sign in and what they may see, for everyone or per person: *sign in*, *see everyone's activity*, *see network details*, *see the server*, *manage finstats*. Jellyfin administrators always have everything, and only they can change this. |
 | **Follow Jellyfin's library scan** | On by default. finstats refreshes its copy of your library right after Jellyfin's own scheduled scan — no second schedule to manage. |
-| **Check every…** | How often finstats looks at what is playing: every second while someone is watching, every 5 seconds while nobody is. |
+| **Let Jellyfin push what is playing** | Off until you turn it on. finstats keeps one connection open and is told the moment a play starts, pauses or ends, instead of asking every second — thousands fewer requests a day, and nothing noticed late. It still checks with a plain request once a minute while something plays, and falls straight back to asking on a timer if the connection drops. |
+| **Check every…** | How often finstats looks at what is playing when it is asking: every second while someone is watching, every 5 seconds while nobody is. Also the fallback for the setting above. |
 | **Treat a restart as the same play** | A stream that stops and resumes within 10 minutes counts as one viewing. |
-| **Home network** | Which plays count as local. Private addresses always do; with *Recognise my own public address* on (the default), so does your household's public IP, looked up every 15 minutes and remembered as it changes. You can add more addresses by hand. |
+| **Home network** | Which plays count as local. Private addresses always do; with *Recognise my own public address* on (the default), so does your household's public IP, looked up **once** and remembered. *Look up now* asks again on the day it changes; you can also add addresses by hand. |
 | **Connections** | Sonarr, Radarr and Seerr, several of a kind if you have them. Each is tested before it is saved; API keys are never shown again and never part of a backup. Jellyfin administrators only. |
 | **Security** | The city database that places addresses: download DB-IP's free one with a click and keep it fresh monthly, or drop your own `.mmdb` into `data/geoip/`. Also how fast (900 km/h) and how far apart (500 km) two sightings must be to count as impossible travel. |
 | **Count it as watching together within** | How close together different people must start the same title to count as a group. Default 60 seconds. |
