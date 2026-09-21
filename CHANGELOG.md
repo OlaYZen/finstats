@@ -7,6 +7,19 @@ Format: `## [version] - date`, a one-paragraph summary (required for an `x.y.0` 
 headline of that series in the app; optional otherwise), then `### Added`,
 `### Changed`, `### Fixed` or `### Removed` with one bullet per change.
 
+## [1.4.0] - 2026-09-21
+
+finstats can now be told what is playing instead of asking for it. Jellyfin offers the same session list over a WebSocket, so with one switch finstats keeps a single connection open and hears about a play the moment it starts, pauses or ends — about 17,000 requests a day become almost none, and nothing is noticed late any more. The same release makes the one outside request finstats ever makes by itself a single question rather than a standing one, and adds a card that lists everywhere finstats can reach, so the privacy promises in the README are something you can check rather than something you have to believe.
+
+### Added
+- **Let Jellyfin push what is playing** under Settings → Collection, **off until you turn it on**. Everything your history is made of comes from the collector, and a play that is never seen cannot be recovered later, so this transport is given a release to prove itself before it becomes the default. It is a new way of hearing the same thing: the plays, the pauses, the skips and the groups are worked out by exactly the code that worked them out before. While it is live finstats still makes one ordinary request a minute *while something is playing*, which is what ends a play whose client vanished without saying so; when nothing is playing it asks nothing at all. If the connection closes, goes quiet for fifteen seconds, or the server turns out not to speak it, finstats is back to checking on a timer on the very next pass and keeps trying to reconnect in the background.
+- **Outbound connections**, a card in Settings for Jellyfin administrators: every destination finstats can reach — your Jellyfin, the "what is my IP" service, DB-IP's database, and each Sonarr, Radarr or Seerr you have connected — with what it is for, whether it is switched on, and when it last answered. It is built from what finstats already knows, so the list itself learns nothing, and it shows addresses only: never a key, never a base path.
+- **Look up now** under Settings → Home network, for the day your public address changes.
+
+### Changed
+- The **"what is my IP" lookup runs once**, the first time finstats needs an address, instead of every fifteen minutes. A household's address is not news that needs re-checking a hundred times a day; when it does change, the new button asks again.
+- The Jellyfin card in Settings says how the collector is being told — pushed and live, or asked every so often — and, when the live connection is switched on but not carrying, why not.
+
 ## [1.3.0] - 2026-09-20
 
 Sonarr, Radarr and Seerr, on one page. The new **Pipeline** page says who asked for what, what is about to air and what is arriving right now — and, because finstats knows what people actually watch, whether the thing somebody asked for was ever played.
