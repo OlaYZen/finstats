@@ -82,6 +82,29 @@ pub fn normalize_url_of(input: &str, what: &str) -> Result<String> {
     Ok(s)
 }
 
+/// `http://box:8096` → `ws://box:8096/socket`, `https://media.example/jf` → `wss://media.example/jf/socket`.
+/// A base behind a reverse proxy keeps its path, which is why this is a swap on the already-normalised
+/// string and not `Url::set_scheme` (which refuses http → ws).
+pub fn socket_url_of(base: &str) -> Result<String> {
+    let base = base.trim_end_matches('/');
+    let ws = match base.split_once("://") {
+        Some(("http", rest)) => format!("ws://{rest}"),
+        Some(("https", rest)) => format!("wss://{rest}"),
+        _ => bail!("{base} is not an http address"),
+    };
+    Ok(format!("{ws}/socket"))
+}
+
+/// Percent-encoding for the one query fallback below: everything but the unreserved set.
+fn urlencode(s: &str) -> String {
+    s.bytes()
+        .map(|b| match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' => (b as char).to_string(),
+            _ => format!("%{b:02X}"),
+        })
+        .collect()
+}
+
 impl Jellyfin {
     pub fn new(http: Client, base: &str, token: Option<String>, device_id: &str) -> Self {
         Self { http, base: base.trim_end_matches('/').to_string(), token, device_id: device_id.to_string() }
@@ -101,6 +124,22 @@ impl Jellyfin {
             h.push_str(&format!(r#", Token="{t}""#));
         }
         h
+    }
+
+    /// What `socket.rs` needs to open `/socket`: the URL and the same `Authorization` every read carries.
+    /// The header, not `?api_key=`, so the key stays out of proxy logs and out of any message naming the URL.
+    pub fn socket_handshake(&self) -> Result<(String, String)> {
+        Ok((socket_url_of(&self.base)?, self.auth_header(self.token.as_deref())))
+    }
+
+    /// The same URL with the key in the query, for the one server that refuses the header on an upgrade.
+    /// Never logged, never stored: it is built at the moment of the retry and dropped with it.
+    pub fn socket_url_with_key(&self) -> Result<String> {
+        let url = socket_url_of(&self.base)?;
+        Ok(match self.token.as_deref() {
+            Some(t) => format!("{url}?api_key={}&deviceId={}", urlencode(t), urlencode(&self.device_id)),
+            None => url,
+        })
     }
 
     fn get(&self, path: &str) -> reqwest::RequestBuilder {
@@ -413,5 +452,25 @@ impl Jellyfin {
             .unwrap_or("image/jpeg")
             .to_string();
         Ok(Some((resp.bytes().await?.to_vec(), ct)))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_socket_url_keeps_the_host_the_port_and_the_path_behind_a_proxy() {
+        assert_eq!(socket_url_of("http://box:8096").unwrap(), "ws://box:8096/socket");
+        assert_eq!(socket_url_of("https://media.example").unwrap(), "wss://media.example/socket");
+        assert_eq!(socket_url_of("https://media.example/jellyfin").unwrap(), "wss://media.example/jellyfin/socket");
+        assert_eq!(socket_url_of("http://192.168.1.10:8096/").unwrap(), "ws://192.168.1.10:8096/socket");
+        assert!(socket_url_of("box:8096").is_err(), "an address without a scheme never reaches here");
+    }
+
+    #[test]
+    fn the_key_in_a_query_is_encoded() {
+        assert_eq!(urlencode("abc123"), "abc123");
+        assert_eq!(urlencode("a b&c=d"), "a%20b%26c%3Dd");
     }
 }

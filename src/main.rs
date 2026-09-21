@@ -22,6 +22,7 @@ mod relink;
 mod security;
 mod seerr;
 mod services;
+mod socket;
 mod state;
 mod stats;
 mod sync;

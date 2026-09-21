@@ -1,8 +1,16 @@
-//! Watches Jellyfin's `/Sessions` and turns what it sees into playback rows.
+//! Watches what is playing on Jellyfin and turns it into playback rows.
 //!
 //! A play is written the moment it is first seen (`active = 1`) and refreshed while it
 //! runs, so a crash or restart loses at most a few seconds. Time is only counted while
 //! the player is not paused, which makes `duration_s` "time actually watched".
+//!
+//! Two transports, one producer. The session list arrives either by asking (`GET /Sessions`, on a
+//! timer) or by being told (`socket.rs`, pushed); `tick()` cannot tell the difference and does not
+//! care — it is handed a list and works out what changed. While the socket is delivering, finstats
+//! stops asking, except for one reconcile read a minute *while something plays*: the push is not
+//! filtered by `ActiveWithinSeconds`, so only that read ends a play whose client vanished without
+//! saying so. Nothing plays, nothing is asked. The moment the socket stops delivering, polling
+//! resumes on the very next pass — never a gap, because a play that is never seen is lost for good.
 
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
@@ -16,6 +24,11 @@ use crate::playback::{PlayEvent, PlayRecord, insert_events};
 use crate::state::App;
 
 const PERSIST_EVERY: Duration = Duration::from_secs(30);
+/// How often to check the socket's word against `/Sessions`, while there is something to check.
+const RECONCILE_EVERY: Duration = Duration::from_secs(60);
+/// A socket that has pushed nothing for this long is not a transport any more. It matches the
+/// socket task's own watchdog, so this only catches a task that is wedged rather than gone.
+const SOCKET_STALE: Duration = Duration::from_secs(15);
 const DEVICE_REFRESH: Duration = Duration::from_secs(300);
 /// Plays shorter than this are accidental clicks; they are dropped when they end.
 const MIN_KEEP_S: i64 = 2;
@@ -165,6 +178,23 @@ fn diff_events(old: &PlayRecord, new: &mut PlayRecord, was_paused: bool, is_paus
     out
 }
 
+/// Whether the safety-net read is due: only while something is playing, and then once a minute.
+/// Idle costs nothing — a play that starts is pushed the instant it starts.
+fn reconcile_due(tracked: usize, since: Duration) -> bool {
+    tracked > 0 && since >= RECONCILE_EVERY
+}
+
+/// Where one pass got its session list.
+#[derive(Clone, Copy, PartialEq)]
+enum Source {
+    /// Pushed by Jellyfin.
+    Push,
+    /// The safety-net read while the socket is live.
+    Reconcile,
+    /// The plain timer, when there is no socket.
+    Poll,
+}
+
 pub async fn run(app: App) {
     // Anything still flagged active belongs to a previous process.
     if let Err(e) = app
@@ -182,10 +212,16 @@ pub async fn run(app: App) {
     let mut tracked: HashMap<String, Tracked> = HashMap::new();
     let mut devices_seen: HashMap<(String, String), Instant> = HashMap::new();
     let mut failures = 0u32;
+    let mut sock: Option<crate::socket::Handle> = None;
+    let mut pushed_at: Option<Instant> = None;
+    let mut reconciled_at = Instant::now();
+    let mut socket_error: Option<String> = None;
+    let mut socket_for: Option<String> = None;
 
     loop {
         let settings = app.settings();
         let Some(jf) = app.jellyfin() else {
+            (sock, pushed_at) = (None, None);
             tokio::select! {
                 _ = app.wake.notified() => {}
                 _ = tokio::time::sleep(Duration::from_secs(5)) => {}
@@ -193,12 +229,79 @@ pub async fn run(app: App) {
             continue;
         };
 
-        match jf.sessions().await {
+        // The setting decides whether a socket task exists at all; dropping the handle stops it.
+        // A socket also belongs to the server it was opened against: point finstats at another
+        // Jellyfin and the old one is dropped rather than left talking to the wrong machine.
+        if sock.is_some() && socket_for.as_deref() != Some(jf.base()) {
+            (sock, pushed_at) = (None, None);
+        }
+        match (settings.live_socket, sock.is_some()) {
+            (true, false) => {
+                sock = Some(crate::socket::spawn(jf.clone()));
+                socket_for = Some(jf.base().to_string());
+                socket_error = None;
+            }
+            (false, true) => (sock, pushed_at, socket_error, socket_for) = (None, None, None, None),
+            _ => {}
+        }
+
+        // "On the socket" means a snapshot arrived recently — not merely that something is connected.
+        let on_socket = pushed_at.is_some_and(|t| t.elapsed() < SOCKET_STALE);
+        let mut forget_socket = false;
+
+        let step: Option<(Source, Result<Vec<Value>>)> = if on_socket {
+            let handle = sock.as_mut().expect("a pushed snapshot means there is a socket");
+            let wait = match tracked.is_empty() {
+                true => SOCKET_STALE,
+                false => RECONCILE_EVERY.saturating_sub(reconciled_at.elapsed()).clamp(Duration::from_millis(50), SOCKET_STALE),
+            };
+            tokio::select! {
+                event = handle.recv() => match event {
+                    Some(crate::socket::Event::Snapshot(sessions)) => {
+                        pushed_at = Some(Instant::now());
+                        Some((Source::Push, Ok(sessions)))
+                    }
+                    Some(crate::socket::Event::Down(why)) => {
+                        // Say it once per spell, at the level of a thing that fixed itself.
+                        if socket_error.as_deref() != Some(why.as_str()) {
+                            tracing::info!("Jellyfin is no longer pushing what is playing ({why}); checking on a timer again");
+                        }
+                        (pushed_at, socket_error) = (None, Some(why));
+                        None
+                    }
+                    None => {
+                        forget_socket = true;
+                        pushed_at = None;
+                        None
+                    }
+                },
+                _ = tokio::time::sleep(wait) => match reconcile_due(tracked.len(), reconciled_at.elapsed()) {
+                    true => {
+                        reconciled_at = Instant::now();
+                        Some((Source::Reconcile, jf.sessions().await))
+                    }
+                    false => None,
+                },
+                _ = app.wake.notified() => None,
+            }
+        } else {
+            Some((Source::Poll, jf.sessions().await))
+        };
+
+        if forget_socket {
+            sock = None;
+        }
+
+        let Some((source, result)) = step else { continue };
+
+        match result {
             Ok(sessions) => {
-                if failures > 0 {
-                    tracing::info!("connection to Jellyfin restored");
+                if source == Source::Poll {
+                    if failures > 0 {
+                        tracing::info!("connection to Jellyfin restored");
+                    }
+                    failures = 0;
                 }
-                failures = 0;
                 if let Err(e) = tick(&app, &mut tracked, &mut devices_seen, &sessions, settings.merge_window_s, settings.group_window_s).await {
                     tracing::error!("collector tick failed: {e:#}");
                 }
@@ -207,7 +310,15 @@ pub async fn run(app: App) {
                 st.error = None;
                 st.last_poll_at = db::now();
                 st.active_sessions = tracked.len();
+                st.transport = if source == Source::Poll { "poll" } else { "socket" };
+                st.socket_enabled = settings.live_socket;
+                st.socket_error = if source == Source::Poll { socket_error.clone() } else { None };
+                if source == Source::Reconcile {
+                    st.last_reconcile_at = db::now();
+                }
             }
+            // A reconcile that fails says nothing about the socket, which is still delivering.
+            Err(e) if source == Source::Reconcile => tracing::warn!("could not check the pushed sessions against /Sessions: {e:#}"),
             Err(e) => {
                 failures += 1;
                 if failures == 1 || failures % 60 == 0 {
@@ -216,18 +327,51 @@ pub async fn run(app: App) {
                 let mut st = app.collector.write().unwrap();
                 st.connected = false;
                 st.error = Some(format!("{e:#}"));
+                st.transport = "poll";
+                st.socket_enabled = settings.live_socket;
+                st.socket_error = socket_error.clone();
             }
         }
 
+        // The socket branch has already waited inside its own select; only the timer sleeps here.
         // Close watching while something plays (pauses, seeks and track switches are caught as they
         // happen), a slower beat while nothing does. The idle beat is also how late a new play can be
         // noticed, which is watch time lost, so it stays short. Only an unreachable Jellyfin backs off
         // (up to a minute).
-        let base = if tracked.is_empty() { settings.idle_interval_s } else { settings.active_interval_s }.clamp(1, 60) as u64;
-        let wait = if failures > 0 { (base * failures.min(12) as u64).min(60) } else { base };
-        tokio::select! {
-            _ = app.wake.notified() => {}
-            _ = tokio::time::sleep(Duration::from_secs(wait)) => {}
+        if !on_socket {
+            let base = if tracked.is_empty() { settings.idle_interval_s } else { settings.active_interval_s }.clamp(1, 60) as u64;
+            let wait = Duration::from_secs(if failures > 0 { (base * failures.min(12) as u64).min(60) } else { base });
+            // A socket that comes back must be heard while finstats is polling, or it never gets a
+            // second chance: this is the only place a waiting poller listens to it.
+            match sock.as_mut() {
+                None => {
+                    tokio::select! {
+                        _ = app.wake.notified() => {}
+                        _ = tokio::time::sleep(wait) => {}
+                    }
+                }
+                Some(handle) => {
+                    tokio::select! {
+                        _ = app.wake.notified() => {}
+                        _ = tokio::time::sleep(wait) => {}
+                        event = handle.recv() => match event {
+                            // The picture itself is let go: the next one is a second and a half away,
+                            // and the pass that follows takes it. What matters is that it arrived.
+                            Some(crate::socket::Event::Snapshot(_)) => {
+                                if socket_error.is_some() {
+                                    tracing::info!("Jellyfin is pushing what is playing again");
+                                }
+                                (pushed_at, socket_error) = (Some(Instant::now()), None);
+                            }
+                            Some(crate::socket::Event::Down(why)) => socket_error = Some(why),
+                            None => forget_socket = true,
+                        },
+                    }
+                }
+            }
+            if forget_socket {
+                sock = None;
+            }
         }
     }
 }
@@ -396,6 +540,13 @@ async fn tick(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_safety_net_read_runs_only_while_something_plays() {
+        assert!(!reconcile_due(0, Duration::from_secs(3_600)), "an idle server is never asked: a play that starts is pushed");
+        assert!(!reconcile_due(2, Duration::from_secs(59)));
+        assert!(reconcile_due(1, RECONCILE_EVERY), "one read a minute ends a play whose client vanished");
+    }
 
     fn rec(position: i64) -> PlayRecord {
         PlayRecord { position_s: Some(position), play_method: "DirectPlay".into(), ..Default::default() }
