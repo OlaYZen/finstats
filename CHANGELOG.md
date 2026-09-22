@@ -7,6 +7,11 @@ Format: `## [version] - date`, a one-paragraph summary (required for an `x.y.0` 
 headline of that series in the app; optional otherwise), then `### Added`,
 `### Changed`, `### Fixed` or `### Removed` with one bullet per change.
 
+## [1.5.2] - 2026-09-22
+
+### Changed
+- **A read of Jellyfin's session list and the clock it answers are one call now.** They used to be two, and two things that must always happen together eventually do not: that is the shape of the runaway-request fault that was found and fixed while 1.5.0 was being built. It cannot be written that way any more. Catching it used to need seven minutes of watching a real server; the same proof now takes a fraction of a second, so it runs every time anything changes. Nothing about what finstats does changes — the same requests, the same history, the same everything on screen.
+
 ## [1.5.1] - 2026-09-22
 
 ### Fixed
