@@ -38,8 +38,8 @@ Jellyfin ──/socket push, else /Sessions 1 s / 5 s idle─▶ collector ─�
          ──/Users /Items /Devices /System/* (scheduler)──▶ sync ──┘        ▲
 Jellystat backup ──▶ import ─────────────────────────────────────┘   relink (after sync/import/start-up)
 Sonarr/Radarr ──calendar, history (15 min)──┐
-Seerr ──requests (5 min)────────────────────┼──▶ SQLite ──▶ pipeline API ◀── /pipeline
-Sonarr/Radarr queues ───────────────────────┴──▶ in-memory snapshot (5 s watched / 60 s) ──▶ /api/downloads
+Seerr ──requests (5 min, one row if quiet)──┼──▶ SQLite ──▶ pipeline API ◀── /pipeline
+Sonarr/Radarr queues ───────────────────────┴──▶ in-memory snapshot (5 s watched / 60 s busy / 5 min empty) ──▶ /api/downloads
 ```
 
 **State & DB access.** `state.rs` holds `AppState` (shared via `Arc` as `App`): DB handle, Jellyfin config,
@@ -196,10 +196,13 @@ Tasks: `sync_upcoming` + `sync_grabs` (15 min), `sync_requests` (5 min), all thr
 test holds it against `TASK_IDS`. `item_external` turns `items.provider_ids` into indexed rows — **one id may belong to several items** (HD and 4K),
 so joins go id → every item → plays, unlike `relink.rs`, which refuses ambiguity because it rewrites history. Film releases are stored as a *day*
 (Radarr's midnight UTC is the evening before west of Greenwich); episodes keep their moment. Seerr is read newest-modified-first with an overlap
-on *its* clock, plus a re-read of everything still open (a media status change does not touch the request), and only a whole listing may set
-`removed_at` (Seerr purges; the history must not shrink). Users link by `jellyfinUserId`, then Jellyfin user name — never a display name or e-mail.
-`downloads.rs` is the only live part: its own loop and `Notify`, 5 s while a page says `?live=1` and 60 s otherwise, no DB work per tick, the
-snapshot in memory only. `fold()` turns queue records into downloads by `downloadId` + service: a season pack is one row, the same id in two
+on *its* clock, plus a re-read of everything still open (a media status change does not touch the request) — that one every 15 min and only while
+something *is* open — and only a whole listing may set `removed_at` (Seerr purges; the history must not shrink). Every pass starts with a `take=1`
+probe (`newest_change`): a newest `updatedAt` no newer than the cursor means nothing was created or changed, and the pass ends there, which is
+what keeps a five-minute cadence from being most of the traffic finstats makes. Users link by `jellyfinUserId`, then Jellyfin user name — never a display name or e-mail.
+`downloads.rs` is the only live part: its own loop and `Notify`, 5 s while a page says `?live=1`, otherwise 60 s while anything is in the queue
+(a request page shows how far along it is) and 5 min while it is empty (`wait_s`) — an empty queue has nothing to go out of date, and opening the
+page, connecting a service or a read of Seerr all wake the loop. No DB work per tick, the snapshot in memory only. `fold()` turns queue records into downloads by `downloadId` + service: a season pack is one row, the same id in two
 instances is two rows, a record without an id stands for itself. Scoping goes through `stats::pinned_user`: own requests for everyone, others'
 need `see_everyone` (and then no follower *counts* either — on a small server a number is a name), the queue needs `see_downloads`, while own-request
 progress (`state`, `progress`, `eta_s` and nothing else) is always allowed. The poster proxy `/img/arr/{service}/{media}` serves only ids finstats

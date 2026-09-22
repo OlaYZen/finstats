@@ -758,7 +758,10 @@ that is not here yet, are listed as before. Switched-off connections say nothing
 
 ## Requests (Seerr)
 
-Read every 5 minutes (task `sync_requests`). Everyone signed in sees **their own** requests; other people's need `see_everyone`, and
+Read every 5 minutes (task `sync_requests`), and a pass that has nothing to read costs one row: it asks Seerr for its
+newest-modified request, and stops there when that is one it already knows. What is still on its way is looked at again
+every quarter hour (a request's own record does not always change when its media arrives), and everything is listed once
+a day. Everyone signed in sees **their own** requests; other people's need `see_everyone`, and
 without it no count, name or "somebody else watched it" is sent either. A request Seerr cannot tie to a Jellyfin user belongs to nobody and
 is only visible to those who may see everyone.
 
@@ -801,8 +804,9 @@ Live, from memory: the queues of every connected Sonarr and Radarr. They already
 torrent and a usenet download the same way, so finstats reads them rather than each client's own API. Nothing is stored. Needs the
 permission **`see_downloads`** (`403` without it; Jellyfin administrators always have it).
 
-`GET /api/downloads?live=1` — `live=1` means "a page is showing this": the snapshot is then refreshed every 5 seconds for the next 20,
-and every 60 seconds otherwise. The prefetcher never asks for it.
+`GET /api/downloads?live=1` — `live=1` means "a page is showing this": the snapshot is then refreshed every 5 seconds for the next 20.
+While nobody is looking it is read every 60 seconds if there is anything in the queue, and every 5 minutes if there is not — opening the page,
+connecting a service or a read of Seerr all refresh it at once. The prefetcher never asks for it.
 ```jsonc
 { "rows": [ {"key": "<download id>:<service>" | "arr:<service>:<title>:<sub>",
              "title": "Low Orbit", "sub": "Season 3 · 3 episodes" | "2026" | null,
