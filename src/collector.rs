@@ -369,8 +369,7 @@ fn listening_mode(mode: &str) -> bool {
 /// Take a slot for one `/Sessions` read, or be told how long until there is one. Every caller goes
 /// through here; a refusal is a bug somewhere above, so it is counted and said out loud — once a
 /// minute, because the one thing a limiter must not do is make its own noise.
-pub fn sessions_slot(caller: &'static str, mode: &'static str) -> Result<(), Duration> {
-    let now = Instant::now();
+pub fn sessions_slot(now: Instant, caller: &'static str, mode: &'static str) -> Result<(), Duration> {
     let mut reads = READS.lock().unwrap();
     let out = reads.take(now, listening_mode(mode));
     if let Some(n) = reads.report(now) {
@@ -384,7 +383,7 @@ pub fn sessions_slot(caller: &'static str, mode: &'static str) -> Result<(), Dur
 /// and the first row written from it.
 pub async fn sessions_waiting(jf: &Jellyfin, caller: &'static str, mode: &'static str) -> Result<Vec<Value>> {
     for _ in 0..4 {
-        match sessions_slot(caller, mode) {
+        match sessions_slot(Instant::now(), caller, mode) {
             Ok(()) => return jf.sessions().await,
             Err(wait) => tokio::time::sleep(wait).await,
         }
@@ -445,9 +444,21 @@ impl Net {
     }
 
     /// A `/Sessions` read of any kind, counted from when it was *begun*. Both clocks: a read answers
-    /// the same question a push does, and better.
-    pub fn read(&mut self, now: Instant) {
+    /// the same question a push does, and better. Private, because a read that does not go through
+    /// `take_read` is the storm.
+    fn read(&mut self, now: Instant) {
         (self.activity, self.read) = (now, now);
+    }
+
+    /// **One `/Sessions` read: the gate, and the clocks it must re-arm, in a single call.** These two
+    /// drifting apart is exactly what 1.4.11 was — the net asked for a read, and nothing the read did
+    /// touched the clock that had called for it, so it asked again, and again, 2,625 times in eight
+    /// seconds. Fusing them makes that unrepresentable rather than merely tested: there is no way to
+    /// read without re-arming. The *attempt* re-arms, not its answer, so even a refusal waits its turn
+    /// instead of coming straight back round.
+    pub fn take_read(&mut self, now: Instant, caller: &'static str, mode: &'static str) -> Result<(), Duration> {
+        self.read(now);
+        sessions_slot(now, caller, mode)
     }
 
     pub fn silence(&self, now: Instant) -> Duration {
@@ -471,6 +482,63 @@ pub fn safety_due(active: usize, since_activity: Duration, since_read: Duration)
         false => net,
     };
     due.max(SAFETY_MIN_GAP.saturating_sub(since_read))
+}
+
+/// The collector's timing, with no I/O in it: everything one pass decides, from what it has seen
+/// and what the clock says. `run()` owns one and every read, push and subscription goes through it,
+/// so the same object can be driven through three minutes of playing in a microsecond — which is
+/// what the storm needed, and what no test of the arithmetic on its own could have caught.
+pub struct Pass {
+    decide: Decide,
+    net: Net,
+    /// The subscription as the *wire* last had it, because that is the only thing a silence window
+    /// may be measured from: asking for one and it reaching Jellyfin are two moments.
+    subscribed: bool,
+}
+
+impl Pass {
+    pub fn new(now: Instant) -> Self {
+        Self { decide: Decide::default(), net: Net::new(now), subscribed: false }
+    }
+
+    /// One session list, pushed or asked for. `tick()` cannot tell which and neither can this.
+    pub fn saw(&mut self, active: usize, playing: usize, socket_live: bool) -> Mode {
+        self.decide.see(active, playing, socket_live)
+    }
+
+    /// Whether Jellyfin should be pushing right now: not while something runs, and not through the
+    /// pause debounce that follows it.
+    pub fn subscribe(&self, playing: usize) -> bool {
+        should_subscribe(playing, self.decide.settling())
+    }
+
+    /// What the wire says about the subscription. A fresh one is a fresh silence window: nothing
+    /// heard before it says anything about it.
+    pub fn subscription(&mut self, now: Instant, on: bool) {
+        if on && !self.subscribed {
+            self.net.subscribed(now);
+        }
+        self.subscribed = on;
+    }
+
+    /// A pushed list: the socket is carrying, which is what silence is the absence of.
+    pub fn pushed(&mut self, now: Instant) {
+        self.net.pushed(now);
+    }
+
+    /// When the next one-shot read falls due, `ZERO` meaning now.
+    pub fn due(&self, now: Instant, active: usize) -> Duration {
+        self.net.due(now, active)
+    }
+
+    pub fn silence(&self, now: Instant) -> Duration {
+        self.net.silence(now)
+    }
+
+    /// The only way to read `/Sessions` from the loop: see `Net::take_read`.
+    pub fn take_read(&mut self, now: Instant, caller: &'static str, mode: &'static str) -> Result<(), Duration> {
+        self.net.take_read(now, caller, mode)
+    }
 }
 
 /// A disagreement is only worth a word when it lasts: asking the socket to stop and the stop reaching
@@ -639,14 +707,11 @@ pub async fn run(app: App) {
     let mut mode_since = db::now();
     let mut mode_at = Instant::now();
     let mut bad_since: Option<Instant> = None;
-    // The clocks the one-shot read hangs on: silence, and when `/Sessions` was last read at all.
-    let mut net = Net::new(Instant::now());
-    // Whether Jellyfin was being asked to push at the end of the last pass, so that the moment it is
-    // asked again can start a fresh silence window.
-    let mut was_subscribed = false;
+    // Everything this loop decides about time: the mode, the subscription, and the clocks the
+    // one-shot read hangs on. Reads go through it, which is the only way they re-arm.
+    let mut pass = Pass::new(Instant::now());
     // Carrying on trust rather than on a pushed list; the first real push is held against it.
     let mut trusted_unproven = false;
-    let mut decide = Decide::default();
     let (mut active, mut playing) = (0usize, 0usize);
     let mut socket_error: Option<String> = None;
     let mut socket_for: Option<String> = None;
@@ -682,7 +747,7 @@ pub async fn run(app: App) {
         // server the socket is for. While something plays the pushes are a second copy of what is
         // already being asked for, uncompressed, so those are the only moments worth silence.
         if let Some(handle) = sock.as_ref() {
-            handle.listen(should_subscribe(playing, decide.settling()));
+            handle.listen(pass.subscribe(playing));
         }
 
         // A subscription that has just gone back on starts its silence window here. Watched on the
@@ -690,11 +755,7 @@ pub async fn run(app: App) {
         // its own counts too. Without this the first pause after a minute of playing looks like a
         // minute of silence the instant it begins — the socket was unsubscribed for all of it — and
         // the net falls at once and then again and again, which is the storm this is the guard against.
-        let subscribed_now = sock.as_ref().is_some_and(|h| h.subscribed());
-        if subscribed_now && !was_subscribed {
-            net.subscribed(Instant::now());
-        }
-        was_subscribed = subscribed_now;
+        pass.subscription(Instant::now(), sock.as_ref().is_some_and(|h| h.subscribed()));
 
         // Each transport where it is the better one. **Nothing playing**: listen. An idle server has
         // nothing to report, and asking it every few seconds to be told so was most of the traffic
@@ -728,14 +789,11 @@ pub async fn run(app: App) {
         // before the socket went down is not, and a poll is about to fetch a better one anyway.
         let step: Option<(Source, Result<Vec<Value>>)> = match (on_socket, pending.take()) {
             (true, Some(sessions)) => Some((Source::Push, Ok(sessions))),
-            (false, _) => match sessions_slot("poll", mode_now) {
-                Ok(()) => {
-                    // A read of our own answers what a push would have said, and more recently: the
-                    // beat during a play is why a pause that follows three minutes of it asks for
-                    // nothing at all for the next minute.
-                    net.read(Instant::now());
-                    Some((Source::Poll, jf.sessions().await))
-                }
+            (false, _) => match pass.take_read(Instant::now(), "poll", mode_now) {
+                // A read of our own answers what a push would have said, and more recently: the beat
+                // during a play is why a pause that follows three minutes of it asks for nothing at
+                // all for the next minute.
+                Ok(()) => Some((Source::Poll, jf.sessions().await)),
                 // Over budget, which above this line means a bug. Wait out the gate rather than
                 // spinning on it; one missed second of a play is a gap, and a gap is only ever
                 // attributed to the state the play was already in.
@@ -749,12 +807,12 @@ pub async fn run(app: App) {
                 // When the next one-shot read falls due: after a spell of complete silence with
                 // something paused, or on the plain five-minute net, whichever comes first. Neither
                 // is a beat — `poll_interval_s` stays null — they are single reads.
-                let due = net.due(Instant::now(), active);
+                let due = pass.due(Instant::now(), active);
                 let wait = due.min(SOCKET_IDLE_WAKE);
                 tokio::select! {
                     event = handle.recv() => match event {
                         Some(crate::socket::Event::Snapshot(sessions)) => {
-                            net.pushed(Instant::now());
+                            pass.pushed(Instant::now());
                             Some((Source::Push, Ok(sessions)))
                         }
                         Some(crate::socket::Event::Trusted) => None, // already carrying
@@ -785,13 +843,11 @@ pub async fn run(app: App) {
                     },
                     _ = tokio::time::sleep(wait) => match due.is_zero() {
                         true => {
-                            // The attempt re-arms the clocks, not its answer: a net that only falls
-                            // again once something *else* happens is a net that falls for ever. Both
-                            // are set before the gate is asked, so even a refused read waits its turn
-                            // rather than coming straight back round.
-                            let silence = net.silence(Instant::now());
-                            net.read(Instant::now());
-                            match sessions_slot("safety", mode_now) {
+                            // One call, so that the attempt re-arms the clocks whatever the gate
+                            // answers: a net that only falls again once something *else* happens is a
+                            // net that falls for ever.
+                            let silence = pass.silence(Instant::now());
+                            match pass.take_read(Instant::now(), "safety", mode_now) {
                                 Ok(()) => {
                                     tracing::debug!("safety poll: {active} loaded, none running, {}s of silence", silence.as_secs());
                                     Some((Source::Safety, jf.sessions().await))
@@ -826,7 +882,7 @@ pub async fn run(app: App) {
                 // What this list means for the transport. Every reading decides, pushed or asked for.
                 let was = session_mode(socket_live, mode, active);
                 (active, playing) = activity(&sessions);
-                mode = decide.see(active, playing, socket_live);
+                mode = pass.saw(active, playing, socket_live);
                 let now_mode = session_mode(socket_live, mode, active);
                 // The change of transport happens here, in order, before it is published: the asking
                 // has stopped by the time this pass ends, so the subscription goes out now and the new
@@ -835,7 +891,7 @@ pub async fn run(app: App) {
                 if was != now_mode
                     && let Some(handle) = sock.as_ref()
                 {
-                    let want = should_subscribe(playing, decide.settling());
+                    let want = pass.subscribe(playing);
                     handle.listen(want);
                     if !handle.settled(want, SETTLE_WIRE).await {
                         tracing::debug!("the socket did not {} within {:?}", if want { "subscribe" } else { "go quiet" }, SETTLE_WIRE);
@@ -932,7 +988,7 @@ pub async fn run(app: App) {
                                     tracing::info!("Jellyfin is pushing what is playing");
                                 }
                                 (socket_live, socket_error) = (true, None);
-                                net.pushed(Instant::now());
+                                pass.pushed(Instant::now());
                                 pending = Some(sessions);
                                 let mut st = app.collector.write().unwrap();
                                 (st.socket_live, st.socket_error) = (true, None);
@@ -1350,6 +1406,55 @@ mod tests {
             }
         }
         reads
+    }
+
+    /// **The storm, on a fake clock, through the objects the loop itself uses.** Three minutes of a
+    /// play polled every second with the subscription off — so not one push can arrive — then a
+    /// pause, the debounce, and three minutes of a quiet paused client. 1.4.10 made 2,625 reads in
+    /// the eight seconds after that pause. This counts every read the collector would make, the gate
+    /// included, and it takes microseconds: the minute-scale proof lives here rather than in a test
+    /// that has to sit through two real minutes, and the wire suite only has to show that the
+    /// shipped binary is wired to these.
+    #[test]
+    fn three_minutes_of_playing_then_a_pause_is_almost_no_reads_at_all() {
+        let t0 = Instant::now();
+        let at = |s: u64| t0 + Duration::from_secs(s);
+        let mut pass = Pass::new(t0);
+        let mut mode = Mode::Poll;
+        let mut reads: Vec<u64> = vec![];
+        let mut refused_while_listening = 0;
+
+        for s in 0..420u64 {
+            let now = at(s);
+            // One play: running for the first three minutes, paused for the four after it.
+            let (active, playing) = (1usize, usize::from(s < 180));
+            let want = pass.subscribe(playing);
+            pass.subscription(now, want); // the ask and the wire agree within the pass, as they do live
+            let listening = mode == Mode::Listen;
+            let mode_now = session_mode(true, mode, active);
+            // Asking: the beat, once a second. Listening: nothing at all unless the net falls due.
+            if !listening || pass.due(now, active).is_zero() {
+                match pass.take_read(now, if listening { "safety" } else { "poll" }, mode_now) {
+                    Ok(()) => reads.push(s),
+                    Err(_) => refused_while_listening += usize::from(listening),
+                }
+                mode = pass.saw(active, playing, true);
+            }
+        }
+
+        let between = |a: u64, b: u64| reads.iter().filter(|s| (a..b).contains(s)).count();
+        assert_eq!(between(0, 180), 180, "a play is watched once a second, and that is the point of it");
+        // The debounce is three more readings; after that the socket has it and the asking stops.
+        assert!(between(180, 200) <= 6, "the storm: {} reads in the 20 s after the pause", between(180, 200));
+        assert_eq!(refused_while_listening, 0, "the limiter was met while listening, which means something was asking");
+        // A quiet paused client: one read per minute of silence, and no more.
+        // The first falls a minute after the last reading of the debounce, not a minute after the
+        // pause: silence is measured from the last thing that happened, and a read is one of them.
+        let net_reads: Vec<u64> = reads.iter().copied().filter(|s| *s >= 200).collect();
+        assert_eq!(net_reads.len(), 3, "four minutes of paused silence is three reads, not {net_reads:?}");
+        for w in net_reads.windows(2) {
+            assert!(w[1] - w[0] >= 60, "two safety reads {}s apart", w[1] - w[0]);
+        }
     }
 
     #[test]
