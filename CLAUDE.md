@@ -144,7 +144,12 @@ holds the first pushed snapshot against one real `/Sessions` read before a row i
 `effective_play_method`) are shared by the live `collector.rs` and the Jellystat `import.rs`, so both sources
 produce identical columns. The collector inserts a row the moment a play is first seen (`active = 1`), refreshes
 it every 30 s, counts only un-paused time, merges a restart within `merge_window_s` into the same row, and diffs
-consecutive sightings into `playback_events` (pause/seek/track/transcode timeline).
+consecutive sightings into `playback_events` (pause/seek/track/transcode timeline). **An event is a change, so the two
+sides of `diff_events` must be the same kind of value.** "Once a transcode, always a transcode" is applied to the new
+reading *before* the diff, never after: applied after, the kept record says `Transcode` while every reading that follows
+says what the client settled back to, and each one is a change — finstats wrote one `transcode` event per second for the
+rest of the play, reading `DirectPlay: <reasons>`, a line that contradicts itself (migration 17 clears them). Anything
+sticky that the diff also reads belongs above the diff.
 
 **Jellystat import semantics** (learned from real exports; documented at the top of `import.rs` and in the README):
 `ActivityDateInserted` is the *end* of a play; for episodes `NowPlayingItemId` is the series and `EpisodeId` the
