@@ -847,11 +847,11 @@ renames, deletions and ignores say nothing about what arrived.
 
 ---
 
-# v1.4 — Live session tracking
+# v1.5 — Live session tracking
 
-The collector can be *told* when something starts instead of asking. `GET /api/settings` gains `live_socket` (default `false`): with it
-on, finstats keeps one WebSocket open to Jellyfin's `/socket`. Nothing else about the API changes — the same rows, the same
-`/api/now-playing`, only sooner.
+The collector is *told* when something starts instead of asking for it: finstats keeps one WebSocket open to Jellyfin's `/socket`. There
+is no setting — it is how the collector works, and `active_interval_s` / `idle_interval_s` are what it asks at, plus the fallback for a
+socket that is not carrying. Nothing else about the API changes — the same rows, the same `/api/now-playing`, only sooner.
 
 Each transport does the half it is good at. **Nothing playing:** finstats listens and asks for nothing at all — Jellyfin sends a session
 list when something changes and nothing in between, so a quiet server is a quiet socket and not a broken one. **Something playing:**
@@ -881,7 +881,6 @@ session list drops finstats back to polling at `active_interval_s` / `idle_inter
 ```jsonc
 { "connected": true, "last_poll_at": 0, "active_sessions": 1, "error": null,
   "transport": "socket" | "poll",        // how the list arrived last
-  "socket_enabled": true,                // the setting, so "off" and "on but not connecting" are distinguishable
   "socket_error": "Jellyfin said nothing for 90s" | null,   // why the socket is not carrying; null while it is
   "socket_live": true,                   // the socket is open and carrying, whatever brought the last list
   "session_mode": "idle_socket" | "playing_poll" | "paused_socket" | "fallback",

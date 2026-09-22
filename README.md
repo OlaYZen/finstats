@@ -216,8 +216,7 @@ Everything works out of the box. If you want to tune it, **Settings** in the app
 |---|---|
 | **Access** | Who may sign in and what they may see, for everyone or per person: *sign in*, *see everyone's activity*, *see network details*, *see the server*, *manage finstats*. Jellyfin administrators always have everything, and only they can change this. |
 | **Follow Jellyfin's library scan** | On by default. finstats refreshes its copy of your library right after Jellyfin's own scheduled scan — no second schedule to manage. |
-| **Let Jellyfin push what is playing** | Off until you turn it on. finstats keeps one connection open and is told the moment a play starts, pauses or ends, instead of asking every second — thousands fewer requests a day, and nothing noticed late. It still checks with a plain request once a minute while something plays, and falls straight back to asking on a timer if the connection drops. |
-| **Check every…** | How often finstats looks at what is playing when it is asking: every second while someone is watching, every 5 seconds while nobody is. Also the fallback for the setting above. |
+| **Check every…** | How often finstats asks what is playing: every second while someone is watching, and — only while the live connection is not carrying — every 5 seconds while nobody is. Jellyfin pushes a new play within about a second, so the second one is a fallback and nothing more. |
 | **Treat a restart as the same play** | A stream that stops and resumes within 10 minutes counts as one viewing. |
 | **Home network** | Which plays count as local. Private addresses always do; with *Recognise my own public address* on (the default), so does your household's public IP, looked up **once** and remembered. *Look up now* asks again on the day it changes; you can also add addresses by hand. |
 | **Connections** | Sonarr, Radarr and Seerr, several of a kind if you have them. Each is tested before it is saved; API keys are never shown again and never part of a backup. Jellyfin administrators only. |
@@ -267,8 +266,10 @@ an older version, start it on an empty data folder and restore one of the backup
 ## Questions
 
 **Does it slow Jellyfin down?**
-No. It asks Jellyfin one small question every few seconds and reads your library only after
-Jellyfin has finished its own scan.
+No. Jellyfin tells it when something starts, over one connection that stays open, so an evening
+when nobody is watching costs no requests at all. While something is actually playing it asks one
+small question a second, which is what keeps pauses and skips exact, and it reads your library only
+after Jellyfin has finished its own scan.
 
 **Where is my data, and how do I back it up?**
 finstats backs itself up every week into `data/backups` and keeps the newest five; download them under

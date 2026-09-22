@@ -79,7 +79,9 @@ frame compression is `permessage-deflate`, which tungstenite does not implement.
 
 **Two transports, one collector (`collector.rs`, `socket.rs`).** The session list arrives either by asking
 (`GET /Sessions` on the `active_interval_s` / `idle_interval_s` timers) or by being told (Jellyfin's `/socket` with
-`SessionsStart`, setting `live_socket`, **off by default in 1.4.0**); `tick()` cannot tell which and must not learn.
+`SessionsStart`); `tick()` cannot tell which and must not learn. **There is no setting**: the socket is spawned for whatever
+Jellyfin is configured, always, and being told is how finstats collects — 1.4.0's `live_socket` switch was removed in 1.5.2, so
+`active_interval_s` / `idle_interval_s` are only what the asking half asks at, and the fallback for a socket that is not carrying.
 **Each does the half it is good at.** `collector::Decide::see` reads one session list — pushed or asked for, it
 decides the same — and answers `Mode::Poll` or `Mode::Listen`: **anything running** → poll at `active_interval_s`, because a pause or a
 seek is only as sharp as the gap between two sightings and the push carries no `ActiveWithinSeconds`; **nothing loaded anywhere** →
@@ -124,7 +126,7 @@ what the collector *asked* for. `disagrees()` is the machine marking its own wor
 contradict, and a disagreement is logged WARN only once it outlives `SETTLE`, because asking the socket to stop and the stop reaching the
 wire are two moments. All of it is on `GET /api/status`, unauthenticated by the owner's decision — shape only, never a name, a title or
 even a count, and answered from memory with no request and no query. In the fallback the beat slows (`FALLBACK_IDLE_S`, `PAUSED_POLL_S`) but never below the owner's own
-interval, and only while `live_socket` is on — with the setting off there is no fallback, just the intervals as set. A reconnect mid-play subscribes
+interval — it only ever slows the beat, never hurries it. A reconnect mid-play subscribes
 once for the proof and goes quiet again, and the `SUBSCRIBE_MAX` deadline runs from `listening_since`, not the handshake, or a socket
 kept quiet on purpose would be mistaken for a server that does not speak this. That replaced the one-a-minute reconcile read; `Source` has
 no `Reconcile` any more, and `CollectorStatus` swapped `last_reconcile_at` for `socket_live` (the socket carries, whatever brought the
