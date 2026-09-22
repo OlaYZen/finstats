@@ -66,9 +66,6 @@ pub struct Settings {
     pub allow_user_login: bool,
     /// Permissions every signed-in non-admin has; per-user grants add to these.
     pub default_permissions: Vec<String>,
-    /// Let Jellyfin push what is playing over its WebSocket instead of asking for it on a timer.
-    /// Off by default for one release: the collector is where all history comes from.
-    pub live_socket: bool,
     /// How often to ask Jellyfin for sessions while somebody is watching…
     pub active_interval_s: i64,
     /// …and while nobody is. A new play is noticed at most this late.
@@ -96,7 +93,7 @@ pub struct Settings {
 
 impl Default for Settings {
     fn default() -> Self {
-        Self { follow_jellyfin_scan: true, allow_user_login: false, default_permissions: vec![], live_socket: false, active_interval_s: 1, idle_interval_s: 5, sync_interval_h: 6, merge_window_s: 600, min_play_s: 0, group_window_s: 60, public_ip_lookup: true, home_addresses: vec![], backup_every_d: 7, backup_keep: 5, geoip_download: false, travel_speed_kmh: 900, travel_min_km: 500 }
+        Self { follow_jellyfin_scan: true, allow_user_login: false, default_permissions: vec![], active_interval_s: 1, idle_interval_s: 5, sync_interval_h: 6, merge_window_s: 600, min_play_s: 0, group_window_s: 60, public_ip_lookup: true, home_addresses: vec![], backup_every_d: 7, backup_keep: 5, geoip_download: false, travel_speed_kmh: 900, travel_min_km: 500 }
     }
 }
 
@@ -143,8 +140,6 @@ pub struct CollectorStatus {
     pub error: Option<String>,
     /// `socket` while Jellyfin is pushing, `poll` while finstats is asking.
     pub transport: &'static str,
-    /// The setting, so the page can tell "off" from "on but not connecting".
-    pub socket_enabled: bool,
     /// Why the socket is not the transport right now; `None` while it is.
     pub socket_error: Option<String>,
     /// The socket is open and carrying, whichever transport brought the last list. While something
@@ -165,7 +160,7 @@ pub struct CollectorStatus {
 /// Before the first sighting finstats is asking, like every version before this one.
 impl Default for CollectorStatus {
     fn default() -> Self {
-        Self { connected: false, last_poll_at: 0, active_sessions: 0, error: None, transport: "poll", socket_enabled: false, socket_error: None, socket_live: false, session_mode: "fallback", socket_connected: false, socket_subscribed: false, poll_interval_s: None, mode_since: 0 }
+        Self { connected: false, last_poll_at: 0, active_sessions: 0, error: None, transport: "poll", socket_error: None, socket_live: false, session_mode: "fallback", socket_connected: false, socket_subscribed: false, poll_interval_s: None, mode_since: 0 }
     }
 }
 

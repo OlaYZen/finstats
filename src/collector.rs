@@ -260,7 +260,7 @@ pub fn session_mode(socket_live: bool, mode: Mode, active: usize) -> &'static st
 
 /// The beat while asking. Close while something runs; slower when the socket ought to be carrying and
 /// is not, because that is a fallback and not the normal way of working; and otherwise the owner's own
-/// intervals, untouched, because with live updates off there is no fallback to speak of.
+/// intervals, untouched, which is what a socket that is carrying leaves them as.
 pub fn poll_interval_s(active_s: i64, idle_s: i64, playing: usize, active: usize, fallback: bool) -> i64 {
     match (playing, active, fallback) {
         (1.., ..) => active_s,
@@ -662,20 +662,17 @@ pub async fn run(app: App) {
             continue;
         };
 
-        // The setting decides whether a socket task exists at all; dropping the handle stops it.
-        // A socket also belongs to the server it was opened against: point finstats at another
-        // Jellyfin and the old one is dropped rather than left talking to the wrong machine.
+        // There is always a socket. Being told what is playing is how finstats collects; asking is
+        // the half of it that a play deserves while it runs, not a mode of its own to switch to. A
+        // socket belongs to the server it was opened against, so pointing finstats at another
+        // Jellyfin drops the old one rather than leaving it talking to the wrong machine.
         if sock.is_some() && socket_for.as_deref() != Some(jf.base()) {
-            (sock, socket_live) = (None, false);
+            (sock, socket_live, socket_error, socket_for) = (None, false, None, None);
         }
-        match (settings.live_socket, sock.is_some()) {
-            (true, false) => {
-                sock = Some(crate::socket::spawn(jf.clone()));
-                socket_for = Some(jf.base().to_string());
-                socket_error = None;
-            }
-            (false, true) => (sock, socket_live, socket_error, socket_for) = (None, false, None, None),
-            _ => {}
+        if sock.is_none() {
+            sock = Some(crate::socket::spawn(jf.clone()));
+            socket_for = Some(jf.base().to_string());
+            socket_error = None;
         }
 
         // Subscribed unless something is actually running. **Not** "unless the collector is in
@@ -712,7 +709,7 @@ pub async fn run(app: App) {
         let mut forget_socket = false;
         // Published before anything can block, and again after the list is in: a pass can wait a
         // minute for a push, and the picture must be true for every second of that.
-        let beat = poll_interval_s(settings.active_interval_s, settings.idle_interval_s, playing, active, settings.live_socket && !socket_live);
+        let beat = poll_interval_s(settings.active_interval_s, settings.idle_interval_s, playing, active, !socket_live);
         fn seen(sock: &Option<crate::socket::Handle>, live: bool, mode: Mode, active: usize, beat: i64, reads: u32) -> Published {
             Published {
                 session_mode: session_mode(live, mode, active),
@@ -862,7 +859,7 @@ pub async fn run(app: App) {
                     (_, "idle_socket") => tracing::info!("no active sessions → idle on the socket"),
                     _ => {}
                 }
-                let beat = poll_interval_s(settings.active_interval_s, settings.idle_interval_s, playing, active, settings.live_socket && !socket_live);
+                let beat = poll_interval_s(settings.active_interval_s, settings.idle_interval_s, playing, active, !socket_live);
                 publish(&app, seen(&sock, socket_live, mode, active, beat, reads_in_mode(mode_at)), &mut mode_since, &mut mode_at, &mut bad_since);
                 let mut st = app.collector.write().unwrap();
                 st.connected = true;
@@ -871,7 +868,6 @@ pub async fn run(app: App) {
                 st.active_sessions = tracked.len();
                 // A safety read is made *while* listening, so it is not the transport changing.
                 st.transport = if source == Source::Poll { "poll" } else { "socket" };
-                st.socket_enabled = settings.live_socket;
                 st.socket_live = socket_live;
                 // While something plays the list comes from a poll and the socket is still carrying:
                 // only a socket that is *not* carrying has anything to explain.
@@ -886,7 +882,6 @@ pub async fn run(app: App) {
                 st.connected = false;
                 st.error = Some(format!("{e:#}"));
                 st.transport = "poll";
-                st.socket_enabled = settings.live_socket;
                 st.socket_live = socket_live;
                 st.socket_error = socket_error.clone();
             }
@@ -900,9 +895,9 @@ pub async fn run(app: App) {
         if !on_socket {
             // Something running is watched closely. Otherwise this is the fallback: the socket ought to
             // be carrying and is not, so the beat is slower than a second — a paused play changes when
-            // a person does something, and an idle server is why the socket exists. With live updates
-            // switched off there is no fallback to speak of: the owner's own intervals stand.
-            let base = poll_interval_s(settings.active_interval_s, settings.idle_interval_s, playing, active, settings.live_socket && !socket_live) as u64;
+            // a person does something, and an idle server is why the socket exists. It is never
+            // hurried past the owner's own intervals, only slowed.
+            let base = poll_interval_s(settings.active_interval_s, settings.idle_interval_s, playing, active, !socket_live) as u64;
             let wait = Duration::from_secs(if failures > 0 { (base * failures.min(12) as u64).min(60) } else { base });
             // A socket that comes back must be heard while finstats is polling, or it never gets a
             // second chance: this is the only place a waiting poller listens to it.
@@ -1270,7 +1265,7 @@ mod tests {
     fn the_beat_follows_what_is_happening_and_never_hurries_the_owner() {
         let (active_s, idle_s) = (1, 5);
         assert_eq!(poll_interval_s(active_s, idle_s, 1, 1, false), 1, "something running is watched closely");
-        assert_eq!(poll_interval_s(active_s, idle_s, 0, 0, false), 5, "no socket in the picture: the owner's own idle interval");
+        assert_eq!(poll_interval_s(active_s, idle_s, 0, 0, false), 5, "the socket is carrying: the owner's own idle interval stands");
         assert_eq!(poll_interval_s(active_s, idle_s, 0, 0, true), 30, "the socket ought to be carrying and is not");
         assert_eq!(poll_interval_s(active_s, idle_s, 0, 2, true), 15, "everything paused, with no socket to be told by");
         assert_eq!(poll_interval_s(active_s, 45, 0, 0, true), 45, "and a slower interval of the owner's own is never hurried up");

@@ -89,7 +89,7 @@ enum End {
     Broken(String),
 }
 
-/// A running socket task. Dropping it stops the task — switching the setting off is one assignment.
+/// A running socket task. Dropping it stops the task — one assignment, for a Jellyfin that changed.
 pub struct Handle {
     rx: mpsc::Receiver<Event>,
     /// Whether session pushes are wanted right now. Survives a reconnection, so a socket that comes
