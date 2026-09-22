@@ -4,12 +4,16 @@
 //! A request carries ids and no title: the title comes from the library when the thing is there, from
 //! Sonarr or Radarr when they have it, and only then from Seerr's `/movie/{id}` or `/tv/{id}`, once.
 //!
-//! **Reading.** Every pass reads newest-modified first and stops a little past the newest change it already
-//! knew (`OVERLAP_S`, measured on Seerr's clock, so ours does not matter). That alone would miss a request
-//! whose *media* became available, because that does not always touch the request. So every request finstats
-//! believes to be open is looked at again: the ones a fresh "pending/processing" listing returns anyway, the
-//! rest one by one. Once a day everything is listed, and only if that listing was complete does a request
-//! that is no longer there get its `removed_at`.
+//! **Reading.** A pass begins by asking for a single row, newest-modified first: if that one `updatedAt` is no
+//! newer than the cursor, nothing has been created or changed and the pass is over — about a kilobyte, rather
+//! than the page of fifty a listing costs. When something has changed, the listing is read newest-modified first
+//! and stops a little past the newest change already known (`OVERLAP_S`, measured on Seerr's clock, so ours does
+//! not matter). That alone would miss a request whose *media* became available, because that does not always touch
+//! the request. So every request finstats believes to be open is looked at again — the ones a fresh
+//! "pending/processing" listing returns anyway, the rest one by one — but only while something *is* open, and at
+//! most every `OPEN_EVERY_S`: a title that has arrived is news within the quarter hour, not within the minute.
+//! Once a day everything is listed, and only if that listing was complete does a request that is no longer there
+//! get its `removed_at`.
 //!
 //! **Who.** A Seerr user is the Jellyfin user whose id Seerr reports (`jellyfinUserId`), failing that the one
 //! with that Jellyfin user name. Never the display name or e-mail: those are typed by the person, and a
@@ -26,10 +30,15 @@ use crate::services::{self, Kind, Service};
 use crate::state::App;
 
 const PAGE: usize = 50;
+/// What the listing of *what changed* asks for. It stops at the cursor, so a page of fifty is almost all rows the
+/// pass is going to throw away: one request was made, not fifty.
+const SMALL_PAGE: usize = 10;
 /// A first read or a full listing stops here: 10,000 requests.
 const MAX_PAGES: usize = 200;
 const OVERLAP_S: i64 = 600;
 const FULL_EVERY_S: i64 = 86_400;
+/// How often the requests that are still on their way are looked at again.
+const OPEN_EVERY_S: i64 = 900;
 /// Open requests that the listings did not return are asked for one by one, this many per pass.
 const RECHECK_MAX: usize = 60;
 /// Titles looked up per pass, and how long one rests before finstats looks again.
@@ -122,6 +131,23 @@ pub fn past_the_cursor(updated_at: i64, cursor: Option<i64>) -> bool {
     cursor.is_some_and(|c| updated_at < c - OVERLAP_S)
 }
 
+/// Has anything been created or changed since the last pass? `newest` is the one `updatedAt` the probe read.
+/// No requests at all is not "something changed": the last one may have been deleted, but only a whole listing
+/// may say that, and that is the daily listing's business rather than this pass's.
+pub fn anything_changed(newest: Option<i64>, cursor: Option<i64>) -> bool {
+    match (newest, cursor) {
+        (Some(newest), Some(cursor)) => newest > cursor,
+        (Some(_), None) => true,
+        (None, _) => false,
+    }
+}
+
+/// Is it time to look at what is still on its way? Only while finstats knows of something open: a request that
+/// has just been made reaches it through the listing above, because making one does touch `updatedAt`.
+pub fn recheck_open(now: i64, open: usize, open_at: Option<i64>) -> bool {
+    open > 0 && now - open_at.unwrap_or(0) >= OPEN_EVERY_S
+}
+
 // ---------------------------------------------------------------- reading
 
 struct Listing {
@@ -130,22 +156,37 @@ struct Listing {
     complete: bool,
 }
 
-async fn list(app: &App, svc: &Service, filter: &str, stop_at: Option<i64>) -> Result<Listing> {
+/// One page of `/api/v1/request`, newest-modified first.
+async fn page(app: &App, svc: &Service, filter: &str, take: usize, skip: usize) -> Result<(Vec<Value>, Option<u64>)> {
+    let query = [("take", take.to_string()), ("skip", skip.to_string()), ("filter", filter.to_string()), ("sort", "modified".to_string()), ("sortDirection", "desc".to_string())];
+    let mut body = services::get_json(app, svc, "/api/v1/request", &query).await?;
+    let total = body["pageInfo"]["results"].as_u64();
+    let Some(results) = body.get_mut("results").and_then(Value::as_array_mut) else { bail!("{} did not answer its requests like Seerr", svc.url) };
+    Ok((std::mem::take(results), total))
+}
+
+/// The one question every pass starts with: when was anything last touched? One row, so the answer costs about a
+/// kilobyte. Read straight out of the JSON rather than through `parse`, because a row this pass may not understand
+/// (a kind of request finstats has no word for) still says that *something* moved.
+async fn newest_change(app: &App, svc: &Service) -> Result<Option<i64>> {
+    let (results, _) = page(app, svc, "all", 1, 0).await?;
+    Ok(results.first().and_then(|v| v["updatedAt"].as_str().or_else(|| v["createdAt"].as_str())).and_then(db::parse_ts))
+}
+
+async fn list(app: &App, svc: &Service, filter: &str, stop_at: Option<i64>, take: usize) -> Result<Listing> {
     let mut rows = vec![];
     let mut total = None;
-    for page in 0..MAX_PAGES {
-        let query = [("take", PAGE.to_string()), ("skip", (page * PAGE).to_string()), ("filter", filter.to_string()), ("sort", "modified".to_string()), ("sortDirection", "desc".to_string())];
-        let body = services::get_json(app, svc, "/api/v1/request", &query).await?;
-        let Some(results) = body["results"].as_array() else { bail!("{} did not answer its requests like Seerr", svc.url) };
-        total = body["pageInfo"]["results"].as_u64().or(total);
+    for page_no in 0..MAX_PAGES {
+        let (results, count) = page(app, svc, filter, take, page_no * take).await?;
+        total = count.or(total);
         let got = results.len();
         let mut reached = false;
         for r in results.iter().filter_map(parse) {
             reached |= past_the_cursor(r.updated_at, stop_at);
             rows.push(r);
         }
-        if got < PAGE || reached {
-            let complete = !reached && total.is_none_or(|t| t as usize == (page * PAGE + got));
+        if got < take || reached {
+            let complete = !reached && total.is_none_or(|t| t as usize == (page_no * take + got));
             return Ok(Listing { rows, complete });
         }
     }
@@ -218,39 +259,45 @@ pub fn link(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
+/// What is still on its way, newest change first — and how many there are, which is what decides whether this
+/// pass asks Seerr about open requests at all.
+fn open_requests(conn: &Connection, sid: i64) -> Result<Vec<i64>> {
+    Ok(conn
+        .prepare("SELECT request_id FROM requests WHERE service_id = ?1 AND removed_at IS NULL AND status IN (1, 2) AND media_status < 5 ORDER BY updated_at DESC")?
+        .query_map([sid], |r| r.get(0))?
+        .collect::<Result<_, _>>()?)
+}
+
 async fn read(app: &App, svc: &Service) -> Result<(usize, usize)> {
     let sid = svc.id;
-    let (cursor_key, full_key) = (format!("service:{sid}:requests_cursor"), format!("service:{sid}:requests_full_at"));
-    let (ck, fk) = (cursor_key.clone(), full_key.clone());
-    let (cursor, full_at) = app.db.call(move |c| Ok((setting_i64(c, &ck)?, setting_i64(c, &fk)?))).await?;
+    let (cursor_key, full_key, open_key) = (format!("service:{sid}:requests_cursor"), format!("service:{sid}:requests_full_at"), format!("service:{sid}:requests_open_at"));
+    let (ck, fk, ok) = (cursor_key.clone(), full_key.clone(), open_key.clone());
+    let (cursor, full_at, open_at, mut open) = app.db.call(move |c| Ok((setting_i64(c, &ck)?, setting_i64(c, &fk)?, setting_i64(c, &ok)?, open_requests(c, sid)?))).await?;
     let now = db::now();
     let full = cursor.is_none() || now - full_at.unwrap_or(0) >= FULL_EVERY_S;
+    // One row tells a quiet pass that it is already done. A full listing is going to read everything anyway.
+    let changed = full || anything_changed(newest_change(app, svc).await?, cursor);
+    let recheck = !full && recheck_open(now, open.len(), open_at);
+    if !changed && !recheck {
+        return Ok((0, 0));
+    }
 
-    let mut listing = list(app, svc, "all", if full { None } else { cursor }).await?;
+    let mut listing = if changed { list(app, svc, "all", if full { None } else { cursor }, if full { PAGE } else { SMALL_PAGE }).await? } else { Listing { rows: vec![], complete: false } };
     let everything = full && listing.complete;
     let mut seen: HashSet<i64> = listing.rows.iter().map(|r| r.id).collect();
-    if !full {
+    if recheck {
         // What is open changes without the request noticing: read those listings whole.
         for filter in ["pending", "processing"] {
-            for r in list(app, svc, filter, None).await?.rows {
+            // A whole listing is read to its end, so a full page costs nothing extra: `take` is a limit, not a padding.
+            for r in list(app, svc, filter, None, PAGE).await?.rows {
                 if seen.insert(r.id) {
                     listing.rows.push(r);
                 }
             }
         }
         // And what finstats believes to be open, but no listing returned, is asked for by name.
-        let known = seen.clone();
-        let stale: Vec<i64> = app
-            .db
-            .call(move |c| {
-                let ids: Vec<i64> = c
-                    .prepare("SELECT request_id FROM requests WHERE service_id = ?1 AND removed_at IS NULL AND status IN (1, 2) AND media_status < 5 ORDER BY updated_at DESC")?
-                    .query_map([sid], |r| r.get(0))?
-                    .collect::<Result<_, _>>()?;
-                Ok(ids.into_iter().filter(|id| !known.contains(id)).take(RECHECK_MAX).collect())
-            })
-            .await?;
-        for id in stale {
+        open.retain(|id| !seen.contains(id));
+        for id in open.into_iter().take(RECHECK_MAX) {
             if let Ok(v) = services::get_json(app, svc, &format!("/api/v1/request/{id}"), &[]).await
                 && let Some(r) = parse(&v)
             {
@@ -281,6 +328,9 @@ async fn read(app: &App, svc: &Service) -> Result<(usize, usize)> {
             }
             if let Some(n) = newest.max(cursor) {
                 db::set_setting(&tx, &cursor_key, &n.to_string())?;
+            }
+            if recheck {
+                db::set_setting(&tx, &open_key, &now.to_string())?;
             }
             crate::pipeline::link(&tx)?;
             tx.commit()?;
@@ -372,6 +422,10 @@ pub async fn sync_requests(app: &App) -> Result<String> {
     if failed.len() == list.len() {
         bail!("{} did not answer", failed.join(", "));
     }
+    if total == 0 && gone == 0 {
+        // A pass that found nothing has read a single row to find that out, and stopped there.
+        return Ok("Nothing new".into());
+    }
     Ok(format!("{total} requests read{}", if gone > 0 { format!(", {gone} no longer in Seerr") } else { String::new() }))
 }
 
@@ -425,6 +479,22 @@ mod tests {
         assert_eq!(available_at(asked, 5, None, None, Some(asked + 70)), Some(asked + 70), "then the moment finstats saw it");
         assert_eq!(available_at(asked, 5, Some(asked - 9_000), None, None), Some(asked), "it was there already: it arrived at once");
         assert_eq!(available_at(asked, 5, None, None, None), None);
+    }
+
+    #[test]
+    fn a_pass_with_nothing_to_read_asks_one_question_and_stops() {
+        let cursor = Some(10_000);
+        assert!(!anything_changed(Some(10_000), cursor), "the newest change is the one already known: nothing to read");
+        assert!(anything_changed(Some(10_001), cursor), "something was created or edited");
+        assert!(anything_changed(Some(500), None), "a first read has no cursor to compare against");
+        assert!(!anything_changed(None, cursor), "no requests at all is for the daily listing to notice, not this pass");
+
+        // What is open is asked about now and then, and only while something is open.
+        let now = 100_000;
+        assert!(recheck_open(now, 2, None), "never looked: look now");
+        assert!(recheck_open(now, 2, Some(now - OPEN_EVERY_S)));
+        assert!(!recheck_open(now, 2, Some(now - OPEN_EVERY_S + 1)), "looked a moment ago");
+        assert!(!recheck_open(now, 0, None), "nothing is on its way: Seerr is left alone");
     }
 
     #[test]
