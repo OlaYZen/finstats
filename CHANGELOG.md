@@ -7,6 +7,32 @@ Format: `## [version] - date`, a one-paragraph summary (required for an `x.y.0` 
 headline of that series in the app; optional otherwise), then `### Added`,
 `### Changed`, `### Fixed` or `### Removed` with one bullet per change.
 
+## [1.5.0] - 2026-09-22
+
+Each way of hearing about a play, doing the half it is good at. finstats listens while nothing is playing — an idle server has nothing to report, and asking it every few seconds to be told so was almost all the traffic finstats ever caused — and asks, every second, while something is, because a pause, a skip or a change of audio track is only as sharp as the gap between two sightings. A film left paused goes back to being listened for, since a frozen position is the one thing a server has nothing to say about. Everything finstats reads is compressed now, so the busy half is the cheap half as well, and what the collector is doing at any moment is something you can read off rather than guess at.
+
+### Changed
+- **Nothing playing: finstats asks Jellyfin nothing at all.** It listens, and Jellyfin says when something starts. An evening when nobody is watching costs no requests at all.
+- **Something playing: finstats asks, every second.** That is where the detail is — a pause, a seek or a track change is only as sharp as the gap between two sightings, and how often a server volunteers one is its business rather than something finstats can promise. Asking is also what ends a play whose client vanished without saying goodbye.
+- **A paused film costs nothing.** Leaving something paused used to mean asking Jellyfin the same question every second for as long as it sat there, which is around 16 MB an hour of asking about a position that had stopped changing. Once everything loaded has been paused for three readings in a row, the asking stops and the live connection carries it instead; a resume, or somebody else starting something, is pushed and answered within about a second. One person watching still means asking, whoever else has paused, and paused time still never counts as watch time.
+- **finstats asks for compressed answers now.** Jellyfin, Sonarr, Radarr and Seerr all compress what they send when a client asks for it, and finstats never asked: everything it read came over the network as plain JSON. It now asks and unpacks what comes back, which takes more than half off the reads it makes most — the session list while something is playing, and the library read, the largest single thing it ever fetches. The geolocation database is still downloaded exactly as it is stored, so the progress it shows and the file it writes are unchanged.
+- The Jellyfin card in Settings says which of the two halves is happening, and the live dot in the corner follows whether the connection is carrying rather than which half you are in.
+- Only one of the two ways of listening ever runs at a time: while finstats is asking it tells Jellyfin to stop sending, and to start again the moment the last play ends. The connection itself stays open throughout, so nothing is any slower to notice.
+- A Jellyfin that answers the subscription with nothing is believed as long as it is answering keep-alives: finstats says so once, reads the session list itself meanwhile and keeps the connection subscribed until the first push settles it. "Cannot push" and "was restarting when we asked" look exactly alike, so silence is never taken as a verdict.
+
+### Added
+- **What the collector is doing, on `GET /api/status`.** Which of the four things it is at (`idle_socket`, `playing_poll`, `paused_socket`, `fallback`), whether the live connection is open and subscribed, how often it is asking for the session list, how many session reads went out in the last minute, and when that last changed. Enough to check from outside what used to be visible only in the log, and it costs nothing to answer: no request to Jellyfin, no query, just what is already in memory. It carries no names, no titles and no counts of anything you watch.
+- **finstats checks its own work.** The rules that must hold between those fields — listening means subscribed and not asking, asking about a play means not subscribed — are tested against each other on every pass, and a disagreement that lasts is written to the log. A state machine that quietly believes something other than what it is doing is the one fault none of the rest of this would catch.
+- **A limit under all of it.** Every read of the session list, wherever in finstats it comes from, takes a slot from one limiter: at most 2 a second and 70 a minute, with anything above that delayed, counted, and written to the log at most once a minute. Normal watching asks once a second and stays well under it.
+
+### Fixed
+- **Live updates really replace the polling now.** With the switch on, 1.4.0 kept asking Jellyfin for the session list every five seconds anyway, and reopened the connection every twenty to forty seconds. It judged the connection by how recently a session list had arrived — but Jellyfin sends one when something *changes* and nothing at all in between, so on a server where nobody was watching, a perfectly healthy connection looked dead every fifteen seconds. finstats now watches whether Jellyfin is still answering at all (it exchanges a keep-alive about twice a minute) rather than whether it has something to say.
+- A session list that arrived in the moment finstats was between passes was thrown away, on the assumption that another was a second and a half behind it. With a server that only speaks when something changes, the next one can be hours away, so it is kept and used.
+- **Last checked** under Settings, and the Outbound connections card, no longer go stale while the connection is quiet: Jellyfin's answer to a keep-alive is what they now show.
+
+### Removed
+- `last_reconcile_at` from the collector status, replaced by `socket_live`: there is no separate safety-net read while something plays any more, because every read is one.
+
 ## [1.4.1] - 2026-09-22
 
 Less talking to the services around Jellyfin. Asking Seerr every five minutes and reading the Sonarr and Radarr queues every minute made up most of the traffic finstats caused on a quiet server, and almost all of it was the same answer over and over. Both now ask only when there is something to hear; nothing on any page appears any later than it did.

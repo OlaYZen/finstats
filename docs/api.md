@@ -890,7 +890,7 @@ session list drops finstats back to polling at `active_interval_s` / `idle_inter
 `GET /api/status` carries the same picture, unauthenticated, so that what the collector is doing can be checked from
 outside without reading a log:
 ```jsonc
-{ "configured": true, "server_name": "Home Cinema", "version": "1.4.11",
+{ "configured": true, "server_name": "Home Cinema", "version": "1.5.0",
   "session_mode": "idle_socket" | "playing_poll" | "paused_socket" | "fallback",
   "socket_connected": true,        // a WebSocket that is open and answering
   "socket_subscribed": true,       // SessionsStart sent on *this* connection, no SessionsStop after it
