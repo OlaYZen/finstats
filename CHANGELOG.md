@@ -7,6 +7,14 @@ Format: `## [version] - date`, a one-paragraph summary (required for an `x.y.0` 
 headline of that series in the app; optional otherwise), then `### Added`,
 `### Changed`, `### Fixed` or `### Removed` with one bullet per change.
 
+## [1.4.1] - 2026-09-22
+
+Less talking to the services around Jellyfin. Asking Seerr every five minutes and reading the Sonarr and Radarr queues every minute made up most of the traffic finstats caused on a quiet server, and almost all of it was the same answer over and over. Both now ask only when there is something to hear; nothing on any page appears any later than it did.
+
+### Changed
+- **Seerr is only read properly when something has changed.** Every five minutes finstats asks it for one row — the most recently changed request — and if that is one it already knows, the pass is over there: about a kilobyte, where a page of fifty requests was about sixty. Requests that are still on their way are looked at again every quarter of an hour, because a title becoming available does not always change the request itself, and everything is listed once a day as before. A new request still shows up within five minutes.
+- **The download queues are left alone while there is nothing in them.** While a page is showing the queue nothing changes: it is still refreshed every five seconds. Behind the scenes Sonarr and Radarr were asked every minute around the clock, whether or not anything was downloading; now that is every minute only while something is in the queue, and every five minutes while it is empty. Opening the page, connecting a service and a new request in Seerr each refresh it at once.
+
 ## [1.4.0] - 2026-09-21
 
 finstats can now be told what is playing instead of asking for it. Jellyfin offers the same session list over a WebSocket, so with one switch finstats keeps a single connection open and hears about a play the moment it starts, pauses or ends — about 17,000 requests a day become almost none, and nothing is noticed late any more. The same release makes the one outside request finstats ever makes by itself a single question rather than a standing one, and adds a card that lists everywhere finstats can reach, so the privacy promises in the README are something you can check rather than something you have to believe.
