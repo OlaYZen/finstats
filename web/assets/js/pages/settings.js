@@ -95,12 +95,14 @@ export default function settings(ctx) {
     const status = !c ? h('span', { class: 'muted' }, 'Checking…')
       : c.connected ? h('span', { class: 'sev sev-good' }, icon('check', 13), `Connected · ${num(c.active_sessions)} active ${c.active_sessions === 1 ? 'session' : 'sessions'}`)
       : h('span', { class: 'sev sev-critical' }, icon('alert', 13), 'Not connected' + (c.error ? ` — ${c.error}` : ''));
-    // How the collector is being told, and — when the socket is switched on but not carrying — why not.
-    const live = c && c.transport === 'socket';
+    // How the collector is being told. With the live connection carrying, each transport does the half it
+    // is good at: Jellyfin says when something starts, and finstats asks for the detail while it plays.
+    const live = c && c.socket_live;
     const how = !c || !c.connected ? null
-      : live ? h('span', { class: 'sev sev-good' }, icon('activity', 13), 'Pushed by Jellyfin, live')
+      : live ? [h('span', { class: 'sev sev-good' }, icon('activity', 13), 'Told by Jellyfin, live'),
+                h('p', { class: 'help' }, `Nothing is asked for while nothing is playing, or while everything is paused. While something is actually running finstats asks every ${num(settingsData.active_interval_s)} s, which is what keeps the pauses and skips exact.`)]
       : [h('span', null, `Asked for every ${num(settingsData.active_interval_s)} s while watching, every ${num(settingsData.idle_interval_s)} s otherwise`),
-         c.socket_enabled && c.socket_error ? h('p', { class: 'help' }, `The live connection is not carrying: ${c.socket_error}. finstats keeps trying; nothing is missed meanwhile.`) : null];
+         c.socket_error ? h('p', { class: 'help' }, `The live connection is not carrying: ${c.socket_error}. finstats keeps trying; nothing is missed meanwhile.`) : null];
     mount(connSlot, facts([
       ['Server', settingsData.server_name],
       ['Address', settingsData.jellyfin_url, { mono: true }],
@@ -108,7 +110,7 @@ export default function settings(ctx) {
       ['Collector', status],
       how ? ['How', how] : null,
       c && c.last_poll_at ? ['Last checked', h('span', { title: dateTime(c.last_poll_at) }, relTime(c.last_poll_at)), { mono: true }] : null,
-      live && c.last_reconcile_at ? ['Last checked the hard way', h('span', { title: dateTime(c.last_reconcile_at) }, relTime(c.last_reconcile_at)), { mono: true }] : null,
+      live ? ['Asking right now', c.transport === 'poll' ? 'Yes — something is playing' : 'No — nothing is playing, or everything is paused'] : null,
     ]), h('p', { class: 'help' }, 'finstats talks to Jellyfin with its own API key, created during setup. To point finstats at another server, start it with a fresh data directory.'));
   }
 
@@ -236,7 +238,7 @@ export default function settings(ctx) {
 
   const FIELDS = [
     { key: 'active_interval_s', label: 'While someone is watching, check every', unit: 'seconds', min: 1, max: 60, help: 'How closely a running play is followed: pauses, skips and track changes are recorded to this precision. 1–60.' },
-    { key: 'idle_interval_s', label: 'While nothing is playing, check every', unit: 'seconds', min: 1, max: 60, help: 'How soon a new play is noticed. The time before that is not counted, so keep it short. 1–60.' },
+    { key: 'idle_interval_s', label: 'While nothing is playing, check every', unit: 'seconds', min: 1, max: 60, help: 'Only used while the live connection is not carrying: Jellyfin pushes a new play within about a second while it is. The time before a play is noticed is not counted, so keep it short. 1–60.' },
     { key: 'sync_interval_h', label: 'Otherwise, re-read the library every', unit: 'hours', min: 1, max: 168, help: 'Only used when finstats is not following Jellyfin’s scan, or the server doesn’t report one. 1–168.' },
     { key: 'merge_window_s', label: 'Treat a restart as the same play within', unit: 'seconds', min: 0, max: 86400, help: 'If the same user resumes the same title on the same device within this window, it counts as one play. 0 turns merging off.' },
     { key: 'group_window_s', label: 'Count it as watching together within', unit: 'seconds', min: 5, max: 600, help: 'Different people who start the same title this close together, and keep watching for a couple of minutes, are counted as a group. Real groups rarely start within 5 seconds: polling and late joiners spread them over up to a minute. 5–600.' },
@@ -296,8 +298,6 @@ export default function settings(ctx) {
     const form = numberForm(FIELDS, 'collect-err');
     mount(collectSlot, toggleRow({ key: 'follow_jellyfin_scan', label: 'Follow Jellyfin’s library scan',
       help: 'finstats never starts a scan on Jellyfin. With this on, it re-reads your library only after Jellyfin’s own “Scan Media Library” task has finished, so Jellyfin’s schedule is the only schedule.' }),
-      toggleRow({ key: 'live_socket', label: 'Let Jellyfin push what is playing', onSaved: renderConn,
-        help: 'New in this version, and off until you turn it on. Instead of asking Jellyfin what is playing every second, finstats keeps one connection open and is told the moment a play starts, pauses or ends — thousands fewer requests a day, and nothing noticed late. It still checks with a plain request once a minute while something is playing, and goes straight back to asking on a timer if the connection drops, so no viewing is ever missed. The two settings below stay as that fallback.' }),
       form);
   }
 

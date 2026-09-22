@@ -22,7 +22,7 @@ cookie (`finstats_session`, HttpOnly, SameSite=Lax) issued by `POST /api/auth/lo
 
 | Method | Path | Body | Response |
 |---|---|---|---|
-| GET | `/api/status` | – | `{configured, version, server_name?}` (public) |
+| GET | `/api/status` | – | `{configured, version, server_name?}` plus how the collector is listening (public) |
 | POST | `/api/setup/test` | `{url}` | `{server_name, version, id}` (public, only while unconfigured) |
 | POST | `/api/setup` | `{url, username, password}` | `{user}` — must be a Jellyfin admin. Creates a Jellyfin API key named `finstats`, stores config, logs in, kicks off first sync. Only while unconfigured. |
 | POST | `/api/auth/login` | `{username, password}` | `{user}`; `401` bad credentials, `403` user login disabled, `429` too many attempts |
@@ -847,24 +847,65 @@ renames, deletions and ignores say nothing about what arrived.
 
 ---
 
-# v1.4 — Live session tracking
+# v1.5 — Live session tracking
 
-The collector can be *told* what is playing instead of asking. `GET /api/settings` gains `live_socket` (default `false`): with it on,
-finstats keeps one WebSocket open to Jellyfin's `/socket` and the sessions arrive pushed. Nothing else about the API changes — the same
-rows, the same `/api/now-playing`, only sooner. While the socket is live, `/Sessions` is still read once a minute **while something is
-playing** (the push is not filtered by `ActiveWithinSeconds`, so that read is what ends a play whose client vanished); nothing playing
-means nothing is asked. A socket that closes, goes quiet for 15 s, or never answers `SessionsStart` drops finstats back to polling at
-`active_interval_s` / `idle_interval_s` on the next pass, and it keeps trying to reconnect.
+The collector is *told* when something starts instead of asking for it: finstats keeps one WebSocket open to Jellyfin's `/socket`. There
+is no setting — it is how the collector works, and `active_interval_s` / `idle_interval_s` are what it asks at, plus the fallback for a
+socket that is not carrying. Nothing else about the API changes — the same rows, the same `/api/now-playing`, only sooner.
+
+Each transport does the half it is good at. **Nothing playing:** finstats listens and asks for nothing at all — Jellyfin sends a session
+list when something changes and nothing in between, so a quiet server is a quiet socket and not a broken one. **Something playing:**
+finstats reads `/Sessions` every `active_interval_s`, because a pause, a seek or a track change is only as sharp as the gap between two
+sightings, and because the push carries no `ActiveWithinSeconds` — asking is what ends a play whose client vanished. **Everything paused:**
+back to listening after three readings in a row of it, since a frozen position is nothing for a server to report; a single `/Sessions` read stands as a net —
+after a minute of silence, and in any case every five minutes — and anyone starting again is pushed and answered within about a
+second. Silence means *nothing heard and nothing asked*: a push, a read of finstats' own and a fresh subscription all start the minute
+again, the read the net itself calls for included, and two reads are never closer together than five seconds. So a pause that follows
+three minutes of playing asks for nothing at all for the next minute, however long ago the last push was. Measured from the last push
+alone — as an earlier attempt did — the clock is already stale the moment the subscription comes back on, since it is off for the whole of a
+play: a pause after a minute of one asked at once, and again, and again, 2,625 times in eight seconds until a push happened along. A server that answers the subscription with
+nothing at all is believed as long as it answers keep-alives: one read says where things stand, and that is the mode. So `transport` reads `poll` while
+something is actually running and `socket` otherwise, with `socket_live` true throughout.
+
+Jellyfin is subscribed to whenever nothing is actually running — idle or all-paused alike — and never while something is, which is the one
+moment its pushes would be a second copy of what is already being asked for. Jellyfin normally answers `SessionsStart` at once, whether or not anything is loaded. A server that does
+not is polled meanwhile, but not written off: the connection is kept and stays subscribed, `SessionsStart` is re-sent every five minutes,
+and the first real push settles it. Neither that silence nor an app left open with nothing playing is ever evidence against the socket. The two never
+run at once: finstats sends Jellyfin `SessionsStop` for as long as it is polling — otherwise the same list would arrive twice, and the
+pushed copy is not compressed — and subscribes again on the pass where the last play ends.
+
+A socket that closes, says nothing at all for 90 s (not even an answer to a keep-alive), or never answers `SessionsStart` with a first
+session list drops finstats back to polling at `active_interval_s` / `idle_interval_s` on the next pass, and it keeps trying to reconnect.
 
 `GET /api/tasks` → `collector` gains:
 ```jsonc
 { "connected": true, "last_poll_at": 0, "active_sessions": 1, "error": null,
   "transport": "socket" | "poll",        // how the list arrived last
-  "socket_enabled": true,                // the setting, so "off" and "on but not connecting" are distinguishable
-  "socket_error": "nothing arrived for 15s" | null,   // why it is not the transport; null while it is
-  "last_reconcile_at": 0 }               // the last /Sessions read while on the socket; 0 when there has been none
+  "socket_error": "Jellyfin said nothing for 90s" | null,   // why the socket is not carrying; null while it is
+  "socket_live": true,                   // the socket is open and carrying, whatever brought the last list
+  "session_mode": "idle_socket" | "playing_poll" | "paused_socket" | "fallback",
+  "socket_subscribed": true }            // Jellyfin is being asked to push session lists right now
 ```
-`GET /api/summary` gains `collector_live` (`transport == "socket"`), for the status bar.
+`GET /api/status` carries the same picture, unauthenticated, so that what the collector is doing can be checked from
+outside without reading a log:
+```jsonc
+{ "configured": true, "server_name": "Home Cinema", "version": "1.4.11",
+  "session_mode": "idle_socket" | "playing_poll" | "paused_socket" | "fallback",
+  "socket_connected": true,        // a WebSocket that is open and answering
+  "socket_subscribed": true,       // SessionsStart sent on *this* connection, no SessionsStop after it
+  "poll_interval_s": null,         // the beat actually being asked at; null while nothing is asked for
+  "sessions_requests_last_min": 0, // /Sessions reads in the last 60 s, counted where they go out
+  "mode_since": "2026-09-22T18:16:27Z" }
+```
+These always hold, and finstats logs a warning about itself if they ever stop: listening means connected, subscribed and
+`poll_interval_s: null`; `playing_poll` means *not* subscribed and a beat that is running; `fallback` always has a beat. A
+safety read is not a beat, so it does not appear. `sessions_requests_last_min` is about 60 while something plays and at most 2
+while listening — counted at the one gate every `/Sessions` read passes through, so it is what a packet capture counts and not
+what the collector believes it asked for; that gate also refuses more than 2 reads in a second or 70 in a minute, whatever asks
+it, and says so in the log at most once a minute. Shape only — no names, no titles, not even how many sessions there are —
+and answered from memory: no request to Jellyfin, no query.
+
+`GET /api/summary` gains `collector_live` (`socket_live`), for the status bar.
 
 `POST /api/settings/public-ip` 🔒 — look this network's public address up **now**, and answer like `GET /api/settings`. This is the only
 thing that asks after the first answer: the lookup no longer runs on the 15-minute timer, only once at start-up on an install that has

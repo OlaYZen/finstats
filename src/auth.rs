@@ -354,10 +354,24 @@ pub async fn me(State(app): State<App>, user: AuthUser) -> ApiResult {
 
 pub async fn status(State(app): State<App>) -> Json<Value> {
     let cfg = app.config.read().unwrap().clone();
+    // How the collector is listening, so it can be checked from outside without reading a log. Shape
+    // only: which of the four things it is doing, what is true on the wire, and how often it is
+    // asking. Never who, never what — no names, no titles, not even how many sessions there are.
+    // One read of memory: no request to Jellyfin, no query, nothing that could make this slow.
+    let c = app.collector.read().unwrap().clone();
     Json(json!({
         "configured": cfg.is_some(),
         "version": env!("CARGO_PKG_VERSION"),
         "server_name": cfg.map(|c| c.server_name),
+        "session_mode": c.session_mode,
+        "socket_connected": c.socket_connected,
+        "socket_subscribed": c.socket_subscribed,
+        "poll_interval_s": c.poll_interval_s,
+        // Counted at the gate every `/Sessions` read passes through, so it is what a packet capture
+        // would count and not what the collector believes it asked for. Listening should be nearly
+        // nothing; a play is one a second.
+        "sessions_requests_last_min": crate::collector::sessions_reads_last_min(),
+        "mode_since": (c.mode_since > 0).then(|| chrono::DateTime::from_timestamp(c.mode_since, 0).unwrap_or_default().to_rfc3339_opts(chrono::SecondsFormat::Secs, true)),
     }))
 }
 
