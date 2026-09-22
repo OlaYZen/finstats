@@ -1012,11 +1012,16 @@ async fn tick(
             rec.duration_s = t.watched.round() as i64;
             rec.paused_s = t.paused.round() as i64;
             let was_paused = is_paused != pause_flipped;
-            let events = diff_events(&t.rec, &mut rec, was_paused, is_paused, dt, now);
-            // Once a play has needed transcoding it stays a transcode in the statistics.
+            // Once a play has needed transcoding it stays a transcode in the statistics — and this
+            // has to happen *before* the comparison below, not after it. Applied after, the kept
+            // record said "Transcode" while every reading that followed said what the client had
+            // settled back to, so each one looked like a change: one `transcode` event per second
+            // for the rest of the play, every one of them reading "DirectPlay: <the old reasons>",
+            // a line that contradicts itself and was never true: 144 of them on one play.
             if t.rec.play_method == "Transcode" {
                 rec.play_method = "Transcode".into();
             }
+            let events = diff_events(&t.rec, &mut rec, was_paused, is_paused, dt, now);
             t.rec = rec;
 
             if !events.is_empty() || t.last_persist.elapsed() >= PERSIST_EVERY {
@@ -1497,6 +1502,43 @@ mod tests {
         let mut new = rec(105);
         assert!(diff_events(&rec(100), &mut new, false, false, 5.0, 0).is_empty());
         assert_eq!(new.seek_count, 0);
+    }
+
+    #[test]
+    fn a_play_that_settles_back_to_direct_is_not_a_transcode_every_second() {
+        // The bug as it was recorded: the kept record was forced to "Transcode" after the
+        // comparison, so it disagreed with every reading that followed and each one wrote another
+        // event — 144 of them on one play, all saying "DirectPlay: ContainerBitrateExceedsLimit".
+        let reasons = json!({ "reasons": ["ContainerBitrateExceedsLimit"] });
+        let transcoding = PlayRecord { play_method: "Transcode".into(), transcode: Some(reasons.clone()), position_s: Some(100), ..Default::default() };
+        // What the session says once the client has settled: direct play, the reasons still attached.
+        let settled = || PlayRecord { play_method: "DirectPlay".into(), transcode: Some(reasons.clone()), position_s: Some(101), ..Default::default() };
+
+        // Sticky first, as the collector now does it, and the readings agree: nothing to report.
+        let mut new = settled();
+        new.play_method = "Transcode".into();
+        assert!(diff_events(&transcoding, &mut new, false, false, 1.0, 0).is_empty());
+        // The same reading a second later, and the one after that: still nothing.
+        let mut later = PlayRecord { position_s: Some(102), ..settled() };
+        later.play_method = "Transcode".into();
+        assert!(diff_events(&new, &mut later, false, false, 1.0, 0).is_empty());
+
+        // Sticky *after* the comparison, which is what it used to do: every reading is a change.
+        let mut unsticky = settled();
+        let kinds: Vec<_> = diff_events(&transcoding, &mut unsticky, false, false, 1.0, 0).into_iter().map(|e| e.kind).collect();
+        assert_eq!(kinds, ["transcode"], "this is the event that used to repeat for ever");
+
+        // And a play that really does start transcoding still says so, once.
+        let direct = PlayRecord { play_method: "DirectPlay".into(), position_s: Some(100), ..Default::default() };
+        let mut starts = PlayRecord { position_s: Some(101), ..transcoding.clone() };
+        let out = diff_events(&direct, &mut starts, false, false, 1.0, 0);
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].detail.as_deref(), Some("Transcode: ContainerBitrateExceedsLimit"));
+        // A reason changing is news; the same reason again is not.
+        let mut same = PlayRecord { position_s: Some(102), ..transcoding.clone() };
+        assert!(diff_events(&starts, &mut same, false, false, 1.0, 0).is_empty());
+        let mut other = PlayRecord { transcode: Some(json!({ "reasons": ["VideoCodecNotSupported"] })), position_s: Some(103), ..transcoding.clone() };
+        assert_eq!(diff_events(&same, &mut other, false, false, 1.0, 0).len(), 1, "a different reason is worth a line");
     }
 
     #[test]

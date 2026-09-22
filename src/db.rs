@@ -433,6 +433,20 @@ pub(crate) const MIGRATIONS: &[&str] = &[
     ) WITHOUT ROWID;
     CREATE INDEX idx_grabs_at ON grabs(at);
     "#,
+    // 17 — clear out the `transcode` events 1.5.0 and earlier wrote every second. A play whose
+    //      client settled back to direct play after transcoding had its kept record forced to
+    //      "Transcode" *after* each comparison, so every reading that followed looked like a
+    //      change: one event per poll, all identical, filling the Activity page. The collector no
+    //      longer writes them; this drops the ones already written, keeping the first of each run
+    //      so a play that really did switch back and forth still reads as it happened.
+    r#"
+    DELETE FROM playback_events WHERE id IN (
+        SELECT id FROM (
+            SELECT id, detail, LAG(detail) OVER (PARTITION BY playback_id ORDER BY at, id) AS before
+            FROM playback_events WHERE kind = 'transcode'
+        ) WHERE IFNULL(detail, '') = IFNULL(before, '')
+    );
+    "#,
 ];
 
 impl Db {
