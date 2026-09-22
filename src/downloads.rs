@@ -28,9 +28,10 @@ use crate::db::rusqlite::Connection;
 use crate::services::{self, Kind};
 use crate::state::{ApiResult, App};
 
-/// While somebody is looking, and while nobody is.
+/// While somebody is looking, while nobody is but something is in the queue, and while the queue is empty.
 const WATCHED_EVERY_S: u64 = 5;
 const IDLE_EVERY_S: u64 = 60;
+const EMPTY_EVERY_S: u64 = 300;
 /// A page still counts as being watched this long after it last asked.
 const WATCHING_FOR_S: i64 = 20;
 const PER_SERVICE_TIMEOUT: Duration = Duration::from_secs(4);
@@ -439,6 +440,19 @@ async fn tick(app: &App, before: &HashMap<String, (i64, i64)>) -> HashMap<String
     after
 }
 
+/// How long before the queues are read again. Fast while a page is showing them; otherwise as slow as what is in
+/// them allows. Something in the queue is still worth a minute — a request page tells the person who asked how far
+/// along it is — but an empty queue has nothing to go out of date: reading it again in five minutes is soon enough,
+/// and opening the page, connecting a service or a read of Seerr all wake the loop anyway.
+pub fn wait_s(watching: bool, connected: bool, queued: bool) -> u64 {
+    match (connected, watching, queued) {
+        (false, ..) => IDLE_EVERY_S, // nothing to read; this costs no request
+        (_, true, _) => WATCHED_EVERY_S,
+        (_, false, true) => IDLE_EVERY_S,
+        (_, false, false) => EMPTY_EVERY_S,
+    }
+}
+
 /// Its own loop, like the collector: a queue that moves every second is no business of the 60-second scheduler.
 pub async fn run(app: App) {
     let mut wishes_at = 0i64;
@@ -460,14 +474,8 @@ pub async fn run(app: App) {
             seen = tick(&app, &seen).await;
         }
         // Fast only while a page is actually showing this.
-        let watching = now - *app.downloads_watched.lock().unwrap() <= WATCHING_FOR_S;
-        let wait = if !anything {
-            IDLE_EVERY_S
-        } else if watching {
-            WATCHED_EVERY_S
-        } else {
-            IDLE_EVERY_S
-        };
+        let watching = crate::db::now() - *app.downloads_watched.lock().unwrap() <= WATCHING_FOR_S;
+        let wait = wait_s(watching, anything, !app.downloads.read().unwrap().rows.is_empty());
         woken = tokio::select! {
             _ = app.downloads_wake.notified() => true,
             _ = tokio::time::sleep(Duration::from_secs(wait)) => false,
@@ -603,5 +611,14 @@ mod tests {
         assert_eq!(timespan(&json!("00:00:04.5000000")), Some(4));
         assert_eq!(timespan(&json!(null)), None);
         assert_eq!(timespan(&json!("soon")), None);
+    }
+
+    #[test]
+    fn an_empty_queue_is_read_far_less_often_than_a_busy_one() {
+        assert_eq!(wait_s(true, true, true), WATCHED_EVERY_S, "somebody is watching it move");
+        assert_eq!(wait_s(true, true, false), WATCHED_EVERY_S, "watching an empty queue still means watching");
+        assert_eq!(wait_s(false, true, true), IDLE_EVERY_S, "nobody looking, but a request page shows how far it has got");
+        assert_eq!(wait_s(false, true, false), EMPTY_EVERY_S, "nothing in it and nobody looking: Sonarr and Radarr are left alone");
+        assert_eq!(wait_s(true, false, false), IDLE_EVERY_S, "no service connected: no request either way");
     }
 }
