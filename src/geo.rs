@@ -252,7 +252,18 @@ pub async fn download(app: &App) -> Result<String> {
 async fn fetch(app: &App, url: &str, folder: &Path, target: &Path, task: &'static str) -> Result<()> {
     app.tasks.update(task, "Downloading", Some(0.0));
     // Says nothing about this install: a fixed agent string, no version, no identifiers.
-    let mut resp = app.http.get(url).header(reqwest::header::USER_AGENT, "finstats").header(reqwest::header::ACCEPT, "*/*").timeout(Duration::from_secs(1800)).send().await?;
+    // `identity`: the file is a gzip *body* that this code unpacks itself, and asking for it verbatim also keeps
+    // the length honest, so the progress means something. Setting the header at all turns reqwest's own
+    // decoding off for this request, which is exactly what a file download wants.
+    let mut resp = app
+        .http
+        .get(url)
+        .header(reqwest::header::USER_AGENT, "finstats")
+        .header(reqwest::header::ACCEPT, "*/*")
+        .header(reqwest::header::ACCEPT_ENCODING, "identity")
+        .timeout(Duration::from_secs(1800))
+        .send()
+        .await?;
     if !resp.status().is_success() {
         bail!("{url} answered {}", resp.status());
     }

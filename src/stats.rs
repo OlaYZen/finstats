@@ -1187,7 +1187,7 @@ pub async fn summary(State(app): State<App>, user: AuthUser) -> ApiResult {
     };
     Ok(Json(json!({
         "active_sessions": active, "plays_total": plays, "last_sync_at": last_sync,
-        "collector_ok": collector.connected, "collector_live": collector.transport == "socket", "version": env!("CARGO_PKG_VERSION"),
+        "collector_ok": collector.connected, "collector_live": collector.socket_live, "version": env!("CARGO_PKG_VERSION"),
     })))
 }
 

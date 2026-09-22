@@ -147,14 +147,25 @@ pub struct CollectorStatus {
     pub socket_enabled: bool,
     /// Why the socket is not the transport right now; `None` while it is.
     pub socket_error: Option<String>,
-    /// The last safety-net read of `/Sessions` while on the socket. 0 when there has been none.
-    pub last_reconcile_at: i64,
+    /// The socket is open and carrying, whichever transport brought the last list. While something
+    /// plays that list comes from a poll, and the socket is still the thing that will say it stopped.
+    pub socket_live: bool,
+    /// What the collector is doing in one word — `idle_socket`, `playing_poll`, `paused_socket` or
+    /// `fallback` — and whether Jellyfin is currently subscribed to for session pushes.
+    pub session_mode: &'static str,
+    /// What is true on the wire: a connection that is open, and a subscription actually sent on it.
+    pub socket_connected: bool,
+    pub socket_subscribed: bool,
+    /// The beat actually being asked at, in seconds; `None` while nothing is being asked for.
+    pub poll_interval_s: Option<i64>,
+    /// When `session_mode` last changed.
+    pub mode_since: i64,
 }
 
 /// Before the first sighting finstats is asking, like every version before this one.
 impl Default for CollectorStatus {
     fn default() -> Self {
-        Self { connected: false, last_poll_at: 0, active_sessions: 0, error: None, transport: "poll", socket_enabled: false, socket_error: None, last_reconcile_at: 0 }
+        Self { connected: false, last_poll_at: 0, active_sessions: 0, error: None, transport: "poll", socket_enabled: false, socket_error: None, socket_live: false, session_mode: "fallback", socket_connected: false, socket_subscribed: false, poll_interval_s: None, mode_since: 0 }
     }
 }
 

@@ -69,13 +69,74 @@ claims "dubbed": it does not know a title's original language, so it lists the l
 10.x servers answer PascalCase and newer ones camelCase by default. All JSON access in the codebase assumes
 PascalCase keys. Jellyfin ids are normalised with `db::norm_id` (no dashes, lowercase) everywhere.
 
+**Compression (reqwest's `gzip` + `brotli` features).** Every outbound read asks for `Accept-Encoding: gzip, br` and is
+decoded transparently — Jellyfin, Sonarr, Radarr and Seerr all compress JSON when asked, and JSON is nearly everything
+finstats reads. The features are the whole mechanism: `default-features = false` without them means no header goes out
+and nothing would be decoded, so the QA mocks answer compressed and a check holds the header. Two deliberate exceptions:
+`geo.rs` pins `Accept-Encoding: identity` on the `.mmdb.gz` download (a gzip *body* it unpacks itself; the header also
+keeps `content_length` honest, and setting it at all turns reqwest's own decoding off), and the WebSocket carries none —
+frame compression is `permessage-deflate`, which tungstenite does not implement.
+
 **Two transports, one collector (`collector.rs`, `socket.rs`).** The session list arrives either by asking
 (`GET /Sessions` on the `active_interval_s` / `idle_interval_s` timers) or by being told (Jellyfin's `/socket` with
 `SessionsStart`, setting `live_socket`, **off by default in 1.4.0**); `tick()` cannot tell which and must not learn.
-A socket can lie by going quiet, so: no session list for 15 s is death, a server that never answers `SessionsStart`
-does not speak this, and while the socket is live one `/Sessions` read a minute still runs **while something plays** —
-the push is not filtered by `ActiveWithinSeconds`, so that read is what ends a play whose client vanished. Idle costs
-nothing. Any doubt falls back to polling on the next pass, because a play that is never seen cannot be backfilled.
+**Each does the half it is good at.** `collector::Decide::see` reads one session list — pushed or asked for, it
+decides the same — and answers `Mode::Poll` or `Mode::Listen`: **anything running** → poll at `active_interval_s`, because a pause or a
+seek is only as sharp as the gap between two sightings and the push carries no `ActiveWithinSeconds`; **nothing loaded anywhere** →
+listen; **everything loaded is paused**, for `PAUSE_DEBOUNCE` readings in a row → listen, because a frozen position is exactly what a
+server has nothing to push about, and one 1 s poll per second of it asks the same question 3,600 times an hour. Any session running again
+(a resume, or somebody new) takes it straight back, within about a second. Three rules hold the transitions together, all measured on the wire: `session_mode` calls the pause debounce
+`playing_poll` and keeps `fallback` for a socket that is genuinely unusable (an early attempt reported every pause as a fault for three seconds);
+`should_subscribe(playing, settling)` keeps the subscription off for the whole debounce, and the transition itself sends the frame and
+waits for `Handle::settled` before publishing, so nothing is ever subscribed and polling at once; and the one-shot read is `Net`/`safety_due` —
+after `PAUSED_SAFETY_SILENCE` of silence with something paused, or `SAFETY_EVERY` regardless (an early attempt restarted its wait on every push,
+so a client that kept reporting itself while paused meant the net never fell). **Silence is nothing heard *and* nothing asked, and the
+attempt re-arms the clock that called for it**: `Net` is reset by a push, by any `/Sessions` read of finstats' own — the beat
+during a play included — and by a fresh subscription, with `SAFETY_MIN_GAP` as a floor under all of it. Measured from the last
+push alone, as an early attempt did, it breaks: since the subscription is off for the whole of a play, the first pause after a minute of one was already "silent", and the read
+that followed reset nothing, so 2,625 of them went out in eight seconds until a push happened along. Anything that makes a repeat depend on
+a clock the repeat does not touch is that bug again. Under it all, `sessions_slot` — **every** `/Sessions` read in the process, the
+socket's own consistency check included, takes a slot from one gate: `READS_PER_S`, `READS_PER_MIN`, refusals counted and logged WARN at
+most once a minute. `/api/status` publishes what the gate counted (`sessions_requests_last_min`), and `disagrees` holds a listening mode to
+`READS_WHILE_LISTENING`, because every word of the status was true throughout that storm. With no socket at all, paused sessions are polled at
+`PAUSED_POLL_S` rather than every second.
+`attribute()` holds the invariant the whole thing rests on: the gap between two sightings belongs to the state the play was *already* in,
+so however rarely a paused play is looked at, none of it becomes watch time. **One at a time**: `SessionsStart`'s `"0,1500"` asks
+Jellyfin to look every 1.5 s and send what differs — which is silence on an idle server and a list every 1.5 s during a play, so while
+polling the pushes are the same list a second time, uncompressed. `Handle::listen(false)` sends `SessionsStop` for the duration (the
+connection stays open and answering `KeepAlive`); `listen(true)` on the pass where the last play ends. **The rule is
+`should_subscribe(playing) = playing == 0`, never the collector's own mode** — and that is the whole of it: listening needs the
+socket to have proved itself, the proof is the list a subscription brings, and an early attempt unsubscribed before it could arrive,
+so the fallback latched on for good (connected, never subscribed, polling for ever on exactly the idle server the socket is
+for). Anything that gates the subscription on something the subscription itself produces is this bug again.
+A verdict is never kept either. **An absent list proves nothing**: a Jellyfin normally answers `SessionsStart` at once whether or
+not anything is loaded (measured: `0.0s after subscribing, 0 loaded`), but one was once seen not to, cause never established — most
+likely a server still starting. So after `SUBSCRIBE_MAX` finstats says so once, the collector polls meanwhile, and the connection is
+kept, stays subscribed and re-sends `SessionsStart` every `PROBE_EVERY`; the first real push settles it. An earlier attempt concluded "cannot push"
+from that one silence and lost the socket altogether, which is why silence is never a verdict here. `End::Unsupported` is now only for a *shape* mismatch, which is real disproof; every
+other end uses the backoff. `looks_like_sessions` answers *what* differed for the
+log, and compares only sessions with a `NowPlayingItem` that both lists saw — an app open with nothing playing is in the
+push and not in `/Sessions?ActiveWithinSeconds=300`, which says nothing about the socket. **What it is doing is published, not inferred**. `publish()` writes the whole picture — `session_mode`
+(`idle_socket` | `playing_poll` | `paused_socket` | `fallback`), `socket_connected`, `socket_subscribed`, `poll_interval_s`,
+`mode_since` — in one lock, twice a pass, so nothing can be read half-applied while a pass blocks for a minute on a push. The two wire
+facts come from the socket task itself (`Handle::connected`/`subscribed`, atomics set where the frames are actually written), never from
+what the collector *asked* for. `disagrees()` is the machine marking its own work: every rule is something a packet capture would
+contradict, and a disagreement is logged WARN only once it outlives `SETTLE`, because asking the socket to stop and the stop reaching the
+wire are two moments. All of it is on `GET /api/status`, unauthenticated by the owner's decision — shape only, never a name, a title or
+even a count, and answered from memory with no request and no query. In the fallback the beat slows (`FALLBACK_IDLE_S`, `PAUSED_POLL_S`) but never below the owner's own
+interval, and only while `live_socket` is on — with the setting off there is no fallback, just the intervals as set. A reconnect mid-play subscribes
+once for the proof and goes quiet again, and the `SUBSCRIBE_MAX` deadline runs from `listening_since`, not the handshake, or a socket
+kept quiet on purpose would be mistaken for a server that does not speak this. That replaced the one-a-minute reconcile read; `Source` has
+no `Reconcile` any more, and `CollectorStatus` swapped `last_reconcile_at` for `socket_live` (the socket carries, whatever brought the
+last list — `transport` then says which half we are in, and `/api/summary`'s `collector_live` follows `socket_live`).
+**Silence is normal, not death**: Jellyfin answers `SessionsStart` with the list as it stands and then
+sends nothing until something changes, which on an evening when nobody is watching is never. So two clocks, never one:
+`subscribed` (no session list within `SUBSCRIBE_MAX` of being asked = this server does not speak it) and `heard` (nothing
+at all — list, `KeepAlive` answer, pong — within `lost_after(period)`, two unanswered keepalives, = gone). Judging the connection by how lately a *list* arrived is
+what made 1.4.0 drop the socket every 15 s and poll right through, on exactly the idle server it was meant to spare.
+The collector's `on_socket` is likewise the socket saying it carries, not a recent snapshot, and a list that arrives
+while the poller sleeps is *kept* (`pending`), because with push-on-change there may not be another for hours.
+Any doubt falls back to polling on the next pass, because a play that is never seen cannot be backfilled.
 The handshake cannot ask for `profile="PascalCase"` the way every HTTP read does, so `socket.rs` re-cases keys and
 holds the first pushed snapshot against one real `/Sessions` read before a row is written from it.
 

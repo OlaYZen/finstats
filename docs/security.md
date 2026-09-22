@@ -82,9 +82,10 @@ stay the only ones. Your download client is not connected to finstats at all: So
 queues instead.
 - **Read-only.** finstats sends `GET` to these services and nothing else — there is no code in it that could approve a request, start a search,
   or add, pause or remove a download.
-- **As rarely as is useful.** Seerr is asked every five minutes, but a pass with nothing to read is a single row — finstats asks for the
-  newest-changed request, recognises it, and stops. Sonarr's and Radarr's queues are read every five seconds only while a page is showing
-  them, every minute while something is in them, and every five minutes while there is not.
+- **As rarely as is useful, and as small as they allow.** Seerr is asked every five minutes, but a pass with nothing to read is a single
+  row — finstats asks for the newest-changed request, recognises it, and stops. Sonarr's and Radarr's queues are read every five seconds
+  only while a page is showing them, every minute while something is in them, and every five minutes while there is not. Every read also
+  asks for a compressed answer (`Accept-Encoding: gzip, br`), which these services and Jellyfin all give.
 - **Keys and passwords** are stored in finstats' database next to the Jellyfin key, are never sent back to the browser (the settings page only
   learns that one is stored), never written to a log and never part of a backup. They travel in headers or request bodies, never in an address.
 - **No redirect is followed.** A key would travel along a redirect to wherever it points, so finstats reports a redirect as an error and asks for
