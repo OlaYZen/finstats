@@ -1,6 +1,6 @@
 [package]
 name = "finstats"
-version = "1.4.1"
+version = "1.5.0"
 edition = "2024"
 description = "Lightweight playback statistics for Jellyfin"
 license = "GPL-3.0-only"
