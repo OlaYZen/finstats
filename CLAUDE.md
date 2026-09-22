@@ -97,9 +97,12 @@ attempt re-arms the clock that called for it**: `Net` is reset by a push, by any
 during a play included — and by a fresh subscription, with `SAFETY_MIN_GAP` as a floor under all of it. Measured from the last
 push alone, as an early attempt did, it breaks: since the subscription is off for the whole of a play, the first pause after a minute of one was already "silent", and the read
 that followed reset nothing, so 2,625 of them went out in eight seconds until a push happened along. Anything that makes a repeat depend on
-a clock the repeat does not touch is that bug again. Under it all, `sessions_slot` — **every** `/Sessions` read in the process, the
-socket's own consistency check included, takes a slot from one gate: `READS_PER_S`, `READS_PER_MIN`, refusals counted and logged WARN at
-most once a minute. `/api/status` publishes what the gate counted (`sessions_requests_last_min`), and `disagrees` holds a listening mode to
+a clock the repeat does not touch is that bug again. The two are **one call**: `Net::take_read` takes the gate slot *and* re-arms both clocks, so a read that
+does not restart the wait it answers is not expressible (1.5.2); `Net::read` is private, and `Pass` — one object holding `Decide`, `Net` and
+the subscription as the wire has it — is what `run()` goes through, which is also what lets a test walk seven simulated minutes of this in
+microseconds (`three_minutes_of_playing_then_a_pause_is_almost_no_reads_at_all`) instead of sitting through two real ones. Under it all,
+`sessions_slot` — **every** `/Sessions` read in the process, the socket's own consistency check included, takes a slot from one gate:
+`READS_PER_S`, `READS_PER_MIN`, refusals counted and logged WARN at most once a minute. `/api/status` publishes what the gate counted (`sessions_requests_last_min`), and `disagrees` holds a listening mode to
 `READS_WHILE_LISTENING`, because every word of the status was true throughout that storm. With no socket at all, paused sessions are polled at
 `PAUSED_POLL_S` rather than every second.
 `attribute()` holds the invariant the whole thing rests on: the gap between two sightings belongs to the state the play was *already* in,
