@@ -7,6 +7,11 @@ Format: `## [version] - date`, a one-paragraph summary (required for an `x.y.0` 
 headline of that series in the app; optional otherwise), then `### Added`,
 `### Changed`, `### Fixed` or `### Removed` with one bullet per change.
 
+## [1.5.1] - 2026-09-22
+
+### Fixed
+- **A transcode is noted once, not every second.** A play that starts by transcoding and then settles back to direct play — Jellyfin keeps the transcoding details attached to the session when it does — filled the Activity page with one "Transcoding" line per second for the rest of the play, each one reading "Direct play: …" underneath the word Transcoding. The play was compared against a value finstats had just overwritten, so every reading after the first looked like a change. The lines already written are cleaned up when this version starts: where a run of them says the same thing, the first is kept. Nothing else about the timeline changes, and a play that needed transcoding is still counted as a transcode.
+
 ## [1.5.0] - 2026-09-22
 
 Each way of hearing about a play, doing the half it is good at. finstats listens while nothing is playing — an idle server has nothing to report, and asking it every few seconds to be told so was almost all the traffic finstats ever caused — and asks, every second, while something is, because a pause, a skip or a change of audio track is only as sharp as the gap between two sightings. A film left paused goes back to being listened for, since a frozen position is the one thing a server has nothing to say about. Everything finstats reads is compressed now, so the busy half is the cheap half as well, and what the collector is doing at any moment is something you can read off rather than guess at.
