@@ -7,6 +7,16 @@ Format: `## [version] - date`, a one-paragraph summary (required for an `x.y.0` 
 headline of that series in the app; optional otherwise), then `### Added`,
 `### Changed`, `### Fixed` or `### Removed` with one bullet per change.
 
+## [1.5.2] - 2026-09-22
+
+### Changed
+- **Jellyfin pushes what is playing, always.** It is no longer a switch you have to find: finstats keeps one connection open to Jellyfin from the moment it starts, and that is how it hears about a play. It was given a release off by default to prove itself against real servers, and it has — so an install that never turned it on is no longer quietly asking Jellyfin seventeen thousand times a day to be told that nobody is watching. Nothing about your history changes: the same plays, the same pauses and skips, worked out by exactly the same code, and finstats still asks every second while something is actually running.
+- The fallback is untouched. A connection that closes, goes quiet or turns out not to speak this drops finstats back to asking on a timer on the very next pass, and it keeps trying to reconnect — **While someone is watching, check every** and **While nothing is playing, check every** are what it asks at then. A play that is never seen cannot be recovered later, so every doubt still resolves towards asking.
+
+### Removed
+- The **Let Jellyfin push what is playing** setting under Settings → Collection, and `live_socket` from the settings API. There is nothing to switch on any more.
+- `socket_enabled` from the collector status: it was only there to tell "switched off" apart from "on but not connecting", and there is no "switched off" now.
+
 ## [1.5.1] - 2026-09-22
 
 ### Fixed
