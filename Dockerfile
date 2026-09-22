@@ -4,9 +4,16 @@ FROM rust:1-alpine AS build
 RUN apk add --no-cache musl-dev
 WORKDIR /src
 
-# Dependencies first, so editing finstats itself doesn't rebuild the world.
+# Dependencies first, so editing finstats itself doesn't rebuild the world. The two cache mounts make
+# even that incremental between builds on one machine: the crate registry and the target directory
+# survive, so a changed source file recompiles finstats and relinks instead of building everything
+# again — minutes off every local rebuild and every run of the QA image check. They are BuildKit
+# caches and change nothing about the image: the binary is copied out of the cache onto a real layer,
+# and a builder without them (a cold CI runner) simply builds as before.
 COPY Cargo.toml Cargo.lock ./
-RUN mkdir -p src web && echo 'fn main() {}' > src/main.rs \
+RUN --mount=type=cache,target=/usr/local/cargo/registry,id=finstats-registry \
+    --mount=type=cache,target=/src/target,id=finstats-target \
+    mkdir -p src web && echo 'fn main() {}' > src/main.rs \
     && cargo build --release --locked \
     && rm -rf src target/release/deps/finstats-* target/release/finstats
 
@@ -14,7 +21,9 @@ COPY src ./src
 COPY web ./web
 # Compiled into the binary: the in-app patch notes.
 COPY CHANGELOG.md ./
-RUN cargo build --release --locked
+RUN --mount=type=cache,target=/usr/local/cargo/registry,id=finstats-registry \
+    --mount=type=cache,target=/src/target,id=finstats-target \
+    cargo build --release --locked && cp target/release/finstats /finstats
 
 FROM alpine:3.22
 # Ties the published image to its source; the release workflow adds version, revision and date.
@@ -27,7 +36,7 @@ LABEL org.opencontainers.image.title="finstats" \
 RUN apk add --no-cache tzdata su-exec \
     && addgroup -g 1000 finstats && adduser -D -u 1000 -G finstats finstats \
     && mkdir /data && chown finstats:finstats /data
-COPY --from=build /src/target/release/finstats /usr/local/bin/finstats
+COPY --from=build /finstats /usr/local/bin/finstats
 COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 
 # No USER line on purpose: the entrypoint starts as root only to make /data writable (Docker creates a
