@@ -29,7 +29,7 @@ const ATTEMPT_WINDOW_S: i64 = 300;
 /// Permission keys an administrator can grant. `sign_in` lets one user in while sign-in
 /// for everyone is off; the rest widen what a signed-in user may see or do.
 pub const SIGN_IN: &str = "sign_in";
-pub const GRANTABLE: [&str; 6] = [SIGN_IN, "see_everyone", "see_network", "see_server", "see_downloads", "manage"];
+pub const GRANTABLE: [&str; 7] = [SIGN_IN, "see_everyone", "see_network", "see_server", "see_downloads", "notify", "manage"];
 
 /// What this request may see and do. Jellyfin administrators always hold everything.
 /// The year recap is not covered: it stays personal whatever is granted.
@@ -42,12 +42,14 @@ pub struct Perms {
     pub see_downloads: bool,
     /// The Server page, the server log, failed sign-ins and file paths.
     pub see_server: bool,
+    /// May have notification destinations of their own, and be sent what they are allowed to see.
+    pub notify: bool,
     /// Settings, tasks, imports and deleting plays.
     pub manage: bool,
 }
 
 impl Perms {
-    pub const ALL: Perms = Perms { see_everyone: true, see_network: true, see_server: true, see_downloads: true, manage: true };
+    pub const ALL: Perms = Perms { see_everyone: true, see_network: true, see_server: true, see_downloads: true, notify: true, manage: true };
 
     pub fn from_keys<'a>(keys: impl IntoIterator<Item = &'a str>) -> Self {
         let mut p = Perms::default();
@@ -57,6 +59,7 @@ impl Perms {
                 "see_network" => p.see_network = true,
                 "see_downloads" => p.see_downloads = true,
                 "see_server" => p.see_server = true,
+                "notify" => p.notify = true,
                 "manage" => p.manage = true,
                 _ => {}
             }
@@ -91,7 +94,7 @@ pub fn stored_grants(conn: &db::rusqlite::Connection, user_id: &str) -> anyhow::
 }
 
 /// `None` = this user may not sign in at all.
-fn effective(is_admin: bool, grants: &[String], settings: &crate::state::Settings) -> Option<Perms> {
+pub(crate) fn effective(is_admin: bool, grants: &[String], settings: &crate::state::Settings) -> Option<Perms> {
     if is_admin {
         return Some(Perms::ALL);
     }

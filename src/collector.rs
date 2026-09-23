@@ -66,6 +66,9 @@ const PAUSE_DEBOUNCE: u32 = 3;
 const DEVICE_REFRESH: Duration = Duration::from_secs(300);
 /// Plays shorter than this are accidental clicks; they are dropped when they end.
 const MIN_KEEP_S: i64 = 2;
+/// Reads of the session list that must fail in a row before Jellyfin counts as down. At one a second
+/// while something plays, and five seconds apart while nothing does, this is a restart, not a blip.
+const JELLYFIN_DOWN_AFTER: u32 = 10;
 /// A position that lands further than this from where steady playback would be is a skip.
 const SEEK_TOLERANCE_S: f64 = 20.0;
 
@@ -128,6 +131,35 @@ fn record_from_session(s: &Value, now: i64) -> Option<PlayRecord> {
         seek_count: 0,
         start_position_s: ticks_to_s(&play_state["PositionTicks"]),
     })
+}
+
+/// A play beginning or ending, as the thing a destination is told. The title, the person and the device
+/// are the message; the address it came from is a `private_field`, like everywhere else.
+fn play_event(rec: &crate::playback::PlayRecord, starting: bool, row_id: i64) -> crate::notify::Event {
+    let what = match (&rec.series_name, rec.season_number, rec.episode_number) {
+        (Some(series), Some(season), Some(episode)) => format!("{series} S{season:02}E{episode:02} · {}", rec.item_name),
+        (Some(series), _, _) => format!("{series} · {}", rec.item_name),
+        _ => rec.item_name.clone(),
+    };
+    let device = rec.device_name.clone().or_else(|| rec.client.clone()).unwrap_or_else(|| "an unknown device".into());
+    let (kind, title, body) = match starting {
+        true => (crate::notify::Kind::PlayStarted, format!("{} started watching", rec.user_name), format!("{what} on {device}.")),
+        false => {
+            let minutes = (rec.duration_s as f64 / 60.0).round() as i64;
+            (crate::notify::Kind::PlayStopped, format!("{} stopped watching", rec.user_name), format!("{what} — {minutes} minute{} on {device}.", if minutes == 1 { "" } else { "s" }))
+        }
+    };
+    let mut event = crate::notify::Event::new(kind, format!("notify:play:{}:{row_id}", if starting { "start" } else { "stop" }), title, body)
+        .about(rec.user_id.clone(), rec.user_name.clone())
+        .field("Person", rec.user_name.clone())
+        .field("Title", what)
+        .field("Device", device)
+        .field("How", rec.play_method.clone())
+        .link(format!("/items/{}", rec.item_id));
+    if let Some(ip) = &rec.remote_ip {
+        event = event.private_field("From address", ip.clone());
+    }
+    event
 }
 
 fn live_json(key: &str, t: &Tracked) -> Value {
@@ -714,6 +746,8 @@ pub async fn run(app: App) {
     let mut trusted_unproven = false;
     let (mut active, mut playing) = (0usize, 0usize);
     let mut socket_error: Option<String> = None;
+    // Somebody has been told Jellyfin is not answering, and is owed the news that it is again.
+    let mut told_down = false;
     let mut socket_for: Option<String> = None;
 
     loop {
@@ -917,22 +951,34 @@ pub async fn run(app: App) {
                 }
                 let beat = poll_interval_s(settings.active_interval_s, settings.idle_interval_s, playing, active, !socket_live);
                 publish(&app, seen(&sock, socket_live, mode, active, beat, reads_in_mode(mode_at)), &mut mode_since, &mut mode_at, &mut bad_since);
-                let mut st = app.collector.write().unwrap();
-                st.connected = true;
-                st.error = None;
-                st.last_poll_at = db::now();
-                st.active_sessions = tracked.len();
-                // A safety read is made *while* listening, so it is not the transport changing.
-                st.transport = if source == Source::Poll { "poll" } else { "socket" };
-                st.socket_live = socket_live;
-                // While something plays the list comes from a poll and the socket is still carrying:
-                // only a socket that is *not* carrying has anything to explain.
-                st.socket_error = socket_error.clone();
+                {
+                    let mut st = app.collector.write().unwrap();
+                    st.connected = true;
+                    st.error = None;
+                    st.last_poll_at = db::now();
+                    st.active_sessions = tracked.len();
+                    // A safety read is made *while* listening, so it is not the transport changing.
+                    st.transport = if source == Source::Poll { "poll" } else { "socket" };
+                    st.socket_live = socket_live;
+                    // While something plays the list comes from a poll and the socket is still carrying:
+                    // only a socket that is *not* carrying has anything to explain.
+                    st.socket_error = socket_error.clone();
+                }
+                // It is answering again, and somebody was told it was not.
+                if std::mem::take(&mut told_down) {
+                    crate::notify::service_state(&app, "Jellyfin", "the server everything comes from", None).await;
+                }
             }
             Err(e) => {
                 failures += 1;
                 if failures == 1 || failures % 60 == 0 {
                     tracing::warn!("cannot read sessions from Jellyfin: {e:#}");
+                }
+                // Not a blip: a reachable Jellyfin is the one thing finstats cannot do without, and a
+                // play that is never seen cannot be backfilled later.
+                if failures == JELLYFIN_DOWN_AFTER && !told_down {
+                    told_down = true;
+                    crate::notify::service_state(&app, "Jellyfin", "the server everything comes from", Some(&format!("{e:#}"))).await;
                 }
                 let mut st = app.collector.write().unwrap();
                 st.connected = false;
@@ -1130,6 +1176,9 @@ async fn tick(
             // A new sighting: is this account somewhere it cannot be?
             let (checker, who) = (app.clone(), rec.user_id.clone());
             tokio::spawn(async move { crate::security::check(&checker, Some(who)).await });
+            // …and, for whoever asked to hear about it, somebody has started watching something.
+            let (teller, event) = (app.clone(), play_event(&rec, true, row_id));
+            tokio::spawn(async move { crate::notify::raise(&teller, event).await; });
             tracked.insert(
                 key,
                 Tracked { row_id, rec, watched, paused, is_paused, last_tick: tick_at, last_persist: tick_at, transcode_progress },
@@ -1146,6 +1195,10 @@ async fn tick(
         t.rec.paused_s = t.paused.round() as i64;
         let (row_id, rec) = (t.row_id, t.rec);
         tracing::info!("{} stopped {} after {}s", rec.user_name, rec.item_name, rec.duration_s);
+        if rec.duration_s >= MIN_KEEP_S {
+            let (teller, event) = (app.clone(), play_event(&rec, false, row_id));
+            tokio::spawn(async move { crate::notify::raise(&teller, event).await; });
+        }
         app.db
             .call(move |c| {
                 if rec.duration_s < MIN_KEEP_S {

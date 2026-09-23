@@ -28,6 +28,7 @@ use crate::auth::{AuthUser, Manager};
 use crate::db::rusqlite::{Connection, OptionalExtension, params, params_from_iter, types::Value as SqlValue};
 use crate::db::{self, norm_id};
 use crate::geo::{self, Database, Place, distance_km};
+use crate::notify::{self, Fanout, Kind};
 use crate::state::{ApiError, ApiResult, App, Settings};
 use crate::stats::{FilterQuery, Scope};
 
@@ -184,6 +185,166 @@ pub fn detect(user_id: &str, sightings: &[Sighting], rules: &Rules, muted: &Hash
     out
 }
 
+// ---------------------------------------------------------------- an alert as news
+
+/// "4 hours", "35 minutes": how far apart two sightings were, in the words a message uses.
+fn human_gap(seconds: i64) -> String {
+    let s = seconds.max(0);
+    match s {
+        0 => "at the same time".into(),
+        1..=90 => format!("{s} seconds apart"),
+        91..=5_400 => format!("{} minutes apart", (s as f64 / 60.0).round() as i64),
+        5_401..=172_800 => format!("{} hours apart", (s as f64 / 3600.0).round() as i64),
+        _ => format!("{} days apart", (s as f64 / 86_400.0).round() as i64),
+    }
+}
+
+fn place_of(side: &Value) -> String {
+    side["place"].as_str().unwrap_or("an unknown place").to_string()
+}
+
+/// One alert, as the thing a destination is told. Places are in the message; the addresses and the
+/// coordinates behind them are `private_field`s, so they only ever reach a destination that asked.
+fn as_event(f: &Finding, user_id: &str, user_name: &str) -> notify::Event {
+    let d = &f.details;
+    let (from, to) = (&d["from"], &d["to"]);
+    let event = match f.kind {
+        "new_country" => {
+            let country = d["country"].as_str().unwrap_or("a new country").to_string();
+            notify::Event::new(
+                Kind::NewCountry,
+                format!("notify:{}", f.dedupe),
+                format!("{user_name} appeared in {country}"),
+                format!("First time this account has been seen there. {}, {}.", place_of(to), to["what"].as_str().unwrap_or("seen")),
+            )
+            .field("Person", user_name)
+            .field("Place", place_of(to))
+        }
+        _ => {
+            let overlap = d["overlap"].as_bool().unwrap_or(false);
+            let km = d["distance_km"].as_f64().unwrap_or(0.0);
+            let when = if overlap { "at the same time".to_string() } else { human_gap(d["gap_s"].as_i64().unwrap_or(0)) };
+            notify::Event::new(
+                Kind::Travel,
+                format!("notify:{}", f.dedupe),
+                format!("Impossible travel: {user_name}"),
+                format!("{} and {}, {km:.0} km apart, {when}.", place_of(from), place_of(to)),
+            )
+            .field("Person", user_name)
+            .field("From", format!("{} — {}", place_of(from), from["what"].as_str().unwrap_or("seen")))
+            .field("To", format!("{} — {}", place_of(to), to["what"].as_str().unwrap_or("seen")))
+            .field("Apart", format!("{km:.0} km, {when}"))
+        }
+    };
+    let private = |e: notify::Event, label: &str, side: &Value| match side["ip"].as_str() {
+        Some(ip) if !ip.is_empty() => e.private_field(label, ip),
+        _ => e,
+    };
+    let event = private(event, "From address", from);
+    let event = private(event, "To address", to);
+    event.at(f.at).about(user_id, user_name).link("/security")
+}
+
+// ---------------------------------------------------------------- failed sign-ins
+
+/// Several failed sign-ins in a row are the one thing on this page that needs no geolocation database:
+/// it is counting. `within_s` is the window, `min` how many it takes to be worth saying.
+const BURST_WINDOW_S: i64 = 900;
+const BURST_MIN: usize = 5;
+/// How far back a scan looks. Anything older has been reported already, or never will be.
+const BURST_LOOKBACK_S: i64 = 7 * 86_400;
+
+#[derive(Debug, PartialEq)]
+pub struct Burst {
+    /// The account name Jellyfin refused, or the address it came from when there is no account.
+    pub who: String,
+    pub user_id: Option<String>,
+    pub ip: String,
+    pub first_at: i64,
+    pub at: i64,
+    /// The activity-log row that completed it: what makes the same burst the same burst on a rescan.
+    pub id: i64,
+    pub count: usize,
+}
+
+/// Every run of `min` failures inside `within_s`, per account or address. Pure and re-derivable: a
+/// rescan finds exactly the same bursts, so `dedupe` keeps them single.
+pub fn bursts(rows: &[(i64, i64, String, Option<String>, String)], within_s: i64, min: usize) -> Vec<Burst> {
+    let mut window: HashMap<String, Vec<(i64, i64)>> = HashMap::new();
+    let mut out = vec![];
+    for (id, at, who, user_id, ip) in rows {
+        let seen = window.entry(who.clone()).or_default();
+        seen.retain(|(_, t)| at - t <= within_s);
+        seen.push((*id, *at));
+        if seen.len() >= min {
+            out.push(Burst {
+                who: who.clone(),
+                user_id: user_id.clone(),
+                ip: ip.clone(),
+                first_at: seen[0].1,
+                at: *at,
+                id: *id,
+                count: seen.len(),
+            });
+            seen.clear(); // the next `min` failures are the next burst, not the same one going on
+        }
+    }
+    out
+}
+
+/// Read the failures out of the activity log and file what is new. Needs no geolocation database, so it
+/// runs on every install; `check` does the rest.
+pub fn scan_sign_ins(conn: &Connection, bus: &Fanout) -> Result<usize> {
+    let since = db::now() - BURST_LOOKBACK_S;
+    let rows: Vec<(i64, i64, String, Option<String>, String)> = conn
+        .prepare_cached(
+            "SELECT e.id, e.date, COALESCE(u.name, e.name, e.remote_ip, 'someone'), e.user_id, COALESCE(e.remote_ip, '')
+             FROM server_events e LEFT JOIN users u ON u.id = e.user_id
+             WHERE e.type = 'AuthenticationFailed' AND e.date >= ?1 ORDER BY e.date, e.id",
+        )?
+        .query_map([since], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)))?
+        .collect::<Result<_, _>>()?;
+    let mut added = 0;
+    for b in bursts(&rows, BURST_WINDOW_S, BURST_MIN) {
+        let mut event = notify::Event::new(
+            Kind::FailedSignIns,
+            format!("notify:signins:{}:{}", b.who, b.id),
+            format!("{} failed sign-ins for {}", b.count, b.who),
+            format!("{} attempts within {}.", b.count, human_gap(b.at - b.first_at).replace(" apart", "")),
+        )
+        .at(b.at)
+        .severity(if b.count >= BURST_MIN * 4 { notify::ALERT } else { notify::WARN })
+        .field("Account", b.who.clone())
+        .field("Attempts", b.count.to_string())
+        .link("/server");
+        if let Some(user_id) = &b.user_id {
+            event = event.about(user_id.clone(), b.who.clone());
+        }
+        if !b.ip.is_empty() {
+            event = event.private_field("From address", b.ip.clone());
+        }
+        added += usize::from(notify::raise_in(conn, bus, &event)?);
+    }
+    Ok(added)
+}
+
+/// After the activity log has been read: was anybody knocking?
+pub async fn check_sign_ins(app: &App) {
+    let bus_app = app.clone();
+    let done = app.db.call(move |c| {
+        let bus = Fanout::of(c, &bus_app)?;
+        scan_sign_ins(c, &bus)
+    }).await;
+    match done {
+        Ok(n) if n > 0 => {
+            tracing::warn!("{n} burst{} of failed sign-ins", if n == 1 { "" } else { "s" });
+            app.notify_wake.notify_one();
+        }
+        Ok(_) => {}
+        Err(e) => tracing::warn!("could not look at failed sign-ins: {e:#}"),
+    }
+}
+
 // ---------------------------------------------------------------- addresses → places
 
 /// The address in an activity-log line ("IP address: 203.0.113.9"). The wording follows the server's
@@ -287,14 +448,14 @@ fn sightings_of(conn: &Connection, user_id: &str, home: Option<&Spot>) -> Result
 }
 
 /// Look at one person's history, or everyone's, and file what is new. Returns how many alerts were added.
-pub fn scan(conn: &Connection, geo: &Database, rules: &Rules, only_user: Option<&str>) -> Result<usize> {
+pub fn scan(conn: &Connection, geo: &Database, rules: &Rules, only_user: Option<&str>, bus: Option<&Fanout>) -> Result<usize> {
     fill_event_ips(conn)?;
     locate_new(conn, geo)?;
-    file_alerts(conn, rules, only_user)
+    file_alerts(conn, rules, only_user, bus)
 }
 
 /// The part of a scan that needs no database file: every address already has its place.
-fn file_alerts(conn: &Connection, rules: &Rules, only_user: Option<&str>) -> Result<usize> {
+fn file_alerts(conn: &Connection, rules: &Rules, only_user: Option<&str>, bus: Option<&Fanout>) -> Result<usize> {
     let home = home_place(conn)?.and_then(|p| spot_of(&p, true));
     let users: Vec<(String, String)> = conn
         .prepare(
@@ -321,12 +482,17 @@ fn file_alerts(conn: &Connection, rules: &Rules, only_user: Option<&str>) -> Res
         let sightings = sightings_of(conn, &user_id, home.as_ref())?;
         for f in detect(&user_id, &sightings, rules, &muted) {
             let historic = now - f.at > HISTORIC_S;
-            added += conn.prepare_cached(
+            let filed = conn.prepare_cached(
                 "INSERT OR IGNORE INTO security_alerts(kind, severity, user_id, user_name, at, dedupe, details, created_at, resolved_at, resolved_by, note)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
             )?
             .execute(params![f.kind, f.severity, user_id, user_name, f.at, f.dedupe, f.details.to_string(), now,
                 historic.then_some(now), historic.then_some("finstats"), historic.then_some("Found in older history")])?;
+            added += filed;
+            // An alert nobody is looking at is the whole reason notifications exist.
+            if filed > 0 && let Some(bus) = bus {
+                notify::raise_in(conn, bus, &as_event(&f, &user_id, &user_name))?;
+            }
         }
     }
     Ok(added)
@@ -336,7 +502,11 @@ fn file_alerts(conn: &Connection, rules: &Rules, only_user: Option<&str>) -> Res
 pub async fn check(app: &App, user_id: Option<String>) {
     let Some(geo) = app.geo.get() else { return };
     let rules = Rules::of(&app.settings());
-    match app.db.call(move |c| scan(c, &geo, &rules, user_id.as_deref())).await {
+    let bus_app = app.clone();
+    match app.db.call(move |c| {
+        let bus = notify::Fanout::of(c, &bus_app)?;
+        scan(c, &geo, &rules, user_id.as_deref(), Some(&bus))
+    }).await {
         Ok(n) if n > 0 => tracing::warn!("{n} new security alert{}", if n == 1 { "" } else { "s" }),
         Ok(_) => {}
         Err(e) => tracing::warn!("security scan failed: {e:#}"),
@@ -347,13 +517,17 @@ pub async fn check(app: &App, user_id: Option<String>) {
 pub async fn refresh_all(app: &App) {
     let geo = app.geo.get();
     let rules = Rules::of(&app.settings());
+    let bus_app = app.clone();
     let result = app
         .db
         .call(move |c| {
             let tx = c.transaction()?;
             tx.execute("DELETE FROM ip_locations", [])?;
             let added = match &geo {
-                Some(geo) => scan(&tx, geo, &rules, None)?,
+                Some(geo) => {
+                    let bus = notify::Fanout::of(&tx, &bus_app)?;
+                    scan(&tx, geo, &rules, None, Some(&bus))?
+                }
                 None => 0,
             };
             tx.commit()?;
@@ -684,6 +858,29 @@ pub async fn download_database(State(app): State<App>, Manager(_): Manager) -> A
 mod tests {
     use super::*;
 
+    #[test]
+    fn several_failed_sign_ins_in_a_row_are_one_burst_and_the_next_five_are_the_next() {
+        let row = |id: i64, at: i64, who: &str| (id, at, who.to_string(), Some(format!("u-{who}")), "203.0.113.9".to_string());
+        // Four for alice is nothing; the fifth completes a burst. Bob's two in between are his own count.
+        let mut rows: Vec<_> = (0..4).map(|n| row(n, 1_000 + n * 60, "alice")).collect();
+        rows.push(row(10, 1_100, "bob"));
+        rows.push(row(11, 1_150, "bob"));
+        rows.push(row(12, 1_300, "alice"));
+        let found = bursts(&rows, 900, 5);
+        assert_eq!(found.len(), 1, "one burst, for the account that reached five");
+        assert_eq!((found[0].who.as_str(), found[0].id, found[0].count), ("alice", 12, 5));
+
+        // Spread beyond the window, five failures are somebody who keeps mistyping, not a burst.
+        let slow: Vec<_> = (0..5).map(|n| row(n, 1_000 + n * 1_000, "alice")).collect();
+        assert!(bursts(&slow, 900, 5).is_empty());
+
+        // Ten in a row are two bursts, each keyed by the attempt that completed it, so a rescan finds the same two.
+        let many: Vec<_> = (0..10).map(|n| row(n, 1_000 + n * 10, "alice")).collect();
+        let found = bursts(&many, 900, 5);
+        assert_eq!(found.iter().map(|b| b.id).collect::<Vec<_>>(), vec![4, 9]);
+    }
+
+
     fn spot(key: &str, cc: &str, lat: f64, lon: f64) -> Spot {
         Spot { key: key.into(), label: key.into(), country_code: Some(cc.into()), country: Some(cc.into()), lat, lon }
     }
@@ -800,7 +997,7 @@ mod tests {
             recent = now - 86_400
         ))
         .unwrap();
-        assert_eq!(file_alerts(&c, &RULES, None).unwrap(), 3);
+        assert_eq!(file_alerts(&c, &RULES, None, None).unwrap(), 3);
         let filed: Vec<(String, bool, Option<String>)> = c
             .prepare("SELECT kind, resolved_at IS NOT NULL, resolved_by FROM security_alerts ORDER BY at")
             .unwrap()
@@ -812,7 +1009,7 @@ mod tests {
         assert_eq!(filed[0], ("impossible_travel".into(), true, Some("finstats".into())));
         assert_eq!(filed[1], ("new_country".into(), true, Some("finstats".into())));
         assert_eq!(filed[2], ("impossible_travel".into(), false, None));
-        assert_eq!(file_alerts(&c, &RULES, None).unwrap(), 0);
-        assert_eq!(file_alerts(&c, &RULES, Some("u1")).unwrap(), 0);
+        assert_eq!(file_alerts(&c, &RULES, None, None).unwrap(), 0);
+        assert_eq!(file_alerts(&c, &RULES, Some("u1"), None).unwrap(), 0);
     }
 }

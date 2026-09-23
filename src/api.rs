@@ -77,6 +77,11 @@ pub fn router(app: App) -> Router {
         .route("/requests/summary", get(pipeline::requests_summary))
         .route("/downloads", get(crate::downloads::downloads))
         .route("/downloads/history", get(pipeline::download_history))
+        .route("/notifications", get(crate::notify::list))
+        .route("/notifications/targets", post(crate::notify::create))
+        .route("/notifications/targets/{id}", axum::routing::put(crate::notify::update).delete(crate::notify::remove))
+        .route("/notifications/targets/{id}/test", post(crate::notify::test))
+        .route("/notifications/history", get(crate::notify::history))
         .route("/settings", get(get_settings).put(put_settings))
         .route("/settings/public-ip", post(lookup_public_ip))
         .route("/outbound", get(crate::outbound::outbound))
@@ -443,14 +448,17 @@ async fn run_task(State(app): State<App>, Manager(_): Manager, Path(id): Path<St
 
 // ---------------------------------------------------------------- permissions
 
-const ACCESS_KEYS: [&str; 2] = ["allow_user_login", "default_permissions"];
+/// Settings only a Jellyfin administrator may write: who gets in, what everyone may see, and the
+/// address finstats puts in the messages it sends.
+const ACCESS_KEYS: [&str; 3] = ["allow_user_login", "default_permissions", "public_url"];
 
-const PERMISSION_INFO: [(&str, &str, &str); 6] = [
+const PERMISSION_INFO: [(&str, &str, &str); 7] = [
     ("sign_in", "Sign in", "May use finstats and sees their own statistics and recap."),
     ("see_everyone", "See everyone's activity", "Other people's statistics and history, the Users page and every live stream."),
     ("see_network", "See network details", "IP addresses, device ids and whether a play was local or remote."),
     ("see_server", "See the server", "The Server page, the server log, failed sign-ins and file paths."),
     ("see_downloads", "See what is downloading", "The download queue with speeds, torrent names and which client. Without it, people still see how far their own request has got."),
+    ("notify", "Be sent notifications", "May add destinations of their own (a webhook, Discord, ntfy or Gotify) and is sent what they are already allowed to see. Their destinations must point at a public address."),
     ("manage", "Manage finstats", "Settings, tasks, the Jellystat import and deleting plays. Cannot change permissions."),
 ];
 

@@ -39,6 +39,10 @@ pub struct AppState {
     /// What is downloading right now, and who wished for it: in memory only, worthless a minute later.
     pub downloads: RwLock<Arc<crate::downloads::Snapshot>>,
     pub wishes: RwLock<Arc<crate::downloads::Wishes>>,
+    /// Where finstats may send what it finds, read into memory so that `notify::raise` can be called
+    /// from inside a transaction; `notify_wake` is how the sending loop is told there is something to do.
+    pub notify_targets: RwLock<Arc<Vec<Arc<crate::notify::Target>>>>,
+    pub notify_wake: Notify,
     /// When a page last said it was showing the downloads, and how to wake their loop.
     pub downloads_watched: Mutex<i64>,
     pub downloads_wake: Notify,
@@ -89,11 +93,14 @@ pub struct Settings {
     pub travel_speed_kmh: i64,
     /// …when they are at least this far apart. City databases are often a few hundred km off.
     pub travel_min_km: i64,
+    /// Where finstats answers from outside, so a notification can carry a link back to the page it is
+    /// about. finstats cannot know this by itself; empty means messages carry no link.
+    pub public_url: String,
 }
 
 impl Default for Settings {
     fn default() -> Self {
-        Self { follow_jellyfin_scan: true, allow_user_login: false, default_permissions: vec![], active_interval_s: 1, idle_interval_s: 5, sync_interval_h: 6, merge_window_s: 600, min_play_s: 0, group_window_s: 60, public_ip_lookup: true, home_addresses: vec![], backup_every_d: 7, backup_keep: 5, geoip_download: false, travel_speed_kmh: 900, travel_min_km: 500 }
+        Self { follow_jellyfin_scan: true, allow_user_login: false, default_permissions: vec![], active_interval_s: 1, idle_interval_s: 5, sync_interval_h: 6, merge_window_s: 600, min_play_s: 0, group_window_s: 60, public_ip_lookup: true, home_addresses: vec![], backup_every_d: 7, backup_keep: 5, geoip_download: false, travel_speed_kmh: 900, travel_min_km: 500, public_url: String::new() }
     }
 }
 
@@ -117,6 +124,15 @@ impl Settings {
         }
         if self.home_addresses.len() > 50 {
             return Err("at most 50 home addresses".into());
+        }
+        if !self.public_url.is_empty() {
+            let url = self.public_url.trim();
+            if !(url.starts_with("http://") || url.starts_with("https://")) || reqwest::Url::parse(url).is_err() {
+                return Err("The address of finstats must start with http:// or https://".into());
+            }
+            if url.len() > 300 {
+                return Err("That address is too long".into());
+            }
         }
         check("backup_every_d", self.backup_every_d, 0, 365)?;
         check("backup_keep", self.backup_keep, 1, 100)?;
@@ -288,6 +304,8 @@ pub fn test_app() -> App {
         wishes: Default::default(),
         downloads_watched: Mutex::new(0),
         downloads_wake: Notify::new(),
+        notify_targets: Default::default(),
+        notify_wake: Notify::new(),
         wake: Notify::new(),
     })
 }

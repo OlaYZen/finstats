@@ -447,6 +447,60 @@ pub(crate) const MIGRATIONS: &[&str] = &[
         ) WHERE IFNULL(detail, '') = IFNULL(before, '')
     );
     "#,
+    // 18 — notifications: where finstats may send what it finds, what it found, and how each sending went.
+    //      `notify_targets` holds the address *and* the secret of a destination (a Discord webhook URL is
+    //      itself the credential), so like `services` it never leaves this table and is never backed up.
+    //      An event is written once and deduped by `dedupe`, exactly like `security_alerts`, so deriving
+    //      the same thing twice adds nothing; `private` holds the addresses and coordinates a destination
+    //      only gets when its owner switched "include addresses" on. Delivery is separate from the event:
+    //      one row per destination, retried on its own clock, so a webhook that is down loses nothing.
+    r#"
+    CREATE TABLE notify_targets (
+        id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+        kind                 TEXT NOT NULL,                -- webhook | discord | ntfy | gotify
+        name                 TEXT NOT NULL,
+        url                  TEXT NOT NULL,                -- never sent back to a browser
+        secret               TEXT NOT NULL DEFAULT '',
+        topic                TEXT,                         -- ntfy
+        owner_id             TEXT REFERENCES users(id) ON DELETE CASCADE,  -- NULL = the server's own
+        events               TEXT NOT NULL DEFAULT '[]',   -- JSON array of event kinds this one wants
+        with_addresses       INTEGER NOT NULL DEFAULT 0,
+        min_severity         TEXT NOT NULL DEFAULT 'info',
+        accept_invalid_certs INTEGER NOT NULL DEFAULT 0,
+        enabled              INTEGER NOT NULL DEFAULT 1,
+        created_at           INTEGER NOT NULL,
+        last_ok_at           INTEGER,
+        last_error           TEXT
+    );
+    CREATE TABLE notify_events (
+        id         INTEGER PRIMARY KEY AUTOINCREMENT,
+        kind       TEXT NOT NULL,
+        severity   TEXT NOT NULL,                -- info | warn | alert
+        at         INTEGER NOT NULL,             -- when the thing itself happened
+        created_at INTEGER NOT NULL,             -- when finstats noticed
+        dedupe     TEXT NOT NULL UNIQUE,
+        user_id    TEXT,
+        user_name  TEXT,
+        title      TEXT NOT NULL,
+        body       TEXT NOT NULL,
+        link       TEXT,                         -- a path inside finstats, joined with public_url when sent
+        data       TEXT NOT NULL DEFAULT '{}',   -- what any destination may be told
+        private    TEXT NOT NULL DEFAULT '{}',   -- addresses and places: only with "include addresses"
+        historic   INTEGER NOT NULL DEFAULT 0    -- found long after it happened: recorded, never sent
+    );
+    CREATE INDEX idx_notify_events_at ON notify_events(at);
+    CREATE TABLE notify_deliveries (
+        event_id  INTEGER NOT NULL REFERENCES notify_events(id) ON DELETE CASCADE,
+        target_id INTEGER NOT NULL REFERENCES notify_targets(id) ON DELETE CASCADE,
+        state     TEXT NOT NULL,                 -- queued | sent | failed
+        attempts  INTEGER NOT NULL DEFAULT 0,
+        next_at   INTEGER NOT NULL,
+        sent_at   INTEGER,
+        error     TEXT,
+        PRIMARY KEY (event_id, target_id)
+    ) WITHOUT ROWID;
+    CREATE INDEX idx_notify_due ON notify_deliveries(state, next_at);
+    "#,
 ];
 
 impl Db {

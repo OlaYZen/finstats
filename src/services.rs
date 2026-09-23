@@ -137,7 +137,13 @@ impl Http {
     }
 
     pub fn of(&self, svc: &Service) -> &reqwest::Client {
-        if svc.accept_invalid_certs { &self.lax } else { &self.strict }
+        self.client(svc.accept_invalid_certs)
+    }
+
+    /// The same two clients, for anything else that must not follow a redirect while holding a token —
+    /// a notification destination, say.
+    pub fn client(&self, accept_invalid_certs: bool) -> &reqwest::Client {
+        if accept_invalid_certs { &self.lax } else { &self.strict }
     }
 }
 
@@ -317,10 +323,17 @@ pub async fn record(app: &App, id: i64, outcome: std::result::Result<Option<Stri
         }
         (before, h.clone())
     };
+    let error_now = after.last_error.clone();
     // Every success moves `last_ok_at`; that alone is not worth a write more than once in a while.
     let changed = before.last_error != after.last_error || before.version != after.version || after.last_ok_at.unwrap_or(0) - before.last_ok_at.unwrap_or(0) >= 900;
     if changed {
         let _ = app.db.call(move |c| Ok(c.execute("UPDATE services SET version = ?1, last_ok_at = ?2, last_error = ?3 WHERE id = ?4", params![after.version, after.last_ok_at, after.last_error, id])?)).await;
+    }
+    // Going quiet, and coming back, are each worth one message.
+    if before.last_error.is_some() != error_now.is_some()
+        && let Some(svc) = all(app).iter().find(|s| s.id == id)
+    {
+        crate::notify::service_state(app, &svc.name, svc.kind.label(), error_now.as_deref()).await;
     }
 }
 
@@ -341,6 +354,9 @@ pub fn spawn(app: &App, id: &str) -> bool {
             "sync_grabs" => crate::arr::sync_grabs(&app).await,
             other => Err(anyhow!("unknown task {other}")),
         };
+        if let Err(e) = &outcome {
+            crate::notify::task_failed(&app, id, &format!("{e:#}")).await;
+        }
         app.tasks.finish(id, outcome.map(|m| (m, None)));
     });
     true

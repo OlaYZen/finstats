@@ -3,6 +3,7 @@ mod arr;
 mod auth;
 mod backup;
 mod changelog;
+mod channels;
 mod collector;
 mod db;
 mod downloads;
@@ -13,6 +14,7 @@ mod import;
 mod jellyfin;
 mod media;
 mod network;
+mod notify;
 mod outbound;
 mod pipeline;
 mod playback;
@@ -210,10 +212,13 @@ async fn serve(db: db::Db, data_dir: PathBuf) -> Result<()> {
         wishes: Default::default(),
         downloads_watched: Mutex::new(0),
         downloads_wake: Notify::new(),
+        notify_targets: Default::default(),
+        notify_wake: Notify::new(),
         wake: Notify::new(),
     });
 
     services::reload(&app).await?;
+    notify::reload(&app).await?;
 
     // Before the collector: a play that begins in the first second is looked at like any other.
     if geo::load(&app) {
@@ -229,6 +234,7 @@ async fn serve(db: db::Db, data_dir: PathBuf) -> Result<()> {
 
     tokio::spawn(collector::run(app.clone()));
     tokio::spawn(downloads::run(app.clone()));
+    tokio::spawn(notify::run(app.clone()));
     tokio::spawn(sync::scheduler(app.clone()));
     tokio::spawn(api::prune_image_cache(app.clone()));
 

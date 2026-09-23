@@ -127,6 +127,38 @@ fn recent(conn: &Connection, limit: usize) -> Result<Vec<Value>> {
     }
 }
 
+/// What has just arrived, folded exactly the way the shelf folds it (one show, one day, one entry), as
+/// notifications. Only the last few hours are looked at: a library read that finds a year of files is a
+/// first sync, not news, and nothing older than `HISTORIC_S` would be sent anyway.
+pub fn announce(conn: &Connection, bus: &crate::notify::Fanout) -> Result<usize> {
+    let cutoff = crate::db::now() - crate::notify::HISTORIC_S;
+    let mut added = 0;
+    for entry in recent(conn, MAX_LIMIT)? {
+        let at = entry["added_at"].as_i64().unwrap_or(0);
+        if at < cutoff {
+            break; // the list is newest first
+        }
+        let (Some(id), Some(name)) = (entry["id"].as_str(), entry["name"].as_str()) else { continue };
+        let sub = entry["sub"].as_str().unwrap_or("");
+        let what = match (entry["kind"].as_str(), entry["episodes"].as_i64()) {
+            (Some("episodes"), Some(n)) => format!("{sub}, {n} episode{}", if n == 1 { "" } else { "s" }),
+            _ => sub.to_string(),
+        };
+        let event = crate::notify::Event::new(
+            crate::notify::Kind::NewItems,
+            format!("notify:new_items:{id}:{}", at / 86_400),
+            format!("New in the library: {name}"),
+            if what.is_empty() { name.to_string() } else { format!("{name} — {what}") },
+        )
+        .at(at)
+        .field("Title", name.to_string())
+        .link(format!("/items/{id}"));
+        let event = if what.is_empty() { event } else { event.field("What", what) };
+        added += usize::from(crate::notify::raise_in(conn, bus, &event)?);
+    }
+    Ok(added)
+}
+
 /// The library is the same for everyone who may sign in, so this is not scoped to the caller.
 pub async fn recently_added(State(app): State<App>, _user: AuthUser, Query(q): Query<RecentQuery>) -> ApiResult {
     let limit = q.limit.unwrap_or(DEFAULT_LIMIT).clamp(1, MAX_LIMIT);

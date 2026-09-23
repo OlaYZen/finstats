@@ -34,20 +34,44 @@ pub fn spawn(app: &App, id: &'static str) -> bool {
     tokio::spawn(async move {
         let outcome = match id {
             "sync_users" => sync_users(&app, &jf).await,
-            "sync_libraries" => sync_libraries(&app, &jf).await,
+            "sync_libraries" => {
+                let done = sync_libraries(&app, &jf).await;
+                announce_new_items(&app).await;
+                // An episode arriving is also how a request becomes watchable.
+                crate::seerr::check_available(&app).await;
+                done
+            }
             "sync_events" => {
                 let done = sync_events(&app, &jf).await;
-                // New sign-ins are new sightings.
+                // New sign-ins are new sightings, and several failed ones in a row are news of their own.
                 crate::security::check(&app, None).await;
+                crate::security::check_sign_ins(&app).await;
                 done
             }
             "sync_server" => sync_server(&app, &jf).await,
             "sync_userdata" => sync_userdata(&app, &jf).await,
             other => Err(anyhow!("unknown task {other}")),
         };
+        if let Err(e) = &outcome {
+            crate::notify::task_failed(&app, id, &format!("{e:#}")).await;
+        }
         app.tasks.finish(id, outcome.map(|m| (m, None)));
     });
     true
+}
+
+/// After a library read: what arrived, as notifications. Never a reason for the read to fail.
+async fn announce_new_items(app: &App) {
+    let bus_app = app.clone();
+    let done = app.db.call(move |c| {
+        let bus = crate::notify::Fanout::of(c, &bus_app)?;
+        crate::recent::announce(c, &bus)
+    }).await;
+    match done {
+        Ok(n) if n > 0 => app.notify_wake.notify_one(),
+        Ok(_) => {}
+        Err(e) => tracing::warn!("could not announce what arrived: {e:#}"),
+    }
 }
 
 const LIGHT_EVERY_S: i64 = 900;
@@ -74,6 +98,8 @@ pub fn run_backup(app: &App, automatic: bool) -> bool {
         });
         if let Err(e) = &outcome {
             tracing::error!("backup failed: {e:#}");
+            let (app, message) = (app.clone(), format!("{e:#}"));
+            tokio::spawn(async move { crate::notify::backup_failed(&app, &message).await });
         }
         app.tasks.finish(ID, outcome);
     });

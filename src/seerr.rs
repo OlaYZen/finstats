@@ -419,6 +419,7 @@ pub async fn sync_requests(app: &App) -> Result<String> {
     }
     // Whose wish a download is may have changed.
     app.downloads_wake.notify_waiters();
+    check_available(app).await;
     if failed.len() == list.len() {
         bail!("{} did not answer", failed.join(", "));
     }
@@ -427,6 +428,66 @@ pub async fn sync_requests(app: &App) -> Result<String> {
         return Ok("Nothing new".into());
     }
     Ok(format!("{total} requests read{}", if gone > 0 { format!(", {gone} no longer in Seerr") } else { String::new() }))
+}
+
+/// "The thing you asked for is watchable now" — the one notification 1.3 was missing somewhere to say.
+/// Only what arrived in the last few hours: anything older is history, and a first read of Seerr on an
+/// install with years of requests must not become years of messages.
+pub fn announce_available(conn: &Connection, bus: &crate::notify::Fanout) -> Result<usize> {
+    /// (service, request, title, kind, available at, asked at, who it was, their name, the title in the library)
+    type Arrived = (i64, i64, String, String, i64, i64, Option<String>, Option<String>, Option<String>);
+    let cutoff = db::now() - crate::notify::HISTORIC_S;
+    let rows: Vec<Arrived> = conn
+        .prepare_cached(
+            "SELECT r.service_id, r.request_id, COALESCE(r.title, 'Something you asked for'), r.media_type, r.available_at, r.requested_at,
+                    r.user_id, COALESCE(u.name, r.jellyfin_username, r.seerr_user_name), r.item_id
+             FROM requests r LEFT JOIN users u ON u.id = r.user_id
+             WHERE r.available_at IS NOT NULL AND r.available_at >= ?1 AND r.removed_at IS NULL
+             ORDER BY r.available_at",
+        )?
+        .query_map([cutoff], |r| {
+            Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?, r.get(7)?, r.get(8)?))
+        })?
+        .collect::<Result<_, _>>()?;
+    let mut added = 0;
+    for (service_id, request_id, title, media_type, available_at, requested_at, user_id, user_name, item_id) in rows {
+        let who = user_name.clone().unwrap_or_else(|| "somebody".into());
+        let waited = (available_at - requested_at).max(0);
+        let days = waited / 86_400;
+        let mut event = crate::notify::Event::new(
+            crate::notify::Kind::RequestAvailable,
+            format!("notify:request:{service_id}:{request_id}"),
+            format!("Ready to watch: {title}"),
+            format!("The {} {who} asked for is in the library now.", if media_type == "tv" { "show" } else { "film" }),
+        )
+        .at(available_at)
+        .field("Title", title.clone())
+        .field("Asked by", who.clone())
+        .field("Waited", if days >= 1 { format!("{days} day{}", if days == 1 { "" } else { "s" }) } else { "less than a day".into() })
+        .link(match &item_id {
+            Some(id) => format!("/items/{id}"),
+            None => "/pipeline".to_string(),
+        });
+        if let Some(id) = user_id {
+            event = event.about(id, who);
+        }
+        added += usize::from(crate::notify::raise_in(conn, bus, &event)?);
+    }
+    Ok(added)
+}
+
+/// After a read of Seerr or of the library: has anything anybody asked for turned up?
+pub async fn check_available(app: &App) {
+    let bus_app = app.clone();
+    let done = app.db.call(move |c| {
+        let bus = crate::notify::Fanout::of(c, &bus_app)?;
+        announce_available(c, &bus)
+    }).await;
+    match done {
+        Ok(n) if n > 0 => app.notify_wake.notify_one(),
+        Ok(_) => {}
+        Err(e) => tracing::warn!("could not announce what arrived for people: {e:#}"),
+    }
 }
 
 /// Is there anything to read at all? (The scheduler asks before starting the task.)

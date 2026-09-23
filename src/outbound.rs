@@ -4,12 +4,14 @@
 //! finstats talks to your Jellyfin and — unless you say otherwise — to nothing else. A promise the
 //! owner cannot check is only a sentence, so this is the same claim assembled from what the running
 //! program actually knows: the collector's own connection, the two switches that can reach outside,
-//! and each connection the owner entered under Settings.
+//! each connection the owner entered under Settings, and every notification destination — the only
+//! rows here finstats *sends* to rather than reads from.
 //!
 //! Nothing new is recorded for it. Every row is read from something that was already being kept —
-//! the collector status, the addresses a lookup has produced, the geolocation file on disk, and each
-//! service's last good read — so this page cannot itself be the reason finstats knows something.
-//! Hosts only, never a key: `Service` does not even implement `Serialize`.
+//! the collector status, the addresses a lookup has produced, the geolocation file on disk, each
+//! service's last good read and each destination's last accepted message — so this page cannot itself
+//! be the reason finstats knows something. Hosts only, never a key: neither `Service` nor
+//! `notify::Target` even implements `Serialize`, and a destination's address is a credential of its own.
 
 use serde_json::{Value, json};
 
@@ -51,6 +53,10 @@ pub fn host_of(url: &str) -> String {
 /// One connection as this page needs it: id, kind, name, URL, switched on, last good read, last error.
 pub type ServiceRow = (i64, &'static str, String, String, bool, Option<i64>, Option<String>);
 
+/// One notification destination: id, kind, name, URL, whose it is, switched on, last message it took,
+/// last error. The only rows here that finstats *sends* to rather than reads from.
+pub type TargetRow = (i64, &'static str, String, String, Option<String>, bool, Option<i64>, Option<String>);
+
 const ON: &str = "on";
 const OFF: &str = "off";
 
@@ -66,6 +72,7 @@ pub fn destinations(
     geoip_from_env: bool,
     geoip_built_at: Option<i64>,
     services: &[ServiceRow],
+    targets: &[TargetRow],
 ) -> Vec<Dest> {
     let mut out = vec![];
 
@@ -125,6 +132,22 @@ pub fn destinations(
         });
     }
 
+    // The one kind of destination finstats *sends* to. Nothing goes out but the events ticked for it.
+    for (id, kind, name, url, owner, enabled, last_ok_at, last_error) in targets {
+        out.push(Dest {
+            id: format!("notify:{id}"),
+            what: format!("{name} ({kind})"),
+            hosts: vec![host_of(url)],
+            why: match owner {
+                Some(owner) => format!("{owner}'s own notification destination, added under Settings → Notifications. It is sent the events they ticked, about things they are already allowed to see"),
+                None => "a notification destination you added under Settings → Notifications. It is sent the events you ticked there, and nothing else".into(),
+            },
+            state: if *enabled { ON } else { OFF },
+            last_at: *last_ok_at,
+            error: last_error.clone(),
+        });
+    }
+
     out
 }
 
@@ -151,6 +174,7 @@ pub async fn outbound(
         })
         .collect();
 
+    let targets = app.db.call(|c| notification_targets(c)).await?;
     let last_lookup_at = app.db.call(|c| last_lookup(c)).await?;
     let list = destinations(
         jellyfin_url.as_deref(),
@@ -161,9 +185,29 @@ pub async fn outbound(
         geoip_from_env,
         geoip_built_at,
         &services,
+        &targets,
     );
     let on = list.iter().filter(|d| d.state != OFF).count();
     Ok(axum::Json(json!({ "destinations": list.iter().map(Dest::json).collect::<Vec<_>>(), "reachable": on, "total": list.len() })))
+}
+
+/// The notification destinations, read where they live. Host and name only: a destination's address is
+/// itself a credential (a Discord webhook URL carries its token), so it never leaves the row it is in.
+fn notification_targets(conn: &Connection) -> anyhow::Result<Vec<TargetRow>> {
+    let mut stmt = conn.prepare(
+        "SELECT t.id, t.kind, t.name, t.url, u.name, t.enabled, t.last_ok_at, t.last_error
+         FROM notify_targets t LEFT JOIN users u ON u.id = t.owner_id ORDER BY t.id",
+    )?;
+    let rows = stmt
+        .query_map([], |r| {
+            let kind: String = r.get(1)?;
+            let Some(label) = crate::channels::Channel::from_key(&kind).map(crate::channels::Channel::label) else {
+                return Ok(None); // a kind from a newer finstats
+            };
+            Ok(Some((r.get(0)?, label, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?, r.get(7)?)))
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(rows.into_iter().flatten().collect())
 }
 
 /// When a lookup last produced an address. A lookup that answered nothing leaves no trace, which is
@@ -200,6 +244,7 @@ mod tests {
             false,
             None,
             &[(3, "Radarr", "Radarr 4K".into(), "http://nas:7878/radarr".into(), false, None, None)],
+            &[],
         );
         assert_eq!(dest(&list, "jellyfin"), ("always", vec!["jellyfin.example:8096".to_string()]));
         assert_eq!(dest(&list, "public_ip").0, "off");
@@ -209,9 +254,31 @@ mod tests {
     }
 
     #[test]
+    fn a_notification_destination_is_listed_like_anything_else_finstats_can_reach() {
+        let list = destinations(
+            Some("http://jellyfin.example:8096"),
+            &CollectorStatus::default(),
+            &Settings { public_ip_lookup: false, geoip_download: false, ..Default::default() },
+            &[],
+            None,
+            false,
+            None,
+            &[],
+            &[
+                (1, "Discord", "Household".into(), "https://discord.com/api/webhooks/123/s3cret".into(), None, true, Some(50), None),
+                (2, "ntfy", "bob's phone".into(), "https://ntfy.sh".into(), Some("bob".into()), false, None, None),
+            ],
+        );
+        assert_eq!(dest(&list, "notify:1"), ("on", vec!["discord.com".to_string()]), "the host, never the token in the path");
+        assert_eq!(dest(&list, "notify:2").0, "off", "a destination that is switched off is contacted by nothing");
+        let whose = list.iter().find(|d| d.id == "notify:2").map(|d| d.why.clone()).unwrap();
+        assert!(whose.contains("bob"), "whose destination it is, is the point of listing it");
+    }
+
+    #[test]
     fn a_database_from_the_environment_is_never_downloaded() {
         let settings = Settings { geoip_download: true, ..Default::default() };
-        let list = destinations(None, &CollectorStatus::default(), &settings, &[], None, true, Some(10), &[]);
+        let list = destinations(None, &CollectorStatus::default(), &settings, &[], None, true, Some(10), &[], &[]);
         assert_eq!(dest(&list, "geoip").0, "off", "the setting cannot switch on what FINSTATS_GEOIP_DB has taken over");
     }
 }
