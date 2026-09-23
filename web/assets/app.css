@@ -1401,6 +1401,16 @@ select.input:disabled { opacity: .6; }
 .job-meta { display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap; font-size: 12.5px; color: var(--text-muted); }
 .job-what { margin: 0; max-width: 78ch; }
 .job-cell { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+/* No estimate: three dots that fill up and start again, rather than a number finstats cannot stand behind.
+   One timeline shared by all three and `steps(1)`, so the cycle is . · .. · … in even thirds instead of a
+   fade; opacity rather than `content`, because animating `content` is a Chromium thing and this has to
+   work in Firefox too. The first dot never leaves, so the line never collapses to nothing. */
+.job-working { display: inline-flex; align-items: baseline; min-width: 22px; color: var(--text-muted); letter-spacing: 1.5px; }
+.dots span:nth-child(2) { animation: job-dot-2 1.5s steps(1) infinite; }
+.dots span:nth-child(3) { animation: job-dot-3 1.5s steps(1) infinite; }
+@keyframes job-dot-2 { 0% { opacity: 0 } 33%, 100% { opacity: 1 } }
+@keyframes job-dot-3 { 0% { opacity: 0 } 66%, 100% { opacity: 1 } }
+@media (prefers-reduced-motion: reduce) { .dots span { animation: none; opacity: 1; } }
 .jobs-table td { vertical-align: top; }
 /* The point of the table is the sentence under each name, so it wraps and is given a width to wrap in. */
 .jobs-table .job-cell { max-width: 60ch; }

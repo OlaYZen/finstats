@@ -192,9 +192,14 @@ export default function serverPage(ctx) {
     });
   }
 
-  /** "about 4 minutes left" — an estimate, and it says so. */
+  /** "about 4 minutes left" when finstats has watched the percentage move — and, when it has not, three
+      cycling dots instead of a number. A guess put where an estimate goes reads exactly like an estimate. */
   function leftText(job) {
-    if (job.eta_s == null) return h('span', { class: 'muted' }, job.last_duration_s ? 'taking longer than last time' : 'no estimate yet');
+    if (job.eta_s == null) {
+      return h('span', { class: 'job-working' },
+        h('span', { class: 'dots', 'aria-hidden': 'true' }, h('span', null, '.'), h('span', null, '.'), h('span', null, '.')),
+        h('span', { class: 'sr-only' }, 'Working; no estimate yet'));
+    }
     if (job.eta_s <= 5) return h('span', null, 'finishing');
     return h('span', null, 'about ', h('strong', null, duration(job.eta_s)), ' left');
   }

@@ -104,16 +104,18 @@ fn fallback(description: Option<&str>) -> String {
 
 // ---------------------------------------------------------------- how long is left
 
-/// What is left of a run, in seconds.
+/// What is left of a run, in seconds — **only when it has been measured**. The rate is taken against the
+/// most recent reading far enough back to say anything (at least `MIN_GAIN` over `MIN_WINDOW_S`, within
+/// `WINDOW_S`), so a job that speeds up or slows down is described by the pace it has now rather than the
+/// one it averaged, and a job creeping a percent every few minutes is still measurable.
 ///
-/// Two ways, in order. **The rate it has actually been moving at** while finstats watched (at least
-/// `MIN_GAIN` over `MIN_WINDOW_S`), measured over a recent window rather than the whole run, so a job
-/// that sped up or slowed down is believed rather than averaged away. Failing that, **how long the last
-/// run took**, applied to the fraction that is left — *minus the time the percentage has already been
-/// standing still*, because an estimate that does not age is what makes a stuck job read "about 2
-/// minutes left" for a quarter of an hour. When that borrowed time runs out there is nothing honest left
-/// to say, and this answers `None`.
-pub fn eta_s(progress: f64, gained: f64, over_s: i64, last_duration_s: Option<i64>, stalled_s: i64) -> Option<i64> {
+/// `None` means finstats has not seen the percentage move and has nothing to work from. There is a
+/// tempting number to put there — how long the last run took, applied to the fraction that is left — and
+/// it is a guess: it stands still while the job does, it knows nothing about how much of this run has
+/// already happened, and on the screen it is indistinguishable from an estimate that was earned. So it is
+/// not offered. The page says it does not know, and `last_duration_s` is shown beside it for anyone who
+/// wants to judge for themselves.
+pub fn eta_s(progress: f64, gained: f64, over_s: i64) -> Option<i64> {
     const MAX_ETA_S: i64 = 30 * 86_400;
     let left = (100.0 - progress.clamp(0.0, 100.0)).max(0.0);
     if left < 0.05 {
@@ -123,9 +125,7 @@ pub fn eta_s(progress: f64, gained: f64, over_s: i64, last_duration_s: Option<i6
         let per_s = gained / over_s as f64;
         return Some(((left / per_s).round() as i64).clamp(0, MAX_ETA_S));
     }
-    let borrowed = last_duration_s.filter(|d| *d > 0)? ;
-    let rest = ((left / 100.0) * borrowed as f64).round() as i64 - stalled_s.max(0);
-    (rest > 0).then(|| rest.clamp(0, MAX_ETA_S))
+    None
 }
 
 // ---------------------------------------------------------------- when it runs
@@ -284,7 +284,7 @@ fn job_json(t: &Value, watch: &mut Watch, now: i64) -> Value {
             let run = watch.note(id, p, now);
             let (gained, over_s) = run.measured();
             let (first_at, stalled) = (run.first_at, now - run.changed_at);
-            (eta_s(p, gained, over_s, last_duration_s, stalled), Some(first_at), Some(stalled.max(0)))
+            (eta_s(p, gained, over_s), Some(first_at), Some(stalled.max(0)))
         }
         None => (None, None, None),
     };
@@ -375,28 +375,22 @@ mod tests {
     #[test]
     fn what_is_left_comes_from_the_rate_it_has_actually_been_moving_at() {
         // Ten percent in twenty seconds, nine tenths to go: three minutes.
-        assert_eq!(eta_s(10.0, 10.0, 20, None, 0), Some(180));
-        // Nothing measured yet: how long it took last time, for the part that is left.
-        assert_eq!(eta_s(25.0, 0.0, 2, Some(400), 0), Some(300));
-        assert_eq!(eta_s(0.0, 0.0, 0, None, 0), None, "nothing to go on is said, not guessed");
-        assert_eq!(eta_s(100.0, 0.0, 0, None, 0), Some(0));
-        // A window too short to believe falls back rather than extrapolating from noise.
-        assert_eq!(eta_s(50.0, 0.4, 3, Some(600), 0), Some(300));
+        assert_eq!(eta_s(10.0, 10.0, 20), Some(180));
+        assert_eq!(eta_s(100.0, 0.0, 0), Some(0));
     }
 
     #[test]
-    fn an_estimate_cannot_stand_still_while_the_job_does() {
-        // The fault this was written for: a percentage that does not move left "about 2 minutes" on the
-        // screen for a quarter of an hour, because the estimate was worked out afresh from the last run
-        // every time and never noticed how long it had been saying it.
-        let same = |stalled| eta_s(90.0, 0.0, stalled, Some(1_200), stalled);
-        assert_eq!(same(0), Some(120));
-        assert_eq!(same(30), Some(90), "half a minute of standing still is half a minute less to wait");
-        assert_eq!(same(119), Some(1));
-        assert_eq!(same(120), None, "the borrowed time ran out: there is nothing honest left to say");
-        assert_eq!(same(600), None);
-        // A run that is moving is never affected by it, because the rate is measured and believed first.
-        assert_eq!(eta_s(90.0, 5.0, 50, Some(1_200), 50), Some(100));
+    fn a_number_is_only_ever_shown_when_it_was_measured() {
+        // The fault this was written for: a percentage that does not move left "about 2 minutes left" on
+        // the screen for a quarter of an hour. There was a number to show — the last run's duration for
+        // the fraction that is left — and it was a guess that stood still while the job did. Nothing that
+        // was not measured is offered now, however tempting it looks.
+        assert_eq!(eta_s(90.0, 0.0, 600), None, "ten minutes of watching a percentage that did not move");
+        assert_eq!(eta_s(25.0, 0.0, 2), None, "nothing seen yet is nothing to say");
+        assert_eq!(eta_s(50.0, 0.4, 3), None, "a window too short to believe is not believed");
+        assert_eq!(eta_s(50.0, 0.4, 900), None, "nor is a stretch too small to measure over any length of time");
+        // …and the moment there is something to measure, there is a number again.
+        assert_eq!(eta_s(50.0, 0.5, 5), Some(500));
     }
 
     #[test]
@@ -419,7 +413,7 @@ mod tests {
         let run = w.note("a", 30.0, 140);
         let (gained, over_s) = run.measured();
         assert_eq!((gained, over_s, run.first_at, run.changed_at), (20.0, 40, 100, 140));
-        assert_eq!(eta_s(30.0, gained, over_s, None, 0), Some(140));
+        assert_eq!(eta_s(30.0, gained, over_s), Some(140));
 
         // Standing still: the window still spans the same seconds, and `changed_at` stops moving.
         let run = w.note("a", 30.0, 200);
@@ -456,6 +450,6 @@ mod tests {
         }
         let (gained, over_s) = slow.runs["b"].measured();
         assert!(gained >= MIN_GAIN && over_s >= MIN_WINDOW_S, "a slow job cannot be measured at all: {gained}% over {over_s}s");
-        assert_eq!(eta_s(9.0, gained, over_s, None, 0), Some(27_300), "about seven and a half hours to go, at a percent every five minutes");
+        assert_eq!(eta_s(9.0, gained, over_s), Some(27_300), "about seven and a half hours to go, at a percent every five minutes");
     }
 }
