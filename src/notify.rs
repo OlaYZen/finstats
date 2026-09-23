@@ -582,13 +582,32 @@ fn daily(prefix: &str, what: &str) -> String {
     format!("notify:{prefix}:{what}:{}", db::now() / 86_400)
 }
 
+/// What a background job is called, for somebody who never reads the log. The Tasks card in Settings
+/// says the same things in the same words.
+fn task_label(id: &str) -> &str {
+    match id {
+        "sync_users" => "Reading the users",
+        "sync_libraries" => "Reading the library",
+        "sync_events" => "Reading the server log",
+        "sync_server" => "Reading the server details",
+        "sync_userdata" => "Reading watched and favourites",
+        "sync_upcoming" => "Reading the Sonarr and Radarr calendars",
+        "sync_requests" => "Reading the requests from Seerr",
+        "sync_grabs" => "Reading the download history",
+        "import" => "The Jellystat import",
+        "backup" => "Writing a backup",
+        "geoip" => "The geolocation database",
+        other => other,
+    }
+}
+
 /// A background job ended in an error.
 pub async fn task_failed(app: &App, id: &str, error: &str) {
     let event = Event::new(
         Kind::TaskFailed,
         daily("task", id),
-        format!("{id} failed"),
-        format!("The {id} job ended in an error. finstats will try again on its own schedule."),
+        format!("{} failed", task_label(id)),
+        format!("{} ended in an error. finstats will try again on its own schedule.", task_label(id)),
     )
     .field("Job", id.to_string())
     .field("Error", error.chars().take(400).collect::<String>())
