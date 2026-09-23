@@ -42,7 +42,9 @@ Knowing this saves you from building something that cannot be merged.
 - **Private.** No telemetry, no accounts, nothing loaded from other hosts. By default the only request it makes
   to anything but your Jellyfin is an anonymous "what is my IP" lookup, made once and switchable off; the one other, downloading
   a geolocation database for the Security map, stays off until the owner asks for it, and addresses are always looked up
-  locally. Settings → Outbound connections lists every destination, so a new one cannot be added quietly: it shows up there. The README and
+  locally. Notifications are the one thing finstats sends rather than reads, and only to destinations the owner enters, only the
+  events ticked for each, and without addresses unless that destination asked for them. Settings → Outbound connections lists every
+  destination, so a new one cannot be added quietly: it shows up there. The README and
   [`docs/security.md`](docs/security.md) state these things as promises; a change that would make one of
   those sentences untrue has to change the sentence too, and will be looked at very hard.
 - **No front-end build step.** The web UI is plain ES modules with no dependencies. Please do not add a

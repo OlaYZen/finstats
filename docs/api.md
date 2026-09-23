@@ -194,7 +194,8 @@ Both send long-lived `Cache-Control`. Use as `<img loading="lazy">` with an `one
  "follow_jellyfin_scan": true,     // read the library when Jellyfin's own scan task finishes, not on a timer
  "sync_interval_h": 6,             // library read interval, 1..168 — only used when not following Jellyfin's scan
  "merge_window_s": 600,            // resume the same play if it restarts within this window
- "min_play_s": 0}                  // stats ignore plays shorter than this
+ "min_play_s": 0,                  // stats ignore plays shorter than this
+ "public_url": ""}                 // where finstats answers from outside; only used to put a link in notifications (administrators only, like the access keys)
 ```
 `PUT /api/settings` — partial object of the mutable keys above (not `jellyfin_url`/`server_*`) → full settings.
 
@@ -389,7 +390,7 @@ What each one gates, server-side:
 
 `GET /api/permissions`
 ```jsonc
-{"available": [{"key": "sign_in" | "see_everyone" | "see_network" | "see_server" | "manage", "label": "…", "description": "…"}],
+{"available": [{"key": "sign_in" | "see_everyone" | "see_network" | "see_server" | "see_downloads" | "notify" | "manage", "label": "…", "description": "…"}],
  "defaults": ["sign_in"],                  // what every non-admin has; "sign_in" here = sign-in is open to everyone
  "users": [{"id","name","is_admin","is_disabled","has_image","permissions": ["see_everyone"]}]}   // own grants only, defaults not included
 ```
@@ -921,6 +922,93 @@ nothing is recorded for it. Hosts (with ports) only — never a path, never a ke
      "error": "…" | null},
     {"id": "public_ip",  "hosts": ["checkip.amazonaws.com", "…"], "state": "on", …},
     {"id": "geoip",      "hosts": ["download.db-ip.com"], "state": "off", …},
-    {"id": "service:3",  "what": "Radarr 4K (Radarr)", "hosts": ["nas:7878"], "state": "on", …} ],
+    {"id": "service:3",  "what": "Radarr 4K (Radarr)", "hosts": ["nas:7878"], "state": "on", …},
+    {"id": "notify:1",   "what": "Household (Discord)", "hosts": ["discord.com"], "state": "on", …} ],   // v1.6: the ones finstats *sends* to
   "reachable": 2, "total": 4 }
 ```
+
+
+---
+
+# v1.6 — Notifications
+
+Where what finstats finds is sent. A destination belongs either to the **server** (Jellyfin administrators) or to **one
+person** (anybody with `notify`), and finstats sends nothing at all until one exists: no destination, no request.
+
+Every route here needs `notify`, which administrators always have. A person sees and may touch only their own
+destinations; an administrator sees every one. **A destination's address is never given back**: a Discord webhook URL
+carries its own token, so the answer holds the host and a hint (`shown`), and editing without a new `url` keeps the
+stored one, the way a service's API key does.
+
+`GET /api/notifications`
+```jsonc
+{ "targets": [
+    {"id": 3, "kind": "webhook" | "discord" | "ntfy" | "gotify", "label": "Discord", "name": "Household",
+     "shown": "discord.com/…",            // host, and the ntfy topic where there is one — never the URL
+     "scope": "server" | "me", "owner_name": "bob" | null,
+     "topic": "finstats-abc" | null, "has_secret": true,
+     "events": ["travel", "new_items"],   // the kinds it asked for
+     "with_addresses": false,             // IP addresses and coordinates only when this is on
+     "min_severity": "info" | "warn" | "alert",
+     "accept_invalid_certs": false, "enabled": true, "created_at": 0,
+     "last_ok_at": 0 | null, "last_error": "…" | null} ],
+  "catalogue": {
+    "events": [{"key": "travel", "label": "Impossible travel", "what": "…", "severity": "alert",
+                "group": "security" | "housekeeping" | "library" | "playback", "group_label": "Security",
+                "personal": true}],       // true = it is about a person, so a personal destination needs the right to see it
+    "channels": [{"key": "ntfy", "label": "ntfy", "what": "…", "example": "https://ntfy.sh",
+                  "needs_topic": true, "secret_label": "Access token (optional)" | null, "secret_required": false}],
+    "severities": ["info", "warn", "alert"],
+    "groups": [{"key": "security", "label": "Security"}] },
+  "public_url": "https://finstats.example",   // empty: messages carry no link
+  "can_add_server": true, "max_own": 5 }
+```
+
+`POST /api/notifications/targets` → `{"target": {…}}`
+```jsonc
+{"scope": "server" | "me",          // "server" needs to be an administrator; default: "server" for them, "me" otherwise
+ "kind": "discord", "name": "Household",
+ "url": "https://discord.com/api/webhooks/…",   // required on create; a plain webhook may carry a query, the others may not
+ "secret": "…",                     // Gotify's application token; optional Bearer for a webhook or ntfy
+ "topic": "finstats-abc",           // ntfy only
+ "events": ["travel", "new_country", "request_available"],
+ "with_addresses": false, "min_severity": "info", "accept_invalid_certs": false, "enabled": true}
+```
+`PUT /api/notifications/targets/{id}` — the same object, every key optional; what is left out keeps what is stored, and
+`kind` and `scope` never change. `DELETE /api/notifications/targets/{id}` → `{"ok": true}`.
+
+`POST /api/notifications/targets/{id}/test` → `{"ok": true}` or `{"ok": false, "error": "Gotify refused the token"}` —
+one message down the same path as every other, so a test that arrives proves the real thing works.
+
+`GET /api/notifications/history?limit=50` (max 200) — what has been sent lately. A person sees only what went to their own
+destinations.
+```jsonc
+{ "events": [
+    {"id": 91, "kind": "request_available", "label": "A request is watchable", "severity": "info", "at": 0,
+     "user_name": "alice" | null, "title": "Ready to watch: Winterline", "body": "…",
+     "historic": false,               // found more than six hours late: recorded, never sent
+     "deliveries": [{"target_id": 3, "target": "Household", "channel": "discord",
+                     "state": "queued" | "sent" | "failed", "attempts": 1, "sent_at": 0 | null, "error": null}]} ] }
+```
+
+**What goes out.** A webhook is posted this JSON; Discord gets an embed, ntfy and Gotify their own JSON (title in the body,
+never in a header, because a title is a film title):
+```jsonc
+{"event": "travel", "severity": "alert", "at": 0, "title": "Impossible travel: alice",
+ "body": "Oslo, Norway and London, United Kingdom, 1160 km apart, 40 minutes apart.",
+ "link": "https://finstats.example/security" | null,      // only when public_url is set
+ "user": "alice" | null,
+ "fields": [{"label": "Person", "value": "alice"}],       // addresses and places appear here only with with_addresses
+ "source": "finstats/1.6.0"}
+```
+
+**The rules the server keeps**, all of them tested:
+- an event is written once (deduped like a security alert) and delivered per destination, retried on its own clock
+  (30 s, 2 min, 10 min, 1 h, then given up on; a `Retry-After` is honoured), at most 20 messages a minute per destination;
+- nothing found more than six hours after it happened is ever sent, and no destination is sent anything that happened
+  before it existed — adding one cannot replay a year;
+- a personal destination carries exactly what its owner may see in the app: their own rows always, somebody else's play
+  or request needs `see_everyone`, somebody else's places need `see_network` as well, and the server's own business needs
+  `see_server`;
+- a personal destination's address must not resolve into a private or loopback range — checked when it is saved and again
+  before every send. An administrator's may point anywhere.

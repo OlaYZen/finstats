@@ -68,9 +68,26 @@ something at your address downloaded its public file. Leave it off and put a fil
 GeoLite2-City, or any other in that format; `FINSTATS_GEOIP_DB` names one elsewhere) and finstats asks nobody. The map is drawn
 from outlines bundled with finstats; no map tiles or map service are involved, so no coordinate ever leaves the browser.
 
-**Settings → Outbound connections** lists both of these, your Jellyfin, and every Sonarr, Radarr or Seerr you have connected: what each is
-for, whether it is switched on, and when it last answered. It is built from what finstats already keeps, so the list itself learns nothing;
-it exists so that the paragraphs above are something you can check rather than something you have to believe.
+**Notifications: the one thing finstats sends rather than reads.** Under **Settings → Notifications** you can give finstats somewhere to
+say what it finds — a webhook of your own, a Discord channel, an ntfy topic, a Gotify server. Until you add a destination, nothing is sent
+anywhere: no destination, no request. A destination is told only the kinds of event ticked for it, and nothing that happened before it
+existed, so adding one cannot replay a year of history at you.
+
+- **Addresses and places stay out of the message** unless you switch *Include IP addresses and places* on for that destination. Without it,
+  an impossible-travel message says "Oslo, Norway and London, United Kingdom" and never the addresses behind them. This is worth a thought
+  for a destination somebody else runs: a Discord webhook means Discord holds whatever the message says.
+- **A destination's address is a password.** A Discord webhook URL carries its own token, so finstats stores the address the way it stores an
+  API key: never shown again, never written to a log, never part of a backup, and never sent back to the browser — the page shows the host.
+- **Who may add one.** Only a Jellyfin administrator can add a destination for the server. Anybody else needs the *Be sent notifications*
+  permission, their destination may only point at a public address (not something inside your network), and it is sent only what that person
+  can already see in finstats: their own requests and alerts, somebody else's plays only if they may see everyone's activity, addresses only
+  if they may see network details.
+- **No redirect is followed**, for the same reason as everywhere else: a token must not travel to wherever a redirect points.
+
+**Settings → Outbound connections** lists both of the outside requests above, your Jellyfin, every Sonarr, Radarr or Seerr you have connected,
+and every notification destination: what each is for, whether it is switched on, and when it last answered or last took a message. It is built
+from what finstats already keeps, so the list itself learns nothing; it exists so that the paragraphs above are something you can check rather
+than something you have to believe.
 
 **What the Security page is, and is not.** A place is the centre of a city or of an ISP's region, never a household, and it can be
 hundreds of kilometres off; a VPN or a phone on mobile data looks like a trip. Alerts (*impossible travel*, *new country*) are a
@@ -78,7 +95,7 @@ reason to look, not proof. The page needs both *see network details* and *see ev
 
 **The services you connect.** Under **Settings → Connections** a Jellyfin administrator can point finstats at Sonarr, Radarr and Seerr. These are
 requests to addresses *you* enter, normally on your own network; finstats contacts nothing on its own account, and the two outside requests above
-stay the only ones. Your download client is not connected to finstats at all: Sonarr and Radarr already talk to it, and finstats reads their
+stay the only ones it makes by itself. (Notification destinations are addresses you enter too — see below.) Your download client is not connected to finstats at all: Sonarr and Radarr already talk to it, and finstats reads their
 queues instead.
 - **Read-only.** finstats sends `GET` to these services and nothing else — there is no code in it that could approve a request, start a search,
   or add, pause or remove a download.
