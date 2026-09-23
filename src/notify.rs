@@ -463,6 +463,13 @@ pub struct Fanout {
 }
 
 impl Fanout {
+    /// Is there any destination at all that would want this? An install with no destinations (most of
+    /// them) must not be writing a row every time a play starts, so nothing is recorded that nothing
+    /// wants. A destination added later is only ever told about what happens after it exists anyway.
+    pub fn anyone_wants(&self, kind: Kind) -> bool {
+        self.targets.iter().any(|t| t.enabled && t.wants(kind))
+    }
+
     pub fn of(conn: &Connection, app: &App) -> Result<Fanout> {
         Fanout::build(conn, all(app), &app.settings())
     }
@@ -511,6 +518,9 @@ pub fn wanted_by(t: &Target, kind: Kind, severity: &str, at: i64, about: Option<
 /// Write an event down and queue it for every destination that wants it. `false` when it was already
 /// known — which is the normal answer, because most sources re-derive the same events every pass.
 pub fn raise_in(conn: &Connection, f: &Fanout, e: &Event) -> Result<bool> {
+    if !f.anyone_wants(e.kind) {
+        return Ok(false); // nobody is listening: nothing to write down
+    }
     let now = db::now();
     let historic = now - e.at > HISTORIC_S;
     let inserted = conn.prepare_cached(
@@ -541,6 +551,11 @@ pub fn raise_in(conn: &Connection, f: &Fanout, e: &Event) -> Result<bool> {
 /// The same, for the callers that are not already holding a connection. Never fails a caller: a
 /// notification that cannot be written is a line in the log, not a reason for the thing itself to fail.
 pub async fn raise(app: &App, e: Event) -> bool {
+    // Asked of memory before the database is touched at all: on an install with no destinations this is
+    // the whole cost of a play beginning.
+    if !all(app).iter().any(|t| t.enabled && t.wants(e.kind)) {
+        return false;
+    }
     let app2 = app.clone();
     let done = app.db.call(move |c| {
         let f = Fanout::of(c, &app2)?;
@@ -1358,6 +1373,24 @@ mod tests {
         let events: i64 = c.query_row("SELECT COUNT(*) FROM notify_events", [], |r| r.get(0)).unwrap();
         let queued: i64 = c.query_row("SELECT COUNT(*) FROM notify_deliveries WHERE state = 'queued'", [], |r| r.get(0)).unwrap();
         assert_eq!((events, queued), (1, 1), "one event, and only the destination that asked for it");
+    }
+
+    #[test]
+    fn nothing_is_written_down_that_nothing_is_listening_for() {
+        let c = conn();
+        let f = bus(&c, vec![target(1, None, &[Kind::NewItems])]);
+        let play = Event::new(Kind::PlayStarted, "notify:play:start:7", "alice started watching", "Big Buck Bunny").about("ua", "alice");
+        assert!(!raise_in(&c, &f, &play).unwrap(), "an install where nobody asked for plays must not write a row for every one");
+        eq_rows(&c, 0);
+        // The same event, once somebody is listening for it.
+        let f = bus(&c, vec![target(2, None, &[Kind::PlayStarted])]);
+        assert!(raise_in(&c, &f, &play).unwrap());
+        eq_rows(&c, 1);
+    }
+
+    fn eq_rows(c: &Connection, want: i64) {
+        let n: i64 = c.query_row("SELECT COUNT(*) FROM notify_events", [], |r| r.get(0)).unwrap();
+        assert_eq!(n, want, "{want} event row(s) expected");
     }
 
     #[test]
