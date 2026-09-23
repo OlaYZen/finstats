@@ -3,6 +3,7 @@ import { api, isAbort, uploadRaw } from '../api.js';
 import { isAdmin, state } from '../state.js';
 import { pageHeader, card, sk, toggle, setBusy, inlineError, errorState, facts, spinner, avatar } from '../components.js';
 import { connectionsPanel } from '../connections.js';
+import { notificationsPanel, mayNotify } from '../notifications.js';
 import { dataTable, plainTable } from '../tables.js';
 
 const SERVICE_TASKS = { sync_upcoming: 'upcoming' };   // task → the feature it belongs to
@@ -70,6 +71,7 @@ export default function settings(ctx) {
       card({ title: 'Collection', sub: 'How finstats gathers data from Jellyfin', body: collectSlot }),
       card({ title: 'Home network', sub: 'Which plays count as local and which as remote', body: networkSlot }),
       card({ title: 'Security', sub: 'Where addresses are, and what counts as impossible travel', body: securitySlot, id: 'security' }),
+      mayNotify() ? card({ title: 'Notifications', sub: 'Where what finstats finds is sent: a webhook, Discord, ntfy or Gotify', body: notificationsPanel(ctx), id: 'notifications' }) : null,
       isAdmin() ? card({ title: 'Outbound connections', sub: 'Everywhere finstats can reach, and whether it is switched on', body: outboundSlot, id: 'outbound' }) : null,
       card({ title: 'Tasks', body: tasksSlot }),
       isAdmin() ? card({ title: 'Backups', sub: 'Your history, settings and permissions in one file, to keep safe or to move to another finstats', body: backupsSlot, id: 'backups' }) : null,

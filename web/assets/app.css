@@ -1178,6 +1178,9 @@ a.chip-link:hover { border-color: var(--accent); color: var(--text); text-decora
 
 /* ------------------------------------------------------------ settings: home network */
 .net-stack { display: grid; gap: 18px; }
+/* A grid item will not shrink below its content unless it is allowed to: without this a table in its own
+   scroll box widens the card instead of scrolling inside it. */
+.net-stack > * { min-width: 0; }
 .net-stack > .field { margin: 0; }
 .home-ips { list-style: none; display: grid; gap: 6px; margin: 6px 0 0; padding: 0; font-size: 13px; }
 .home-ips li { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; }
@@ -1389,6 +1392,21 @@ select.input { appearance: none; padding-right: 30px; background-image: linear-g
 select.input:disabled { opacity: .6; }
 .conn-form, .conn-form .form-grid > * { min-width: 0; }
 .conn-form .input { width: 100%; max-width: 100%; }
+
+/* ---------------------------------------------------------------- settings: notifications */
+.notify-public { display: flex; align-items: flex-end; gap: 12px; flex-wrap: wrap; }
+.notify-public .field { flex: 1 1 320px; min-width: 0; }
+.notify-events { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 14px 24px; }
+.notify-group { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.notify-group .section-label { margin: 0; }
+.notify-event { align-items: flex-start; gap: 10px; }
+.notify-event input { margin-top: 2px; flex: none; }
+.notify-event .help { margin: 1px 0 0; }
+.notify-event-label { display: block; }
+.notify-what { display: flex; flex-direction: column; gap: 2px; min-width: 0; max-width: 520px; }
+.notify-sent { min-width: 190px; }
+.notify-delivery + .notify-delivery { margin-top: 4px; }
+.notify-delivery .sev { white-space: normal; align-items: flex-start; }
 
 /* ---------------------------------------------------------------- pipeline: the agenda of what is coming */
 .card-agenda[hidden] { display: none; }

@@ -48,6 +48,11 @@ const MAX_OWN_TARGETS: usize = 5;
 const PER_MINUTE: usize = 20;
 /// How many due deliveries one pass takes on.
 const BATCH: usize = 20;
+/// How long the history of what was sent is kept. Long enough to answer "did I hear about that?", and
+/// short enough that a server where every play is announced does not keep a row for each one for ever.
+/// Nothing depends on an old row: every source either re-derives only the last few hours or raises an
+/// event once, when the thing itself is first written down.
+const KEEP_S: i64 = 30 * 86_400;
 
 // ---------------------------------------------------------------- the catalogue
 
@@ -758,8 +763,16 @@ async fn drain(app: &App, used: &mut HashMap<i64, (i64, usize)>) {
 /// retry is due. An install with no destinations never wakes at all.
 pub async fn run(app: App) {
     let mut used: HashMap<i64, (i64, usize)> = HashMap::new();
+    let mut pruned_at = 0i64;
     loop {
         drain(&app, &mut used).await;
+        if db::now() - pruned_at >= 3_600 {
+            pruned_at = db::now();
+            let cutoff = pruned_at - KEEP_S;
+            if let Err(e) = app.db.call(move |c| Ok(c.execute("DELETE FROM notify_events WHERE created_at < ?1", [cutoff])?)).await {
+                tracing::debug!("could not thin out the notification history: {e:#}");
+            }
+        }
         let next = app.db.call(|c| next_due_at(c)).await.ok().flatten();
         let wait = match next {
             Some(at) => (at - db::now()).clamp(1, 300) as u64,

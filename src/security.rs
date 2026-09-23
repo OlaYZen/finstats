@@ -199,6 +199,15 @@ fn human_gap(seconds: i64) -> String {
     }
 }
 
+/// How long a run of things took: "under a minute", "12 minutes".
+fn human_span(seconds: i64) -> String {
+    match seconds.max(0) {
+        0..=60 => "under a minute".into(),
+        s @ 61..=5_400 => format!("{} minutes", (s as f64 / 60.0).round() as i64),
+        s => format!("{} hours", (s as f64 / 3600.0).round() as i64),
+    }
+}
+
 fn place_of(side: &Value) -> String {
     side["place"].as_str().unwrap_or("an unknown place").to_string()
 }
@@ -310,7 +319,7 @@ pub fn scan_sign_ins(conn: &Connection, bus: &Fanout) -> Result<usize> {
             Kind::FailedSignIns,
             format!("notify:signins:{}:{}", b.who, b.id),
             format!("{} failed sign-ins for {}", b.count, b.who),
-            format!("{} attempts within {}.", b.count, human_gap(b.at - b.first_at).replace(" apart", "")),
+            format!("{} attempts in {}.", b.count, human_span(b.at - b.first_at)),
         )
         .at(b.at)
         .severity(if b.count >= BURST_MIN * 4 { notify::ALERT } else { notify::WARN })
