@@ -104,15 +104,16 @@ fn fallback(description: Option<&str>) -> String {
 
 // ---------------------------------------------------------------- how long is left
 
-/// What is left of a run, in seconds: from the rate the percentage has actually been moving at while
-/// finstats watched, and failing that from how long the last run took. `None` when neither is known.
+/// What is left of a run, in seconds.
 ///
-/// Jellyfin gives a percentage and no start time, so there is nothing else to work from — and a rate
-/// measured over a few seconds of a job that has just started is a guess, which is why a run has to have
-/// moved `MIN_GAIN` over `MIN_WINDOW_S` before it is believed.
-pub fn eta_s(progress: f64, gained: f64, over_s: i64, last_duration_s: Option<i64>) -> Option<i64> {
-    const MIN_GAIN: f64 = 0.5;
-    const MIN_WINDOW_S: i64 = 5;
+/// Two ways, in order. **The rate it has actually been moving at** while finstats watched (at least
+/// `MIN_GAIN` over `MIN_WINDOW_S`), measured over a recent window rather than the whole run, so a job
+/// that sped up or slowed down is believed rather than averaged away. Failing that, **how long the last
+/// run took**, applied to the fraction that is left — *minus the time the percentage has already been
+/// standing still*, because an estimate that does not age is what makes a stuck job read "about 2
+/// minutes left" for a quarter of an hour. When that borrowed time runs out there is nothing honest left
+/// to say, and this answers `None`.
+pub fn eta_s(progress: f64, gained: f64, over_s: i64, last_duration_s: Option<i64>, stalled_s: i64) -> Option<i64> {
     const MAX_ETA_S: i64 = 30 * 86_400;
     let left = (100.0 - progress.clamp(0.0, 100.0)).max(0.0);
     if left < 0.05 {
@@ -122,7 +123,9 @@ pub fn eta_s(progress: f64, gained: f64, over_s: i64, last_duration_s: Option<i6
         let per_s = gained / over_s as f64;
         return Some(((left / per_s).round() as i64).clamp(0, MAX_ETA_S));
     }
-    last_duration_s.filter(|d| *d > 0).map(|d| (((left / 100.0) * d as f64).round() as i64).clamp(0, MAX_ETA_S))
+    let borrowed = last_duration_s.filter(|d| *d > 0)? ;
+    let rest = ((left / 100.0) * borrowed as f64).round() as i64 - stalled_s.max(0);
+    (rest > 0).then(|| rest.clamp(0, MAX_ETA_S))
 }
 
 // ---------------------------------------------------------------- when it runs
@@ -180,13 +183,61 @@ pub fn schedule(triggers: &[Value], last_run_at: Option<i64>) -> (Vec<String>, O
 
 // ---------------------------------------------------------------- watching a run
 
-/// The percentages finstats has seen of one run, so that a rate can be worked out from them.
-#[derive(Clone, Copy)]
-pub struct Seen {
+/// What finstats has seen of one run. Jellyfin reports a percentage and never says when the run began,
+/// so this is the only clock there is: the recent percentages, and when the last one actually changed.
+pub struct Run {
+    /// When finstats first saw this run — which may be long after Jellyfin started it.
     pub first_at: i64,
-    pub first_progress: f64,
-    pub at: i64,
-    pub progress: f64,
+    /// When the percentage last moved. Equal to `first_at` until it does.
+    pub changed_at: i64,
+    /// (when, percentage), oldest first, kept for at most `WINDOW_S`.
+    samples: Vec<(i64, f64)>,
+}
+
+/// How far back a rate is measured. Long enough for a job that moves a percent every few minutes to be
+/// measurable at all, short enough that an hour-old rate is not used to describe what is happening now.
+const WINDOW_S: i64 = 900;
+/// A percentage that moves by less than this has not moved: Jellyfin's numbers jitter in the last digits.
+const MOVED: f64 = 0.01;
+/// Movement worth measuring a rate from, and the shortest stretch it may be measured over.
+const MIN_GAIN: f64 = 0.5;
+const MIN_WINDOW_S: i64 = 5;
+
+impl Run {
+    fn new(at: i64, progress: f64) -> Run {
+        Run { first_at: at, changed_at: at, samples: vec![(at, progress)] }
+    }
+
+    fn note(&mut self, at: i64, progress: f64) {
+        if self.samples.last().is_none_or(|(_, p)| (progress - p).abs() > MOVED) {
+            self.changed_at = at;
+        }
+        self.samples.push((at, progress));
+        // Only the recent past decides the rate, but never fewer than two points to measure between.
+        let cutoff = at - WINDOW_S;
+        let keep = self.samples.iter().position(|(t, _)| *t >= cutoff).unwrap_or(0);
+        if keep > 0 && self.samples.len() - keep >= 2 {
+            self.samples.drain(..keep);
+        }
+    }
+
+    /// (how much the percentage gained, over how many seconds), measured against the *most recent* point
+    /// far enough back to say anything: a job moving quickly is described by the last few seconds, a slow
+    /// one by as much of the window as it takes to see it move at all. Averaging over the whole run
+    /// instead would describe a job that has changed pace by the pace it no longer has.
+    fn measured(&self) -> (f64, i64) {
+        let Some(&(t1, p1)) = self.samples.last() else { return (0.0, 0) };
+        let anchor = self.samples.iter().rev().find(|(t, p)| p1 - p >= MIN_GAIN && t1 - t >= MIN_WINDOW_S);
+        match anchor.or_else(|| self.samples.first()) {
+            Some(&(t0, p0)) => (p1 - p0, t1 - t0),
+            None => (0.0, 0),
+        }
+    }
+
+    /// A run whose percentage went backwards is the next run, not this one running in reverse.
+    fn restarted(&self, progress: f64) -> bool {
+        self.samples.last().is_some_and(|(_, p)| progress + MOVED < *p)
+    }
 }
 
 /// What finstats remembers between two reads: the last answer, and how each running job has moved.
@@ -194,25 +245,23 @@ pub struct Seen {
 pub struct Watch {
     pub fetched_at: i64,
     pub answer: Option<Value>,
-    seen: HashMap<String, Seen>,
+    runs: HashMap<String, Run>,
 }
 
 impl Watch {
-    /// Note where a running job is now, and say what has been seen of this run so far.
-    fn note(&mut self, id: &str, progress: f64, now: i64) -> Seen {
-        let entry = self.seen.entry(id.to_string()).or_insert(Seen { first_at: now, first_progress: progress, at: now, progress });
-        // A percentage that went backwards is a new run: start watching it again.
-        if progress + 0.01 < entry.progress {
-            *entry = Seen { first_at: now, first_progress: progress, at: now, progress };
+    /// Note where a running job is now, and hand back what has been seen of this run so far.
+    fn note(&mut self, id: &str, progress: f64, now: i64) -> &Run {
+        let run = self.runs.entry(id.to_string()).or_insert_with(|| Run::new(now, progress));
+        if run.restarted(progress) {
+            *run = Run::new(now, progress);
         } else {
-            entry.at = now;
-            entry.progress = progress;
+            run.note(now, progress);
         }
-        *entry
+        run
     }
 
     fn forget(&mut self, running: &[String]) {
-        self.seen.retain(|id, _| running.iter().any(|r| r == id));
+        self.runs.retain(|id, _| running.iter().any(|r| r == id));
     }
 }
 
@@ -230,12 +279,14 @@ fn job_json(t: &Value, watch: &mut Watch, now: i64) -> Value {
     let (schedule_words, next_at) = schedule(t["Triggers"].as_array().map(Vec::as_slice).unwrap_or_default(), ended.or(started));
     let progress = running.then(|| t["CurrentProgressPercentage"].as_f64().unwrap_or(0.0).clamp(0.0, 100.0));
 
-    let (eta, watched_since) = match progress {
+    let (eta, watched_since, unchanged_for) = match progress {
         Some(p) => {
-            let seen = watch.note(id, p, now);
-            (eta_s(p, seen.progress - seen.first_progress, seen.at - seen.first_at, last_duration_s), Some(seen.first_at))
+            let run = watch.note(id, p, now);
+            let (gained, over_s) = run.measured();
+            let (first_at, stalled) = (run.first_at, now - run.changed_at);
+            (eta_s(p, gained, over_s, last_duration_s, stalled), Some(first_at), Some(stalled.max(0)))
         }
-        None => (None, None),
+        None => (None, None, None),
     };
 
     json!({
@@ -245,6 +296,8 @@ fn job_json(t: &Value, watch: &mut Watch, now: i64) -> Value {
         "eta_s": eta,
         // When finstats first saw this run. It may have been going for hours before anybody opened the page.
         "watching_since": watched_since,
+        // How long the percentage has been standing still. A slow job is not a broken page.
+        "unchanged_for_s": unchanged_for,
         "what": explain(key, name).map(str::to_string).unwrap_or_else(|| fallback(t["Description"].as_str())),
         "known": explain(key, name).is_some(),
         "description": t["Description"],
@@ -322,13 +375,28 @@ mod tests {
     #[test]
     fn what_is_left_comes_from_the_rate_it_has_actually_been_moving_at() {
         // Ten percent in twenty seconds, nine tenths to go: three minutes.
-        assert_eq!(eta_s(10.0, 10.0, 20, None), Some(180));
+        assert_eq!(eta_s(10.0, 10.0, 20, None, 0), Some(180));
         // Nothing measured yet: how long it took last time, for the part that is left.
-        assert_eq!(eta_s(25.0, 0.0, 2, Some(400)), Some(300));
-        assert_eq!(eta_s(0.0, 0.0, 0, None), None, "nothing to go on is said, not guessed");
-        assert_eq!(eta_s(100.0, 0.0, 0, None), Some(0));
+        assert_eq!(eta_s(25.0, 0.0, 2, Some(400), 0), Some(300));
+        assert_eq!(eta_s(0.0, 0.0, 0, None, 0), None, "nothing to go on is said, not guessed");
+        assert_eq!(eta_s(100.0, 0.0, 0, None, 0), Some(0));
         // A window too short to believe falls back rather than extrapolating from noise.
-        assert_eq!(eta_s(50.0, 0.4, 3, Some(600)), Some(300));
+        assert_eq!(eta_s(50.0, 0.4, 3, Some(600), 0), Some(300));
+    }
+
+    #[test]
+    fn an_estimate_cannot_stand_still_while_the_job_does() {
+        // The fault this was written for: a percentage that does not move left "about 2 minutes" on the
+        // screen for a quarter of an hour, because the estimate was worked out afresh from the last run
+        // every time and never noticed how long it had been saying it.
+        let same = |stalled| eta_s(90.0, 0.0, stalled, Some(1_200), stalled);
+        assert_eq!(same(0), Some(120));
+        assert_eq!(same(30), Some(90), "half a minute of standing still is half a minute less to wait");
+        assert_eq!(same(119), Some(1));
+        assert_eq!(same(120), None, "the borrowed time ran out: there is nothing honest left to say");
+        assert_eq!(same(600), None);
+        // A run that is moving is never affected by it, because the rate is measured and believed first.
+        assert_eq!(eta_s(90.0, 5.0, 50, Some(1_200), 50), Some(100));
     }
 
     #[test]
@@ -348,13 +416,46 @@ mod tests {
     fn a_run_is_timed_by_watching_it_and_a_restart_starts_the_watch_again() {
         let mut w = Watch::default();
         assert_eq!(w.note("a", 10.0, 100).first_at, 100);
-        let seen = w.note("a", 30.0, 140);
-        assert_eq!((seen.first_progress, seen.progress, seen.first_at, seen.at), (10.0, 30.0, 100, 140));
-        assert_eq!(eta_s(30.0, seen.progress - seen.first_progress, seen.at - seen.first_at, None), Some(140));
+        let run = w.note("a", 30.0, 140);
+        let (gained, over_s) = run.measured();
+        assert_eq!((gained, over_s, run.first_at, run.changed_at), (20.0, 40, 100, 140));
+        assert_eq!(eta_s(30.0, gained, over_s, None, 0), Some(140));
+
+        // Standing still: the window still spans the same seconds, and `changed_at` stops moving.
+        let run = w.note("a", 30.0, 200);
+        assert_eq!((run.changed_at, run.measured()), (140, (20.0, 100)));
+
         // The percentage went back to the beginning: that is the next run, not the same one going backwards.
-        let seen = w.note("a", 2.0, 200);
-        assert_eq!((seen.first_at, seen.first_progress), (200, 2.0));
+        let run = w.note("a", 2.0, 260);
+        assert_eq!((run.first_at, run.changed_at, run.measured()), (260, 260, (0.0, 0)));
+
         w.forget(&["b".to_string()]);
         assert_eq!(w.note("a", 5.0, 300).first_at, 300, "a job that stopped is not remembered");
+    }
+
+    #[test]
+    fn the_rate_is_measured_over_the_recent_past_not_the_whole_run() {
+        let mut w = Watch::default();
+        // An hour of one percent a minute, then three minutes of ten times that.
+        for m in 0..60 {
+            w.note("a", m as f64, m * 60);
+        }
+        for m in 1..=3 {
+            w.note("a", 60.0 + (m as f64) * 10.0, 3_600 + m * 60);
+        }
+        let (gained, over_s) = w.runs["a"].measured();
+        let per_min = gained / (over_s as f64 / 60.0);
+        assert!(per_min > 8.0, "the hour that came before is still being averaged in: {per_min:.2}%/min");
+        assert!(over_s <= WINDOW_S, "the window is not allowed to grow for ever: {over_s}s");
+
+        // …and a job creeping a percent every five minutes is still measurable, which is why the window
+        // reaches back as far as it does.
+        let mut slow = Watch::default();
+        for m in 0..10 {
+            slow.note("b", m as f64, m * 300);
+        }
+        let (gained, over_s) = slow.runs["b"].measured();
+        assert!(gained >= MIN_GAIN && over_s >= MIN_WINDOW_S, "a slow job cannot be measured at all: {gained}% over {over_s}s");
+        assert_eq!(eta_s(9.0, gained, over_s, None, 0), Some(27_300), "about seven and a half hours to go, at a percent every five minutes");
     }
 }

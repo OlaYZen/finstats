@@ -194,9 +194,25 @@ export default function serverPage(ctx) {
 
   /** "about 4 minutes left" — an estimate, and it says so. */
   function leftText(job) {
-    if (job.eta_s == null) return h('span', { class: 'muted' }, 'no estimate yet');
+    if (job.eta_s == null) return h('span', { class: 'muted' }, job.last_duration_s ? 'taking longer than last time' : 'no estimate yet');
     if (job.eta_s <= 5) return h('span', null, 'finishing');
     return h('span', null, 'about ', h('strong', null, duration(job.eta_s)), ' left');
+  }
+
+  /** A percentage that has not moved for a while: a slow job, said out loud, so it does not read as a
+      stuck page. Jellyfin only reports progress when the job bothers to, and some barely do. */
+  function stillText(job) {
+    if (!job.unchanged_for_s || job.unchanged_for_s < 30) return null;
+    return h('span', { class: 'muted' }, `· ${Math.round(job.progress || 0)}% for ${duration(job.unchanged_for_s)}`);
+  }
+
+  /** How long finstats has been watching — which is how young the estimate is. Left out when the job has
+      stood still for that whole time, because then the line above has already said it. */
+  function watchedText(job) {
+    if (!job.watching_since) return null;
+    const watched = Math.max(1, Math.floor(Date.now() / 1000) - job.watching_since);
+    if (job.unchanged_for_s >= 30 && watched - job.unchanged_for_s <= 5) return null;
+    return h('span', { class: 'muted' }, ['· watched for ', duration(watched)]);
   }
 
   function runningJob(job) {
@@ -208,8 +224,7 @@ export default function serverPage(ctx) {
         h('span', { class: 'job-pct mono' }, `${pct}%`)),
       h('div', { class: 'meter meter-wide', role: 'progressbar', 'aria-label': `${job.name} progress`, 'aria-valuemin': 0, 'aria-valuemax': 100, 'aria-valuenow': pct },
         h('span', { class: 'meter-fill', style: { width: `${Math.max(pct, 1)}%` } })),
-      h('div', { class: 'job-meta' }, leftText(job),
-        job.watching_since ? h('span', { class: 'muted' }, ['· watched for ', duration(Math.max(1, Math.floor(Date.now() / 1000) - job.watching_since))]) : null,
+      h('div', { class: 'job-meta' }, leftText(job), stillText(job), watchedText(job),
         job.last_duration_s ? h('span', { class: 'muted' }, ['· last time it took ', duration(job.last_duration_s)]) : null),
       h('p', { class: 'help job-what' }, job.what));
   }
