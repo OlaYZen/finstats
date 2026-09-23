@@ -1012,3 +1012,36 @@ never in a header, because a title is a film title):
   `see_server`;
 - a personal destination's address must not resolve into a private or loopback range — checked when it is saved and again
   before every send. An administrator's may point anywhere.
+
+
+## `GET /api/jellyfin/jobs` 🔒 — what your Jellyfin is doing right now
+
+Needs *see the server*. Jellyfin's own scheduled tasks, read live (at most one read of Jellyfin every 3 seconds however
+many people are watching), with the hidden ones included: "what is running" must not leave something out because
+Jellyfin's dashboard does not draw it. finstats only ever reads this — there is no way in the code to start, stop or
+change a task on Jellyfin.
+
+```jsonc
+{ "jobs": [
+    {"id": "…", "key": "MediaSegmentDetect", "name": "Detect and Analyze Media Segments", "category": "Library",
+     "state": "Running" | "Idle" | "Cancelling", "running": true, "hidden": false,
+     "progress": 68.4 | null,               // only while it runs
+     "eta_s": 420 | null,                   // an estimate; see below
+     "watching_since": 0 | null,            // when finstats first saw this run, which may be long after it began
+     "what": "Goes through your episodes looking for the parts a player can offer to skip …",
+     "known": true,                         // false: the sentence is Jellyfin's own, or says there is none
+     "description": "…",                    // Jellyfin's own words, whatever they are
+     "schedule": ["every day at 03:00", "every 12 hours"],
+     "next_at": 0 | null,                   // only from an interval trigger, which is measured from the last run
+     "last_result": "Completed" | "Failed" | "Aborted" | "Cancelled" | null,
+     "last_error": "…" | null, "last_run_at": 0 | null, "last_duration_s": 200 | null} ],
+  "running": 1, "fetched_at": 0,
+  "error": "Jellyfin did not answer" }       // only when it did not; the jobs are then the last thing it said
+```
+
+**`eta_s` is an estimate, and the shape of the answer says so.** Jellyfin reports a percentage and never when the
+current run started, so finstats times the run by watching it: the rate the percentage has moved at since it first saw
+it (at least 0.5% over at least 5 s), falling back to how long the last run took applied to what is left. `null` means
+neither is known yet. `watching_since` is when finstats started watching, not when Jellyfin started the job.
+
+Running jobs come first, then whatever ran most recently.

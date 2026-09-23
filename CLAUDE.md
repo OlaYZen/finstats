@@ -286,6 +286,18 @@ last answered. Built entirely from what is already kept (collector status, `home
 outbound destination must appear here, and in the promise sentences in `README.md` and `docs/security.md`, in the same change
 that adds it.
 
+**Jellyfin's own jobs (`jobs.rs`, `GET /api/jellyfin/jobs`, the Server page).** Jellyfin's scheduled tasks say what the
+code is called ("Detect and Analyze Media Segments"); `explain` says what it does to the server, matching Jellyfin's
+**key first** (a name is in the server's language) and a keyword in the name second, and falling back to Jellyfin's own
+`Description` — a sentence finstats does not have is never invented. **A run is timed by watching it**: the API carries
+a percentage and never a start time for the run in progress, so `Watch` remembers the percentages seen and `eta_s`
+works out the rest from the rate they moved at (0.5% over 5 s before it is believed), else from the last run's
+duration; a percentage that goes backwards is the next run, not this one going back. `schedule` prints a time of day as
+a time, never a countdown — a daily trigger is in the *server's* local zone, which finstats cannot know — and only an
+interval trigger, measured from the last run, produces `next_at`. The read is live but never more often than
+`MIN_GAP_S` (3 s) however many people watch, hidden tasks included, and read-only like everything else: nothing in the
+code can start or stop a task on Jellyfin.
+
 **Notifications (`notify.rs`, `channels.rs`, `/api/notifications*`, Settings card).** The only thing finstats *sends*. An
 **event** is raised where the thing is noticed and written once — `raise_in` is `INSERT OR IGNORE` on `dedupe`, exactly like
 `security_alerts`, so re-deriving the same thing announces nothing twice — and **delivery is a separate row per destination**
