@@ -1028,6 +1028,7 @@ change a task on Jellyfin.
      "progress": 68.4 | null,               // only while it runs
      "eta_s": 420 | null,                   // an estimate; see below
      "watching_since": 0 | null,            // when finstats first saw this run, which may be long after it began
+     "unchanged_for_s": 0 | null,           // how long the percentage has been standing still
      "what": "Goes through your episodes looking for the parts a player can offer to skip …",
      "known": true,                         // false: the sentence is Jellyfin's own, or says there is none
      "description": "…",                    // Jellyfin's own words, whatever they are
@@ -1040,8 +1041,16 @@ change a task on Jellyfin.
 ```
 
 **`eta_s` is an estimate, and the shape of the answer says so.** Jellyfin reports a percentage and never when the
-current run started, so finstats times the run by watching it: the rate the percentage has moved at since it first saw
-it (at least 0.5% over at least 5 s), falling back to how long the last run took applied to what is left. `null` means
-neither is known yet. `watching_since` is when finstats started watching, not when Jellyfin started the job.
+current run started, so finstats times the run by watching it. The rate is measured against the most recent reading far
+enough back to say anything (at least 0.5% ago and at least 5 s ago, within a 15-minute memory), so a job that speeds up
+or slows down is described by the pace it has now rather than the one it averaged — and a job creeping a percent every
+few minutes is still measurable at all.
+
+When the percentage has not moved enough to measure, the estimate is borrowed from the last run — how long it took,
+applied to the fraction that is left — **minus the time the percentage has already been standing still**. It therefore
+counts down while a stuck job stands there, and once that borrowed time is spent it becomes `null`: there is nothing
+honest left to say, and the page reads "taking longer than last time". `unchanged_for_s` is what makes a slow job
+legible rather than a broken page, and `watching_since` is when finstats started watching, not when Jellyfin started
+the job.
 
 Running jobs come first, then whatever ran most recently.

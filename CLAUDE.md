@@ -290,9 +290,13 @@ that adds it.
 code is called ("Detect and Analyze Media Segments"); `explain` says what it does to the server, matching Jellyfin's
 **key first** (a name is in the server's language) and a keyword in the name second, and falling back to Jellyfin's own
 `Description` — a sentence finstats does not have is never invented. **A run is timed by watching it**: the API carries
-a percentage and never a start time for the run in progress, so `Watch` remembers the percentages seen and `eta_s`
-works out the rest from the rate they moved at (0.5% over 5 s before it is believed), else from the last run's
-duration; a percentage that goes backwards is the next run, not this one going back. `schedule` prints a time of day as
+a percentage and never a start time for the run in progress, so `Run` keeps the recent readings and `eta_s` works out
+the rest from the rate they moved at — measured against the *most recent* reading that is far enough back to say
+anything (0.5% and 5 s, within `WINDOW_S`), never the average of the whole run. When nothing can be measured the
+estimate is the last run's duration for the fraction that is left **minus `stalled_s`**, so it ages; an estimate that
+does not age is what left "about 2 minutes left" on the screen for a quarter of an hour (1.6.1), and when the borrowed
+time is spent the answer is `None` rather than a number. `unchanged_for_s` is published so a slow job reads as slow
+rather than as a stuck page; a percentage that goes backwards is the next run, not this one going back. `schedule` prints a time of day as
 a time, never a countdown — a daily trigger is in the *server's* local zone, which finstats cannot know — and only an
 interval trigger, measured from the last run, produces `next_at`. The read is live but never more often than
 `MIN_GAP_S` (3 s) however many people watch, hidden tasks included, and read-only like everything else: nothing in the
