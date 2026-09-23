@@ -1026,7 +1026,7 @@ change a task on Jellyfin.
     {"id": "…", "key": "MediaSegmentDetect", "name": "Detect and Analyze Media Segments", "category": "Library",
      "state": "Running" | "Idle" | "Cancelling", "running": true, "hidden": false,
      "progress": 68.4 | null,               // only while it runs
-     "eta_s": 420 | null,                   // an estimate; see below
+     "eta_s": 420 | null,                   // only ever a measured estimate; see below
      "watching_since": 0 | null,            // when finstats first saw this run, which may be long after it began
      "unchanged_for_s": 0 | null,           // how long the percentage has been standing still
      "what": "Goes through your episodes looking for the parts a player can offer to skip …",
@@ -1046,11 +1046,12 @@ enough back to say anything (at least 0.5% ago and at least 5 s ago, within a 15
 or slows down is described by the pace it has now rather than the one it averaged — and a job creeping a percent every
 few minutes is still measurable at all.
 
-When the percentage has not moved enough to measure, the estimate is borrowed from the last run — how long it took,
-applied to the fraction that is left — **minus the time the percentage has already been standing still**. It therefore
-counts down while a stuck job stands there, and once that borrowed time is spent it becomes `null`: there is nothing
-honest left to say, and the page reads "taking longer than last time". `unchanged_for_s` is what makes a slow job
-legible rather than a broken page, and `watching_since` is when finstats started watching, not when Jellyfin started
-the job.
+**When nothing has been measured, `eta_s` is `null` and stays `null`.** There is a tempting number to put there — how
+long the last run took, applied to the fraction that is left — and it is a guess: it knows nothing about how much of
+*this* run has already happened, it does not move while the job does not, and on a page it is indistinguishable from an
+estimate that was earned. finstats does not offer it. The page shows a cycling ellipsis in place of the number, and
+`last_duration_s` sits beside it for anyone who wants to judge for themselves. `unchanged_for_s` is what makes a slow
+job legible rather than a broken page, and `watching_since` is when finstats started watching, not when Jellyfin
+started the job.
 
 Running jobs come first, then whatever ran most recently.
