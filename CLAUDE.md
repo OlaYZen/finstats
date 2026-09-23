@@ -224,7 +224,7 @@ scoped like any other stats query.
 **Auth (`auth.rs`).** Login forwards credentials to Jellyfin's `AuthenticateByName`, immediately logs that Jellyfin
 session out, and mints an own opaque session token (stored hashed, HttpOnly SameSite=Lax cookie).
 
-**Permissions.** `AuthUser.perms` (`Perms`: `see_everyone`, `see_network`, `see_server`, `manage`) is rebuilt on every
+**Permissions.** `AuthUser.perms` (`Perms`: `see_everyone`, `see_network`, `see_server`, `see_downloads`, `notify`, `manage`) is rebuilt on every
 request from `user_permissions` ∪ `Settings.default_permissions`; `sign_in` (or `allow_user_login`) gates access at
 all; Jellyfin admins always get `Perms::ALL`. Grants only add, there are no denies. Extractors: `AuthUser` (anyone
 signed in), `ServerViewer`, `Manager`, and `JellyfinAdmin` — the only one allowed to edit permissions, and
@@ -280,10 +280,41 @@ progress (`state`, `progress`, `eta_s` and nothing else) is always allowed. The 
 itself has listed. None of these tables are in `backup::TABLES`: they are re-readable, and `services` holds secrets.
 
 **Outbound connections (`outbound.rs`, `GET /api/outbound`, Settings card).** One row per destination finstats can reach —
-Jellyfin, the public-IP services, DB-IP, each `services` row — with whether it is on and when it last answered. Built
-entirely from what is already kept (collector status, `home_addresses`, the `.mmdb` on disk, `service_health`): nothing is
-recorded for it, and hosts are shown without paths or keys. A new outbound destination must appear here, and in the promise
-sentences in `README.md` and `docs/security.md`, in the same change that adds it.
+Jellyfin, the public-IP services, DB-IP, each `services` row, each `notify_targets` row — with whether it is on and when it
+last answered. Built entirely from what is already kept (collector status, `home_addresses`, the `.mmdb` on disk,
+`service_health`, a destination's `last_ok_at`): nothing is recorded for it, and hosts are shown without paths or keys. A new
+outbound destination must appear here, and in the promise sentences in `README.md` and `docs/security.md`, in the same change
+that adds it.
+
+**Notifications (`notify.rs`, `channels.rs`, `/api/notifications*`, Settings card).** The only thing finstats *sends*. An
+**event** is raised where the thing is noticed and written once — `raise_in` is `INSERT OR IGNORE` on `dedupe`, exactly like
+`security_alerts`, so re-deriving the same thing announces nothing twice — and **delivery is a separate row per destination**
+with its own attempts and clock (`backoff`: 30 s → 2 min → 10 min → 1 h, then given up on; `Retry-After` honoured;
+`PER_MINUTE` per destination), so a webhook that is down delays nothing else. `notify::run` is its own loop, woken by
+`notify_wake` and otherwise asleep until the next retry; an install with no destination never wakes. **Two guards make adding a
+destination safe**, both needed: anything found more than `HISTORIC_S` (6 h) after it happened is stored `historic = 1` and
+never queued, and `wanted_by` refuses anything that happened before that destination's `created_at`. History is thinned at
+`KEEP_S` (30 days), which is safe only because every source either re-derives a short window (`recent::announce`,
+`seerr::announce_available`, `security::scan_sign_ins`) or raises once, when the thing itself is first written
+(`security::file_alerts`).
+**What may be said is one pure function**: `message(event, with_addresses, public_url)`. An event carries two bags — `data`,
+which any destination may be told, and `private` (addresses, coordinates), which `message` reads *only* with the
+per-destination switch — so the rule holds by construction rather than by care, and a test asserts no address appears in any
+kind of message without it. The link is `public_url` + the event's path; empty setting, no link.
+**`wanted_by` is the whole permission rule in one pure place**: a server destination (`owner_id IS NULL`) is not filtered; a
+personal one is checked against its owner's `Perms` (`auth::effective`) — own rows always, somebody else's play or request
+needs `see_everyone`, somebody else's *places* need `see_network` too (`security::gate`'s rule), the server's own business
+needs `see_server`. Managing a personal destination needs the grantable `notify`, and its host must not resolve into a private
+range (`must_be_public`, checked on save **and** before every send, because a public name can be re-pointed later); an
+administrator's may point anywhere.
+**A destination's address is a credential** (a Discord webhook URL carries its token), so `Target` is neither `Serialize` nor
+`Debug`, the API answers `shown` (host, plus the ntfy topic) and never the URL, editing without a `url` keeps the stored one,
+and `notify_targets` is not in `backup::TABLES`. `channels.rs` holds the four payload shapes and the POST; it reuses
+`services::Http` (no redirect followed while holding a token) and publishes to ntfy and Gotify in their JSON form, never
+through headers, because a title is a film title. Producers live where the thing is noticed: `security.rs` (alerts, and
+`bursts` of failed sign-ins), `sync.rs` (a failed job, a failed backup, what arrived), `services.rs` and `collector.rs` (a
+connection that stopped answering, Jellyfin included, and plays beginning and ending), `seerr.rs` (a request that became
+watchable). Adding a kind of event means a `Kind` arm and one `raise` — never a second way out.
 
 **Backups (`backup.rs`).** gzip JSON Lines, one row per line tagged with its table, matched *by column name* both ways so files move
 between versions; a new table that holds something Jellyfin cannot give back must be added to `backup::TABLES`. Secrets (Jellyfin
