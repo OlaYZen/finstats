@@ -12,6 +12,7 @@ mod geo;
 mod groups;
 mod import;
 mod jellyfin;
+mod jobs;
 mod media;
 mod network;
 mod notify;
@@ -212,6 +213,7 @@ async fn serve(db: db::Db, data_dir: PathBuf) -> Result<()> {
         wishes: Default::default(),
         downloads_watched: Mutex::new(0),
         downloads_wake: Notify::new(),
+        jf_jobs: Mutex::new(Default::default()),
         notify_targets: Default::default(),
         notify_wake: Notify::new(),
         wake: Notify::new(),

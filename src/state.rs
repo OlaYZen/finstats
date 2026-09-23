@@ -39,6 +39,9 @@ pub struct AppState {
     /// What is downloading right now, and who wished for it: in memory only, worthless a minute later.
     pub downloads: RwLock<Arc<crate::downloads::Snapshot>>,
     pub wishes: RwLock<Arc<crate::downloads::Wishes>>,
+    /// Jellyfin's own scheduled tasks as they were last read, and how far each running one had moved:
+    /// the only way to time a run, since Jellyfin says a percentage and never when it started.
+    pub jf_jobs: Mutex<crate::jobs::Watch>,
     /// Where finstats may send what it finds, read into memory so that `notify::raise` can be called
     /// from inside a transaction; `notify_wake` is how the sending loop is told there is something to do.
     pub notify_targets: RwLock<Arc<Vec<Arc<crate::notify::Target>>>>,
@@ -304,6 +307,7 @@ pub fn test_app() -> App {
         wishes: Default::default(),
         downloads_watched: Mutex::new(0),
         downloads_wake: Notify::new(),
+        jf_jobs: Mutex::new(Default::default()),
         notify_targets: Default::default(),
         notify_wake: Notify::new(),
         wake: Notify::new(),

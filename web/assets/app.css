@@ -1393,6 +1393,28 @@ select.input:disabled { opacity: .6; }
 .conn-form, .conn-form .form-grid > * { min-width: 0; }
 .conn-form .input { width: 100%; max-width: 100%; }
 
+/* ---------------------------------------------------------------- server: Jellyfin's own jobs */
+.job-list { display: flex; flex-direction: column; gap: 14px; }
+.job { display: flex; flex-direction: column; gap: 7px; padding: 12px 14px; border: 1px solid var(--border-soft); border-radius: var(--radius); background: var(--bg-sunken); min-width: 0; }
+.job-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.job-pct { margin-left: auto; font-size: 13px; color: var(--text-muted); }
+.job-meta { display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap; font-size: 12.5px; color: var(--text-muted); }
+.job-what { margin: 0; max-width: 78ch; }
+.job-cell { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.jobs-table td { vertical-align: top; }
+/* The point of the table is the sentence under each name, so it wraps and is given a width to wrap in. */
+.jobs-table .job-cell { max-width: 60ch; }
+.jobs-table .cell-sub { white-space: normal; }
+/* On a phone three columns of prose is three narrow columns of prose: each job becomes a block instead. */
+@media (max-width: 640px) {
+  .jobs-table, .jobs-table tbody, .jobs-table tr, .jobs-table td { display: block; width: auto; }
+  .jobs-table thead { display: none; }
+  .jobs-table tr { padding: 10px 0; }
+  .jobs-table tr + tr { border-top: 1px solid var(--border-soft); }
+  .jobs-table td, .jobs-table td:first-child, .jobs-table td:last-child { padding: 2px 0; border: 0; }
+  .jobs-table .job-cell { max-width: none; }
+}
+
 /* ---------------------------------------------------------------- settings: notifications */
 .notify-public { display: flex; align-items: flex-end; gap: 12px; flex-wrap: wrap; }
 .notify-public .field { flex: 1 1 320px; min-width: 0; }

@@ -47,6 +47,7 @@ pub fn router(app: App) -> Router {
         .route("/library/insights", get(stats::library_insights))
         .route("/library/recent", get(recent::recently_added))
         .route("/server", get(stats::server))
+        .route("/jellyfin/jobs", get(crate::jobs::jobs))
         .route("/recap", get(recap::recap))
         .route("/changelog", get(changelog::changelog))
         .route("/activity", get(stats::activity))

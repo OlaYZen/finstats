@@ -376,6 +376,12 @@ impl Jellyfin {
         self.get_array("/ScheduledTasks", &[("isHidden", "false".into())]).await
     }
 
+    /// Every task, the ones Jellyfin hides in its own dashboard included: "what is running right now"
+    /// must not leave something out because Jellyfin does not usually draw it.
+    pub async fn scheduled_tasks_all(&self) -> Result<Vec<Value>> {
+        self.get_array("/ScheduledTasks", &[]).await
+    }
+
     /// Jellyfin's own "Scan Media Library" task: (is it running right now, when it last finished).
     /// `None` when the server does not list such a task.
     pub async fn library_scan_status(&self) -> Result<Option<(bool, Option<i64>)>> {

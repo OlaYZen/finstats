@@ -1,6 +1,6 @@
 // /server — what the Jellyfin server itself looks like (GET /api/server, admins only).
 
-import { h, icon, num, bytes, duration, relEl, dateTime, debounce, mount } from '../dom.js';
+import { h, icon, num, bytes, duration, relEl, dateTime, debounce, mount, untilText } from '../dom.js';
 import { api, isAbort } from '../api.js';
 import { state } from '../state.js';
 import { pageHeader, card, dataView, sk, emptyState, facts, setBusy, inlineError } from '../components.js';
@@ -56,7 +56,8 @@ export default function serverPage(ctx) {
       ]) }) : null,
       storageCard(d.storage),
       devicesCard(d.devices),
-      h('div', { class: 'grid-2' }, pluginsCard(d.plugins), tasksCard(d.scheduled_tasks)),
+      jobsCard(),
+      h('div', { class: 'grid-2' }, pluginsCard(d.plugins)),
     ];
   }
 
@@ -160,22 +161,100 @@ export default function serverPage(ctx) {
         })))) });
   }
 
-  function tasksCard(tasks) {
-    const rows = Array.isArray(tasks) ? tasks : [];
-    return card({ title: 'Scheduled tasks', sub: 'Jellyfin’s own background jobs', cls: 'card-flush', body: !rows.length ? emptyState('No scheduled tasks reported.') :
-      plainTable(h('table', { class: 'table' },
-        h('thead', null, h('tr', null, h('th', null, 'Task'), h('th', null, 'State'), h('th', null, 'Last result'), h('th', null, 'Last run'), h('th', { class: 'r' }, 'Took'))),
-        h('tbody', null, rows.map((t) => {
-          const [cls, ic, label] = RESULT[t.last_result] || ['sev-info', 'info', t.last_result || null];
-          return h('tr', null,
-            h('td', null, h('div', { class: 'client-cell' }, h('span', null, t.name || '–'), h('span', { class: 'muted' }, t.category || ''))),
-            h('td', null, t.state && t.state !== 'Idle' ? h('span', { class: 'badge live' }, h('span', { class: 'badge-dot' }), t.state) : h('span', { class: 'muted' }, t.state || '–')),
-            h('td', null, label ? h('span', { class: 'sev ' + cls }, icon(ic, 13), label) : h('span', { class: 'muted' }, 'Never ran')),
-            h('td', null, t.last_run_at ? relEl(t.last_run_at) : h('span', { class: 'muted' }, '–')),
-            h('td', { class: 'mono r' }, t.last_duration_s != null ? duration(t.last_duration_s) : '–'));
-        })))) });
+  // ---- Jellyfin's own jobs, live. Its scheduled tasks say what the code is called ("Detect and Analyze
+  // Media Segments"); this says what they are doing to your server, how far along they are and how much
+  // is left. The list is its own request, because it is worth nothing if it is a quarter of an hour old.
+  const jobsSlot = h('div', { class: 'net-stack' }, sk.rows(3));
+  // Built once and kept: the card is redrawn by the page's own refresh, the badge by the jobs poll.
+  const jobsCount = h('span', null, '');
+  const jobsBadge = h('span', { class: 'badge live', hidden: true }, h('span', { class: 'badge-dot' }), jobsCount);
+  let jobsData = null, jobsAt = 0, jobsErr = null;
+
+  async function loadJobs() {
+    try {
+      jobsData = await api.get('/jellyfin/jobs', null, { signal: ctx.signal });
+      jobsErr = null;
+    } catch (e) {
+      if (isAbort(e) || e.status === 401) return;
+      jobsErr = e.message;
+    }
+    jobsAt = Date.now();
+    renderJobs();
+  }
+
+  function jobsCard() {
+    return card({
+      title: 'Jellyfin’s jobs',
+      sub: 'What your server does in the background, what each one is for, and how far along it is',
+      id: 'jobs',
+      actions: jobsBadge,
+      body: jobsSlot,
+    });
+  }
+
+  /** "about 4 minutes left" — an estimate, and it says so. */
+  function leftText(job) {
+    if (job.eta_s == null) return h('span', { class: 'muted' }, 'no estimate yet');
+    if (job.eta_s <= 5) return h('span', null, 'finishing');
+    return h('span', null, 'about ', h('strong', null, duration(job.eta_s)), ' left');
+  }
+
+  function runningJob(job) {
+    const pct = Math.round(job.progress || 0);
+    return h('div', { class: 'job' },
+      h('div', { class: 'job-head' },
+        h('strong', null, job.name),
+        h('span', { class: 'badge live' }, h('span', { class: 'badge-dot' }), job.state === 'Cancelling' ? 'Stopping' : 'Running'),
+        h('span', { class: 'job-pct mono' }, `${pct}%`)),
+      h('div', { class: 'meter meter-wide', role: 'progressbar', 'aria-label': `${job.name} progress`, 'aria-valuemin': 0, 'aria-valuemax': 100, 'aria-valuenow': pct },
+        h('span', { class: 'meter-fill', style: { width: `${Math.max(pct, 1)}%` } })),
+      h('div', { class: 'job-meta' }, leftText(job),
+        job.watching_since ? h('span', { class: 'muted' }, ['· watched for ', duration(Math.max(1, Math.floor(Date.now() / 1000) - job.watching_since))]) : null,
+        job.last_duration_s ? h('span', { class: 'muted' }, ['· last time it took ', duration(job.last_duration_s)]) : null),
+      h('p', { class: 'help job-what' }, job.what));
+  }
+
+  function jobRow(job) {
+    const [cls, ic, label] = RESULT[job.last_result] || ['sev-info', 'info', job.last_result || null];
+    const when = job.schedule && job.schedule.length ? job.schedule.join(', ') : 'only when something asks for it';
+    return h('tr', null,
+      h('td', null, h('div', { class: 'job-cell' },
+        h('span', null, job.name, job.hidden ? h('span', { class: 'chip' }, 'hidden') : null),
+        h('span', { class: 'cell-sub job-what' }, job.what))),
+      h('td', null, h('div', { class: 'job-cell' },
+        h('span', null, when),
+        job.next_at ? h('span', { class: 'cell-sub' }, `next ${untilText(job.next_at)}`) : null)),
+      h('td', null, h('div', { class: 'job-cell' },
+        job.last_run_at ? relEl(job.last_run_at) : h('span', { class: 'muted' }, 'never run'),
+        label ? h('span', { class: 'cell-sub' }, h('span', { class: 'sev ' + cls }, icon(ic, 12), label, job.last_duration_s != null ? ` · ${duration(job.last_duration_s)}` : '')) : null)));
+  }
+
+  function renderJobs() {
+    if (jobsErr && !jobsData) return mount(jobsSlot, inlineError('jobs-err', jobsErr));
+    const jobs = (jobsData && jobsData.jobs) || [];
+    const running = jobs.filter((j) => j.running);
+    const idle = jobs.filter((j) => !j.running);
+    mount(jobsSlot,
+      jobsData && jobsData.error ? h('p', { class: 'help' }, `Jellyfin did not answer just now (${jobsData.error}); this is the last thing it said.`) : null,
+      running.length ? h('div', { class: 'job-list' }, running.map(runningJob)) : h('p', { class: 'help' }, 'Nothing is running on Jellyfin right now.'),
+      idle.length
+        ? plainTable(h('table', { class: 'table jobs-table' },
+          h('thead', null, h('tr', null, h('th', null, 'Job'), h('th', null, 'Runs'), h('th', null, 'Last run'))),
+          h('tbody', null, idle.map(jobRow))))
+        : null);
+    const want = jobsData ? jobsData.running : 0;
+    jobsCount.textContent = `${num(want)} running`;
+    jobsBadge.hidden = !want;
   }
 
   ctx.root.append(headerSlot, view);
   dv.load();
+  loadJobs();
+  // One timer: every three seconds while Jellyfin is busy (a percentage that only moves every quarter of
+  // an hour is not a progress bar), every twenty when it is not.
+  ctx.every(() => {
+    const busy = jobsData && jobsData.running > 0;
+    if (busy || Date.now() - jobsAt >= 20000) loadJobs();
+    else renderJobs();               // the "watched for" clock still ticks
+  }, 3000, { visibleOnly: true });
 }

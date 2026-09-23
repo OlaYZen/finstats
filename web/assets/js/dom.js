@@ -204,6 +204,17 @@ export function relTime(ts) {
   return Math.round(d / (86400 * 365)) + 'y ago';
 }
 
+/** "in 6 days" — `relTime` only looks backwards. */
+export function untilText(ts) {
+  if (!ts) return '';
+  const s = ts - Date.now() / 1000;
+  if (s <= 0) return 'due now';
+  if (s <= 90) return 'within a minute or two';
+  if (s < 3600) return `in ${Math.round(s / 60)} minutes`;
+  if (s < 86400 * 1.5) return `in ${Math.round(s / 3600)} hours`;
+  return `in ${Math.round(s / 86400)} days`;
+}
+
 /** A compact absolute timestamp: "19 Sep, 14:04", with the year once it is not this year. */
 export function shortStamp(ts) {
   if (!ts) return '';

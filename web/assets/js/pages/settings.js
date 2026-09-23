@@ -1,4 +1,4 @@
-import { h, icon, num, bytes, relTime, dateTime, mount, humanize } from '../dom.js';
+import { h, icon, num, bytes, relTime, dateTime, mount, humanize, untilText } from '../dom.js';
 import { api, isAbort, uploadRaw } from '../api.js';
 import { isAdmin, state } from '../state.js';
 import { pageHeader, card, sk, toggle, setBusy, inlineError, errorState, facts, spinner, avatar } from '../components.js';
@@ -19,15 +19,6 @@ const TASK_LABEL = {
   sync_upcoming: ['Read Sonarr and Radarr calendars', 'What is about to air or be released. Read-only, every 15 minutes'],
   geoip: ['Geolocation database', 'Downloads the city database the Security page places addresses with. Started under Security below'],
 };
-/** "in 6 days" — relTime only looks backwards. */
-function untilText(ts) {
-  const s = ts - Date.now() / 1000;
-  if (s <= 90) return 'within a minute or two';
-  if (s < 3600) return `in ${Math.round(s / 60)} minutes`;
-  if (s < 86400 * 1.5) return `in ${Math.round(s / 3600)} hours`;
-  return `in ${Math.round(s / 86400)} days`;
-}
-
 const OWN_CARD = new Set(['import', 'backup', 'restore']); // started from their own section, not with “Run now”
 
 // The upload lives outside the page so it keeps going if you navigate away.
