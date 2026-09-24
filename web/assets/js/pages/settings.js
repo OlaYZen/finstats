@@ -67,7 +67,12 @@ export default function settings(ctx) {
       card({ title: 'Tasks', body: tasksSlot }),
       isAdmin() ? card({ title: 'Backups', sub: 'Your history, settings and permissions in one file, to keep safe or to move to another finstats', body: backupsSlot, id: 'backups' }) : null,
       card({ title: 'Import from Jellystat', sub: 'Bring your playback history with you', body: importSlot, id: 'import' }),
-      card({ title: 'Database', body: dbSlot })));
+      card({ title: 'Database', body: dbSlot }),
+      // finstats' own licence and every third-party one, on their own page: it is half a megabyte
+      // of licence text, which belongs where somebody goes looking for it, not in a settings card.
+      card({ title: 'Licences', sub: 'What finstats is built on, and the licence each part is under',
+        body: [h('p', { class: 'help' }, 'finstats is free software under the GNU General Public License v3, built on open-source Rust crates, two fonts and public-domain map data. Every licence is listed in full, as each project wrote it.'),
+          h('a', { class: 'btn', href: '/licenses' }, icon('log', 14), 'Third-party licences', icon('chevronRight', 14))] })));
 
   // ------------------------------------------------------------ settings
   let settingsData = null;

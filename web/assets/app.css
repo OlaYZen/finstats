@@ -1532,3 +1532,38 @@ span.shelf-card { cursor: default; }
 @media (prefers-reduced-motion: reduce) { .dl-fill { transition: none; } }
 .dl-history { margin-top: 24px; }
 .dl-history .filters { justify-content: space-between; }
+
+/* ---------------------------------------------------------------- licences
+   One window, showing the licence picked from the lists beside it. Wide enough and it sits
+   alongside, stuck to the top, so picking another crate moves nothing; narrower and it follows
+   the lists, and picking one brings it into view. */
+.lic-wrap { display: grid; gap: 14px; align-items: start; }
+.lic-main { min-width: 0; }
+.lic-table th[scope="row"] { font-weight: 550; color: var(--text); }
+.lic-ver { color: var(--text-muted); font-size: 12px; white-space: nowrap; }
+.lic-src { display: inline-flex; align-items: center; gap: 4px; color: var(--text-muted); font-size: 12.5px; white-space: nowrap; }
+.lic-src:hover { color: var(--text); }
+.lic-src .icon { flex: none; color: var(--text-faint); }
+.lic-jump { display: inline-flex; align-items: center; gap: 4px; padding: 2px 6px; margin: -2px -6px; border: 0; border-radius: var(--radius-sm);
+  background: none; color: var(--text); font: inherit; font-size: 12.5px; text-align: left; transition: background var(--ease), color var(--ease); }
+.lic-jump:hover { background: var(--hover); }
+.lic-jump .icon { flex: none; color: var(--text-faint); }
+.lic-view { display: flex; flex-direction: column; min-width: 0; scroll-margin-top: 14px; }
+.lic-view .card-body { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 8px; }
+.lic-view-name { font-weight: 650; }
+.lic-view-ver { margin-left: 6px; color: var(--text-faint); font-size: 12px; font-weight: 400; }
+.lic-tabs { display: flex; flex-wrap: wrap; gap: 4px; }
+.lic-tab { padding: 3px 8px; border: 1px solid var(--border-soft); border-radius: var(--radius-sm); background: none;
+  color: var(--text-muted); font-family: var(--mono); font-size: 11px; transition: background var(--ease), color var(--ease); }
+.lic-tab:hover { background: var(--hover); color: var(--text); }
+.lic-tab.is-on { background: var(--accent-wash); border-color: transparent; color: var(--text); }
+.lic-shared { margin: 0; font-family: var(--mono); font-size: 11px; overflow-wrap: anywhere; }
+.lic-body { flex: 1; min-height: 0; max-height: 58vh; margin: 0; padding: 12px 14px; overflow: auto;
+  background: var(--bg-sunken); border: 1px solid var(--border-soft); border-radius: var(--radius-sm);
+  font-family: var(--mono); font-size: 11.5px; line-height: 1.55; color: var(--text-muted); white-space: pre-wrap; overflow-wrap: anywhere; }
+@media (min-width: 1180px) {
+  .lic-wrap { grid-template-columns: minmax(0, 1fr) minmax(340px, 420px); column-gap: 22px; }
+  .lic-main { grid-column: 1; grid-row: 1; }
+  .lic-view { grid-column: 2; grid-row: 1; position: sticky; top: 14px; max-height: calc(100vh - var(--statusbar-h) - 28px); }
+  .lic-body { max-height: none; }
+}

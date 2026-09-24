@@ -50,7 +50,10 @@ Knowing this saves you from building something that cannot be merged.
 - **No front-end build step.** The web UI is plain ES modules with no dependencies. Please do not add a
   framework, a bundler or a CDN.
 - **Few dependencies.** Every crate is something to audit and keep alive. Adding one needs a reason, and a
-  GPL-3.0-compatible licence.
+  GPL-3.0-compatible licence. It also needs its licence recorded: run `python3 tools/make-third-party.py`
+  (after `cargo fetch`) and commit the updated `THIRD-PARTY.json` with the change. `cargo test` fails while
+  that file does not cover every package in `Cargo.lock`, and the app shows the result under
+  **Settings → Licences**.
 - **Personal where it matters.** The recap is one person's year and there is deliberately no whole-server
   edition; permissions are enforced on the server, never only in the UI.
 

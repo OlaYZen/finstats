@@ -1080,3 +1080,37 @@ ellipsis, so the dots read as an estimate that cannot be given yet rather than a
 started watching, not when Jellyfin started the job.
 
 Running jobs come first, then whatever ran most recently.
+
+---
+
+# v1.7 — Licences
+
+`GET /api/licenses` (any signed-in user) — what finstats is built on, and the licence each part is under. It is the
+same for every caller and cannot change while the process runs, so it is rendered once at the first call and handed out
+unchanged after that; it runs to about half a megabyte of licence text (≈ 55 KB over the wire, compressed).
+
+```jsonc
+{
+  "version": "1.7.0",                        // the running version
+  "components": [
+    {"name": "finstats", "version": "1.7.0", "license": "GPL-3.0-only",
+     "repository": "https://github.com/OlaYZen/finstats",
+     "notices": [253],                       // indices into "notices" below; may be empty
+     "kind": "app" | "bundled" | "crate"}
+  ],
+  "notices": [
+    {"file": "LICENSE-MIT", "text": "Permission is hereby granted, free of charge…"}
+  ]
+}
+```
+
+**The texts are deduplicated, not summarised.** Hundreds of crates ship the same MIT wording, so each distinct text
+appears once in `notices` and every component points at the ones it carries. Nothing is retyped from memory: each text
+is a licence file as its own project wrote it, read out of the crate sources by `tools/make-third-party.py` and
+compiled in as `THIRD-PARTY.json`. `kind` separates the three halves: `app` is finstats itself under the GPL, `bundled`
+is what is shipped or read but is not a crate (the two fonts, the map outlines, the city database), and `crate` is the
+generated dependency list. A component with an empty `notices` has no licence file to show — its SPDX `license` is then
+all there is to say.
+
+`cargo test` fails while `THIRD-PARTY.json` does not cover every package in `Cargo.lock`, so a dependency cannot be
+added without its licence being recorded.

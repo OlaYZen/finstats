@@ -23,6 +23,7 @@ import securityPage, { prefetchSecurity } from './pages/security.js';
 import pipelinePage, { prefetchPipeline } from './pages/pipeline.js';
 import settings from './pages/settings.js';
 import changelogPage, { prefetchChangelog } from './pages/changelog.js';
+import licensesPage, { prefetchLicenses } from './pages/licenses.js';
 import { setupPage, loginPage } from './pages/auth.js';
 
 route('/setup', setupPage, { bare: true });
@@ -45,6 +46,8 @@ route('/events', events, { perm: 'see_server', prefetch: prefetchEvents });
 route('/security', securityPage, { perm: 'see_network', prefetch: prefetchSecurity });
 route('/settings', settings, { perm: 'manage' });
 route('/changelog', changelogPage, { prefetch: prefetchChangelog });
+// Anyone signed in may read the licences; the shortcut to them sits in Settings.
+route('/licenses', licensesPage, { prefetch: prefetchLicenses });
 route('*', (ctx) => {
   ctx.title('Not found');
   ctx.root.append(pageHeader('Page not found'), emptyState('There’s nothing at this address.', 'It may have been a link to something that was removed.',

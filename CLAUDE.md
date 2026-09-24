@@ -454,6 +454,17 @@ finstats is `GPL-3.0-only` (`LICENSE`, `Cargo.toml`). A new dependency must carr
 (MIT, Apache-2.0, BSD, ISC, Zlib, MPL-2.0 and similar are fine; check with `cargo metadata`). The bundled fonts are
 OFL-1.1 and their license texts live next to them in `web/assets/fonts/` — keep them together.
 
+**The notice is shipped, not summarised (`licenses.rs`, `THIRD-PARTY.json`, `GET /api/licenses`, `/licenses`).**
+`tools/make-third-party.py` walks `cargo metadata` (non-dev, every platform: a notice true only on the machine that
+generated it would be wrong on the others) and reads each crate's own `LICENSE` files out of the sources cargo has
+unpacked. Identical texts are stored once — hundreds of crates ship the same MIT wording — and every crate points at
+the ones it carries. **Nothing in here is retyped**: each text is a licence file as its project wrote it, and the
+bundled half (`BUNDLED` in `licenses.rs`: finstats' own GPL, the two fonts, the map, DB-IP's database) is
+`include_str!` of the file that really sits on disk. Re-run the generator whenever a dependency is added, removed or
+bumped: a test holds the file against every package in `Cargo.lock`, so a dependency whose licence was never recorded
+fails `cargo test`. The answer is rendered once into a `OnceLock` — half a megabyte, the same for everyone, unchanging
+while the process runs. The page reaches it from a button in Settings; the route itself is open to anyone signed in.
+
 ## Publishing
 
 The image has no `USER` line on purpose: `docker-entrypoint.sh` starts as root only to make the data directory belong to `PUID:PGID`
