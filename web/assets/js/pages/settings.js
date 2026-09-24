@@ -357,7 +357,7 @@ export default function settings(ctx) {
       h('div', { class: ['meter meter-wide', t.progress == null && 'is-indeterminate'], role: 'progressbar', 'aria-label': label, 'aria-valuemin': 0, 'aria-valuemax': 100, 'aria-valuenow': t.progress == null ? null : Math.round(t.progress * 100) },
         h('span', { class: 'meter-fill', style: { width: (t.progress == null ? 30 : t.progress * 100) + '%' } })),
       h('span', { class: 'mono task-msg' }, t.message || 'Working…')) : null;
-    const restored = rs && rs.state === 'ok' && rs.result ? h('p', { class: 'sev sev-good' }, icon('check', 13),
+    const restored = rs && rs.state === 'ok' && rs.result ? h('p', { class: 'sev sev-good sev-line' }, icon('check', 13),
       `Restored ${num(rs.result.plays_imported)} plays, ${num(rs.result.plays_skipped)} were already here${rs.result.settings_restored ? '; settings and permissions restored' : ''}.`) : null;
     const failed = rs && rs.state === 'error' && rs.error ? inlineError('restore-err', `Restore failed: ${rs.error} Nothing was changed.`) : null;
 

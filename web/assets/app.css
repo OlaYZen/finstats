@@ -385,6 +385,10 @@ kbd {
 .sev-info .icon { color: var(--text-faint); }
 .sev-info { color: var(--text-muted); }
 .sev-critical { white-space: normal; }
+/* A status line that is a sentence rather than a label wraps. `nowrap` is right for "Connected" next
+   to its tick; on a phone it made the Backups card's "Restored N plays, …" push the whole page sideways. */
+.sev-line { white-space: normal; max-width: 100%; align-items: flex-start; }
+.sev-line .icon { margin-top: 2px; flex: none; }
 
 /* copy */
 .copy { display: inline-flex; align-items: center; gap: 6px; }
