@@ -7,6 +7,11 @@ Format: `## [version] - date`, then `### Added`, `### Changed`, `### Fixed` or `
 with one bullet per change. An `x.y.0` release carries a short title line under its heading:
 that title is what the app uses as the headline of the whole series.
 
+## [1.6.5] - 2026-09-24
+
+### Added
+- **A full backup is taken automatically before every upgrade.** The first time a newer finstats opens your database, it writes a complete copy of it — your whole history, settings and all — to `data/pre-update-backups/` *before* it changes anything. If an upgrade ever breaks something, your data is safe: stop finstats, put the copy back in place of `finstats.db`, start the version you were on, and report the bug — nothing is lost. The newest few copies are kept; set `FINSTATS_SKIP_PREUPDATE_BACKUP=1` to turn it off if disk space is tight.
+
 ## [1.6.4] - 2026-09-24
 
 ### Added
