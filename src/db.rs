@@ -633,16 +633,20 @@ pub fn set_setting(conn: &Connection, key: &str, value: &str) -> Result<()> {
 }
 
 /// LAN, loopback, link-local, CGNAT (Tailscale & friends) and IPv6 ULA count as local.
+///
+/// The unspecified addresses (`0.0.0.0`, `::`) and the rest of `0.0.0.0/8` count too, and not as a
+/// nicety: `connect()` to `0.0.0.0` reaches this machine, so a "public" destination spelled that way
+/// is loopback under another name — which is exactly what `notify::must_be_public` is holding shut.
 pub fn is_local_ip(ip: &str) -> Option<bool> {
     use std::net::IpAddr;
     let v4_local = |v4: std::net::Ipv4Addr| {
-        v4.is_private() || v4.is_loopback() || v4.is_link_local() || (v4.octets()[0] == 100 && (v4.octets()[1] & 0xC0) == 64)
+        v4.is_private() || v4.is_loopback() || v4.is_link_local() || v4.octets()[0] == 0 || (v4.octets()[0] == 100 && (v4.octets()[1] & 0xC0) == 64)
     };
     match ip.trim().parse::<IpAddr>().ok()? {
         IpAddr::V4(v4) => Some(v4_local(v4)),
         IpAddr::V6(v6) => Some(match v6.to_ipv4_mapped() {
             Some(v4) => v4_local(v4),
-            None => v6.is_loopback() || (v6.segments()[0] & 0xfe00) == 0xfc00 || (v6.segments()[0] & 0xffc0) == 0xfe80,
+            None => v6.is_loopback() || v6.is_unspecified() || (v6.segments()[0] & 0xfe00) == 0xfc00 || (v6.segments()[0] & 0xffc0) == 0xfe80,
         }),
     }
 }
@@ -686,6 +690,22 @@ mod tests {
             set_setting(&c, VERSION_KEY, v).unwrap();
         }
         c
+    }
+
+    #[test]
+    fn an_address_that_reaches_this_machine_is_never_public() {
+        // The unspecified forms are the point: `connect()` to either reaches this machine, so a
+        // notification destination spelled that way would be loopback wearing a public face.
+        for local in ["0.0.0.0", "::", "0:0:0:0:0:0:0:0", "0.1.2.3", "127.0.0.1", "10.0.0.1", "192.168.1.10",
+                      "172.16.0.1", "169.254.169.254", "100.64.0.1", "::1", "fd00::1", "fe80::1", "::ffff:127.0.0.1", "::ffff:0.0.0.0"] {
+            assert_eq!(is_local_ip(local), Some(true), "{local} should be local");
+        }
+        for public in ["8.8.8.8", "1.1.1.1", "203.0.113.7", "99.64.0.1", "101.64.0.1", "2001:4860:4860::8888", "::ffff:8.8.8.8"] {
+            assert_eq!(is_local_ip(public), Some(false), "{public} should be public");
+        }
+        for nonsense in ["", "localhost", "not-an-ip", "999.1.1.1"] {
+            assert_eq!(is_local_ip(nonsense), None, "{nonsense:?}");
+        }
     }
 
     #[test]
