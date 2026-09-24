@@ -7,6 +7,18 @@ Format: `## [version] - date`, then `### Added`, `### Changed`, `### Fixed` or `
 with one bullet per change. An `x.y.0` release carries a short title line under its heading:
 that title is what the app uses as the headline of the whole series.
 
+## [1.6.1] - 2026-09-24
+
+### Added
+- **finstats no longer trusts a Jellyfin read that would wipe your history.** If a library that finstats holds thousands of items for suddenly reads back empty or nearly so — a Jellyfin upgrade that changed its API, an error dressed as an empty result — finstats keeps the data it has, marks the sync failed (and notifies), and stops cleanly with a clear message rather than marking everything removed. Restart once Jellyfin is itself again, or set `FINSTATS_ALLOW_LIBRARY_SHRINK=1` if you really did empty a library. The same guard covers the library list and the user list.
+
+### Fixed
+- **Security:** an `X-Forwarded-Host` header sent by a client could vouch for a foreign `Origin` and get a cross-site write past the same-origin guard. That header is trusted only behind a trusted proxy now (`FINSTATS_TRUST_PROXY`), the same rule the client-address lookup already uses. The `SameSite=Lax` session cookie was, and stays, the first line of defence.
+- **Security:** a personal notification destination could be aimed at `0.0.0.0` or `::`, which reach this machine — the check that keeps personal destinations pointed at public addresses now counts those as local, alongside loopback and the private ranges.
+- The **Playback** page no longer fails to load for a library that contains a play with no recorded method (a row restored from a backup older than the column); such a play simply counts as a direct play.
+- A very long word in a search or a filter is no longer a server error: SQLite refuses a `LIKE` pattern past 50,000 characters, so filter words are cut to a sane length before the query.
+- The **Settings** page no longer scrolls sideways on a phone when a card reports a whole sentence back, such as the result of a restore.
+
 ## [1.6.0] - 2026-09-24
 
 Notifications
