@@ -52,7 +52,7 @@ docker build -t finstats:latest .        # local image; the published one is ghc
   would rewrite every file. Match the surrounding style by hand.
 - Debug builds read `web/` from disk at runtime (rust-embed), so UI edits only need a browser refresh.
   Release builds embed it — rebuild to see UI changes. `CHANGELOG.md` is `include_str!`'d, so it always needs a rebuild.
-- Env: `FINSTATS_DATA_DIR`, `FINSTATS_BIND`, `FINSTATS_TRUST_PROXY`, `FINSTATS_PUBLIC_IP_URL`, `FINSTATS_GEOIP_DB`, `FINSTATS_ALLOW_LIBRARY_SHRINK`, `JELLYFIN_URL` + `JELLYFIN_API_KEY` (skip the wizard), `TZ`, `RUST_LOG`.
+- Env: `FINSTATS_DATA_DIR`, `FINSTATS_BIND`, `FINSTATS_TRUST_PROXY`, `FINSTATS_PUBLIC_IP_URL`, `FINSTATS_GEOIP_DB`, `FINSTATS_ALLOW_LIBRARY_SHRINK`, `FINSTATS_SKIP_PREUPDATE_BACKUP`, `JELLYFIN_URL` + `JELLYFIN_API_KEY` (skip the wizard), `TZ`, `RUST_LOG`.
 
 ## Architecture
 
@@ -76,6 +76,15 @@ migrations are immutable — deployed databases have already run them. Add a new
 `Db::open` also refuses a database from the future (`refuse_downgrade`): the settings key `app_version` holds the newest
 version that has opened it, and a binary older than that, or one with fewer migrations than `user_version`, bails before
 writing anything. Releases up to 1.0.4 predate the check and cannot be stopped. The key is not part of backups on purpose.
+
+**A newer binary snapshots the database before it upgrades it (`back_up_before_update`).** On `Db::open`, between
+`refuse_downgrade` and the migrations, `is_update` asks whether a populated database is being opened by a *different*
+version, or still has migrations to run; if so a full `VACUUM INTO` copy — the library and the secrets included, unlike the
+exportable JSON backups — is written to `<data>/pre-update-backups/` **before** anything is changed, so a migration or a new
+binary that corrupts data can always be rolled back to (stop finstats, put the copy in place of `finstats.db`, run the old
+version). A brand-new database and a same-version restart snapshot nothing. The newest `PRE_UPDATE_KEEP` (3) are kept; the
+copies are never served over the API. A failed copy is fatal only when migrations are pending (the risky case) — a plain
+version bump warns and continues. `FINSTATS_SKIP_PREUPDATE_BACKUP=1` turns it off.
 
 **Library reads must ask for real items.** `items_page` passes `CollapseBoxSetItems=false` (otherwise servers with
 "group movies into collections" return the BoxSet *instead of* its films, which then get flagged removed) and
