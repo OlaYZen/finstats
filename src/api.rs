@@ -50,6 +50,7 @@ pub fn router(app: App) -> Router {
         .route("/jellyfin/jobs", get(crate::jobs::jobs))
         .route("/recap", get(recap::recap))
         .route("/changelog", get(changelog::changelog))
+        .route("/licenses", get(crate::licenses::licenses))
         .route("/activity", get(stats::activity))
         .route("/activity/{id}", get(stats::activity_detail))
         .route("/activity/{id}", delete(stats::activity_delete))

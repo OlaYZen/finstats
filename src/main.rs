@@ -13,6 +13,7 @@ mod groups;
 mod import;
 mod jellyfin;
 mod jobs;
+mod licenses;
 mod mail;
 mod media;
 mod network;
