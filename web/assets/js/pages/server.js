@@ -192,11 +192,14 @@ export default function serverPage(ctx) {
     });
   }
 
-  /** "about 4 minutes left" when finstats has watched the percentage move — and, when it has not, three
-      cycling dots instead of a number. A guess put where an estimate goes reads exactly like an estimate. */
+  /** "about 4 minutes left" when finstats has watched the percentage move — and, when it has not,
+      "ETA" with three cycling dots after it. The word is what makes the dots mean something: on their own
+      they read as a page still loading rather than as an estimate nobody can give yet. A guess put where
+      an estimate goes would read exactly like an estimate, so there is still no number. */
   function leftText(job) {
     if (job.eta_s == null) {
       return h('span', { class: 'job-working' },
+        h('span', { 'aria-hidden': 'true' }, 'ETA'),
         h('span', { class: 'dots', 'aria-hidden': 'true' }, h('span', null, '.'), h('span', null, '.'), h('span', null, '.')),
         h('span', { class: 'sr-only' }, 'Working; no estimate yet'));
     }

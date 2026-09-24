@@ -1405,7 +1405,10 @@ select.input:disabled { opacity: .6; }
    One timeline shared by all three and `steps(1)`, so the cycle is . · .. · … in even thirds instead of a
    fade; opacity rather than `content`, because animating `content` is a Chromium thing and this has to
    work in Firefox too. The first dot never leaves, so the line never collapses to nothing. */
-.job-working { display: inline-flex; align-items: baseline; min-width: 22px; color: var(--text-muted); letter-spacing: 1.5px; }
+/* The label is set normally; only the dots after it are spaced out, and they hold their width so the
+   line does not twitch as they cycle. */
+.job-working { display: inline-flex; align-items: baseline; gap: 3px; color: var(--text-muted); }
+.job-working .dots { min-width: 22px; letter-spacing: 1.5px; }
 .dots span:nth-child(2) { animation: job-dot-2 1.5s steps(1) infinite; }
 .dots span:nth-child(3) { animation: job-dot-3 1.5s steps(1) infinite; }
 @keyframes job-dot-2 { 0% { opacity: 0 } 33%, 100% { opacity: 1 } }
