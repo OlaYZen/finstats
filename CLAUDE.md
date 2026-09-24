@@ -8,6 +8,29 @@ finstats is a playback-statistics server for Jellyfin: one Rust binary (axum + t
 with the web UI compiled into it. It only ever *reads* from Jellyfin; it never triggers scans or writes
 anything there except creating its own API key during setup.
 
+## How we work: TDD
+
+**From now on, every change in this repository is written test-first, following the Red–Green–Refactor
+cycle (Martin Fowler).** No production code is written before a failing test asks for it.
+
+1. **Red** — write one small test for the next slice of behaviour, and run it. It must *fail*, for the
+   right reason: the behaviour does not exist yet. A test that passes the moment it is written proves
+   nothing — go back and make it demand something real.
+2. **Green** — write the least code that makes that test pass. Do not reach for clean design yet; the
+   only goal is a green bar. Run the tests.
+3. **Refactor** — with the tests green, clean up what you just wrote (both the code and the test): remove
+   duplication, improve names, simplify. Run the whole suite after each step; it must stay green.
+
+Then loop: the next test drives the next slice. Keep the steps small — minutes, not hours — so a red bar
+always points at the last thing you changed.
+
+Practically here: unit tests are `#[cfg(test)]` modules next to the code (`cargo test`, ~0.5 s); pure
+logic (a guard, a parser, a permission rule) is tested there first. Behaviour only observable from
+outside — an endpoint, an auth boundary, the collector on a real socket, wrong data from Jellyfin — gets
+its failing check in the local `qa/` suite first (see the QA section). A bug fixed is a bug that first
+gets a test reproducing it (Red), then the fix (Green). Do not add production behaviour that no test
+named, and do not delete a test to make the bar green.
+
 ## Commands
 
 ```sh
