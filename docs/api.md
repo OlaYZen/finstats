@@ -1046,12 +1046,19 @@ enough back to say anything (at least 0.5% ago and at least 5 s ago, within a 15
 or slows down is described by the pace it has now rather than the one it averaged — and a job creeping a percent every
 few minutes is still measurable at all.
 
+**The watching starts before the first call.** The task lists finstats reads anyway — the library-scan check every
+5 minutes, the server details every 15 — feed the same memory, so a run that has been going a while usually has an
+`eta_s` and a `watching_since` well before this endpoint is called for the first time. Those reads are made either way
+and nothing extra is asked of Jellyfin for it; this endpoint's own read is still made only when it is called, and still
+at most every 3 s. Both lists leave out Jellyfin's hidden tasks, so a hidden job is timed only while a page is open.
+
 **When nothing has been measured, `eta_s` is `null` and stays `null`.** There is a tempting number to put there — how
 long the last run took, applied to the fraction that is left — and it is a guess: it knows nothing about how much of
 *this* run has already happened, it does not move while the job does not, and on a page it is indistinguishable from an
 estimate that was earned. finstats does not offer it. The page shows a cycling ellipsis in place of the number, and
-`last_duration_s` sits beside it for anyone who wants to judge for themselves. `unchanged_for_s` is what makes a slow
-job legible rather than a broken page, and `watching_since` is when finstats started watching, not when Jellyfin
-started the job.
+`last_duration_s` sits beside it for anyone who wants to judge for themselves. The page writes "ETA" in front of the
+ellipsis, so the dots read as an estimate that cannot be given yet rather than as a page still loading.
+`unchanged_for_s` is what makes a slow job legible rather than a broken page, and `watching_since` is when finstats
+started watching, not when Jellyfin started the job.
 
 Running jobs come first, then whatever ran most recently.

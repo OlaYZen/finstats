@@ -165,9 +165,11 @@ single transaction, de-duplicated by `source_id = "jellystat:<id>"`, and streams
 **Sync scheduling (`sync.rs`).** Small reads (users, activity log, server details/devices) run every 15 min. The public-IP
 lookup is **not** among them: it runs once at start-up on an install that has never learned an address, and otherwise only when
 somebody asks (`POST /api/settings/public-ip`, or switching the setting on). The
-expensive library read *follows Jellyfin's own "Scan Media Library" task* (`library_scan_status`): it runs after
-that task finishes, never mid-scan, with a weekly safety net; the `sync_interval_h` timer is only a fallback
-(setting `follow_jellyfin_scan`). After a library read, `backfill_playbacks` links plays to libraries and
+expensive library read *follows Jellyfin's own "Scan Media Library" task* (`jellyfin::scan_status` over the 5-minute
+`/ScheduledTasks` read): it runs after that task finishes, never mid-scan, with a weekly safety net; the
+`sync_interval_h` timer is only a fallback (setting `follow_jellyfin_scan`). That read and `sync_server`'s both pass
+their task list to `jobs::observe`, which is the only reason the Jellyfin jobs card can open on an ETA: the watch that
+`eta_s` needs is fed by lists finstats already has, never by a request made for it. After a library read, `backfill_playbacks` links plays to libraries and
 `relink.rs` re-attaches orphaned plays to renamed items (Jellyfin ids derive from the path): provider-id match
 first, then cleaned title + year, episodes by series + S/E number — only when unambiguous.
 
