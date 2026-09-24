@@ -69,8 +69,8 @@ GeoLite2-City, or any other in that format; `FINSTATS_GEOIP_DB` names one elsewh
 from outlines bundled with finstats; no map tiles or map service are involved, so no coordinate ever leaves the browser.
 
 **Notifications: the one thing finstats sends rather than reads.** Under **Settings → Notifications** you can give finstats somewhere to
-say what it finds — a webhook of your own, a Discord channel, an ntfy topic, a Gotify server. Until you add a destination, nothing is sent
-anywhere: no destination, no request. A destination is told only the kinds of event ticked for it, and nothing that happened before it
+say what it finds — a Discord or Slack channel, a Telegram chat, a mailbox, Pushover, Pushbullet, an ntfy topic, a Gotify server, or a
+webhook of your own. Until you add a destination, nothing is sent anywhere: no destination, no request. A destination is told only the kinds of event ticked for it, and nothing that happened before it
 existed, so adding one cannot replay a year of history at you.
 
 - **Addresses and places stay out of the message** unless you switch *Include IP addresses and places* on for that destination. Without it,
@@ -82,7 +82,11 @@ existed, so adding one cannot replay a year of history at you.
   permission, their destination may only point at a public address (not something inside your network), and it is sent only what that person
   can already see in finstats: their own requests and alerts, somebody else's plays only if they may see everyone's activity, addresses only
   if they may see network details.
-- **No redirect is followed**, for the same reason as everywhere else: a token must not travel to wherever a redirect points.
+- **No redirect is followed**, for the same reason as everywhere else: a token must not travel to wherever a redirect points. The three
+  services whose address is their own — Telegram, Pushover, Pushbullet — are reached at that address and no other, so a token issued by one
+  of them can never be posted to a look-alike host.
+- **Mail is encrypted or it does not go.** `smtps://` is encrypted from the first byte; `smtp://` starts plain and must upgrade with
+  STARTTLS before anything is said. There is no third setting, and no path by which your mail password is sent in the clear.
 
 **Settings → Outbound connections** lists both of the outside requests above, your Jellyfin, every Sonarr, Radarr or Seerr you have connected,
 and every notification destination: what each is for, whether it is switched on, and when it last answered or last took a message. It is built

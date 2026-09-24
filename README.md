@@ -141,8 +141,8 @@ whatever permissions they hold, and there is no recap of the whole server.
   off until you ask for it, and addresses are always looked up on your own machine. Sonarr, Radarr, Seerr and torrent
   are reached at the addresses you enter, on your own network.
 - **Notifications go where you send them, and nowhere else.** finstats can tell you when something happens —
-  a webhook of your own, a Discord channel, ntfy, Gotify — and until you add a destination it sends nothing at
-  all. Each destination is told only the kinds of event you tick for it, and IP addresses and coordinates stay
+  a Discord or Slack channel, a Telegram chat, an e-mail, Pushover, Pushbullet, ntfy, Gotify, or a webhook of
+  your own — and until you add a destination it sends nothing at all. Each destination is told only the kinds of event you tick for it, and IP addresses and coordinates stay
   out of the messages unless you switch them in for that one destination. Every destination is listed under
   **Outbound connections** with the rest.
 - **Read-only.** finstats never changes anything on your Jellyfin server and never starts a library scan. The same goes for

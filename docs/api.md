@@ -940,13 +940,21 @@ destinations; an administrator sees every one. **A destination's address is neve
 carries its own token, so the answer holds the host and a hint (`shown`), and editing without a new `url` keeps the
 stored one, the way a service's API key does.
 
+Nine kinds of destination. Eight are one POST of JSON (`webhook`, `discord`, `slack`, `telegram`, `ntfy`, `gotify`,
+`pushover`, `pushbullet`); `email` is the one that is not, and goes over SMTP. Three of them (`telegram`, `pushover`,
+`pushbullet`) are always reached at their own service's address, which the catalogue gives as `fixed_url` and which
+finstats fills in rather than asking for.
+
 `GET /api/notifications`
 ```jsonc
 { "targets": [
-    {"id": 3, "kind": "webhook" | "discord" | "ntfy" | "gotify", "label": "Discord", "name": "Household",
-     "shown": "discord.com/…",            // host, and the ntfy topic where there is one — never the URL
+    {"id": 3, "kind": "webhook" | "discord" | "slack" | "telegram" | "email" | "ntfy" | "gotify" | "pushover" | "pushbullet",
+     "label": "Discord", "name": "Household",
+     "shown": "discord.com/…",            // host, and the topic, chat or mailbox where there is one — never the URL
      "scope": "server" | "me", "owner_name": "bob" | null,
-     "topic": "finstats-abc" | null, "has_secret": true,
+     "topic": "finstats-abc" | null,      // whatever that kind calls it: topic, chat id, user key, mailbox
+     "options": {"from": "finstats@example.com"},   // what that kind needs beyond those; only email has any
+     "has_secret": true,
      "events": ["travel", "new_items"],   // the kinds it asked for
      "with_addresses": false,             // IP addresses and coordinates only when this is on
      "min_severity": "info" | "warn" | "alert",
@@ -956,8 +964,12 @@ stored one, the way a service's API key does.
     "events": [{"key": "travel", "label": "Impossible travel", "what": "…", "severity": "alert",
                 "group": "security" | "housekeeping" | "library" | "playback", "group_label": "Security",
                 "personal": true}],       // true = it is about a person, so a personal destination needs the right to see it
-    "channels": [{"key": "ntfy", "label": "ntfy", "what": "…", "example": "https://ntfy.sh",
-                  "needs_topic": true, "secret_label": "Access token (optional)" | null, "secret_required": false}],
+    "channels": [{"key": "ntfy", "label": "ntfy", "what": "…",
+                  "example": "https://ntfy.sh",        // empty when the address is fixed
+                  "fixed_url": null | "https://api.telegram.org",   // filled in, never asked for
+                  "needs_topic": true, "topic_label": "Topic" | null, "topic_help": "…", "topic_example": "finstats-abc",
+                  "secret_label": "Access token (optional)" | null, "secret_required": false,
+                  "extras": [{"key": "from", "label": "From address", "help": "…", "example": "…", "required": true}]}],
     "severities": ["info", "warn", "alert"],
     "groups": [{"key": "security", "label": "Security"}] },
   "public_url": "https://finstats.example",   // empty: messages carry no link
@@ -968,9 +980,11 @@ stored one, the way a service's API key does.
 ```jsonc
 {"scope": "server" | "me",          // "server" needs to be an administrator; default: "server" for them, "me" otherwise
  "kind": "discord", "name": "Household",
- "url": "https://discord.com/api/webhooks/…",   // required on create; a plain webhook may carry a query, the others may not
- "secret": "…",                     // Gotify's application token; optional Bearer for a webhook or ntfy
- "topic": "finstats-abc",           // ntfy only
+ "url": "https://discord.com/api/webhooks/…",   // required on create unless the kind has a fixed_url; a plain webhook
+                                    // may carry a query, the others may not. Email is smtps:// (465) or smtp:// (587)
+ "secret": "…",                     // the bot token, the application token, the mail password; optional Bearer for a webhook or ntfy
+ "topic": "finstats-abc",           // the field beside the address: ntfy topic, Telegram chat id, Pushover user key, mailbox
+ "options": {"from": "finstats@example.com", "username": "finstats@example.com"},   // email only
  "events": ["travel", "new_country", "request_available"],
  "with_addresses": false, "min_severity": "info", "accept_invalid_certs": false, "enabled": true}
 ```
@@ -991,8 +1005,9 @@ destinations.
                      "state": "queued" | "sent" | "failed", "attempts": 1, "sent_at": 0 | null, "error": null}]} ] }
 ```
 
-**What goes out.** A webhook is posted this JSON; Discord gets an embed, ntfy and Gotify their own JSON (title in the body,
-never in a header, because a title is a film title):
+**What goes out.** A webhook is posted this JSON; Discord and Slack get a card each, ntfy and Gotify their own JSON
+(title in the body, never in a header, because a title is a film title), Telegram plain text with no `parse_mode` (a film
+title is not markup), Pushover and Pushbullet what they take; email is a plain-text letter whose subject is the title:
 ```jsonc
 {"event": "travel", "severity": "alert", "at": 0, "title": "Impossible travel: alice",
  "body": "Oslo, Norway and London, United Kingdom, 1160 km apart, 40 minutes apart.",
@@ -1011,7 +1026,10 @@ never in a header, because a title is a film title):
   or request needs `see_everyone`, somebody else's places need `see_network` as well, and the server's own business needs
   `see_server`;
 - a personal destination's address must not resolve into a private or loopback range — checked when it is saved and again
-  before every send. An administrator's may point anywhere.
+  before every send. An administrator's may point anywhere;
+- mail is encrypted or it does not go: `smtps://` from the first byte, `smtp://` must upgrade with STARTTLS. There is no
+  third option, and no path by which the password is sent in the clear. A certificate of your own making is the same
+  administrator-only switch (`accept_invalid_certs`) every other connection has.
 
 
 ## `GET /api/jellyfin/jobs` 🔒 — what your Jellyfin is doing right now

@@ -355,10 +355,19 @@ needs `see_server`. Managing a personal destination needs the grantable `notify`
 range (`must_be_public`, checked on save **and** before every send, because a public name can be re-pointed later); an
 administrator's may point anywhere.
 **A destination's address is a credential** (a Discord webhook URL carries its token), so `Target` is neither `Serialize` nor
-`Debug`, the API answers `shown` (host, plus the ntfy topic) and never the URL, editing without a `url` keeps the stored one,
-and `notify_targets` is not in `backup::TABLES`. `channels.rs` holds the four payload shapes and the POST; it reuses
+`Debug`, the API answers `shown` (host, plus the topic, chat or mailbox that says which one it is) and never the URL, editing without a `url` keeps the stored one,
+and `notify_targets` is not in `backup::TABLES`. `channels.rs` holds every payload shape and the POST; it reuses
 `services::Http` (no redirect followed while holding a token) and publishes to ntfy and Gotify in their JSON form, never
-through headers, because a title is a film title. Producers live where the thing is noticed: `security.rs` (alerts, and
+through headers, because a title is a film title — the same reason Telegram is sent with no `parse_mode`.
+**Nine kinds of destination, and one model under them**: an address, a token, one field beside them, and `options` for
+what is left (migration 19; only mail has any). A channel may fix its own address (`Channel::fixed_url`: Telegram,
+Pushover, Pushbullet are reached at their own service and nowhere else, so a token can never be posted to a look-alike
+host) and names that one field itself (`topic_label`: an ntfy topic, a chat id, a Pushover user key, a mailbox), each
+checked the way its own service writes it. **Email is the one that is not a POST of JSON**, so it is its own module
+(`mail.rs`, `lettre`): `smtps://` is encrypted from the first byte, `smtp://` must upgrade with STARTTLS, and there is no
+third option — no path by which a password is sent in the clear. `payload()` answering `None` is what says "not an HTTP
+request at all"; `Channel::is_mail` is the same fact where it is easier to read. Anything new here is a `Channel` arm, a
+payload and where its token goes: `notify.rs` should not have to change for one. Producers live where the thing is noticed: `security.rs` (alerts, and
 `bursts` of failed sign-ins), `sync.rs` (a failed job, a failed backup, what arrived), `services.rs` and `collector.rs` (a
 connection that stopped answering, Jellyfin included, and plays beginning and ending), `seerr.rs` (a request that became
 watchable). Adding a kind of event means a `Kind` arm and one `raise` — never a second way out.
