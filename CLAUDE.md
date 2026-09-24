@@ -29,7 +29,7 @@ docker build -t finstats:latest .        # local image; the published one is ghc
   would rewrite every file. Match the surrounding style by hand.
 - Debug builds read `web/` from disk at runtime (rust-embed), so UI edits only need a browser refresh.
   Release builds embed it — rebuild to see UI changes. `CHANGELOG.md` is `include_str!`'d, so it always needs a rebuild.
-- Env: `FINSTATS_DATA_DIR`, `FINSTATS_BIND`, `FINSTATS_TRUST_PROXY`, `FINSTATS_PUBLIC_IP_URL`, `FINSTATS_GEOIP_DB`, `JELLYFIN_URL` + `JELLYFIN_API_KEY` (skip the wizard), `TZ`, `RUST_LOG`.
+- Env: `FINSTATS_DATA_DIR`, `FINSTATS_BIND`, `FINSTATS_TRUST_PROXY`, `FINSTATS_PUBLIC_IP_URL`, `FINSTATS_GEOIP_DB`, `FINSTATS_ALLOW_LIBRARY_SHRINK`, `JELLYFIN_URL` + `JELLYFIN_API_KEY` (skip the wizard), `TZ`, `RUST_LOG`.
 
 ## Architecture
 
@@ -169,7 +169,13 @@ expensive library read *follows Jellyfin's own "Scan Media Library" task* (`jell
 `/ScheduledTasks` read): it runs after that task finishes, never mid-scan, with a weekly safety net; the
 `sync_interval_h` timer is only a fallback (setting `follow_jellyfin_scan`). That read and `sync_server`'s both pass
 their task list to `jobs::observe`, which is the only reason the Jellyfin jobs card can open on an ETA: the watch that
-`eta_s` needs is fed by lists finstats already has, never by a request made for it. After a library read, `backfill_playbacks` links plays to libraries and
+`eta_s` needs is fed by lists finstats already has, never by a request made for it. **A read never wipes what it cannot see.** Marking rows `removed` is destructive (they vanish from every page and stat) and
+`items_page` turns anything it cannot parse into an empty list, so a Jellyfin that changes shape under an upgrade, or answers
+`200 {"Items":[]}`, must not be read as "the library was emptied". `sync::trustworthy_removal(seen, current)` gates every
+destructive removal (items, libraries, users): a read that comes back empty, or a catastrophic shrink of a sizeable set, is
+refused — the data is kept, the sync fails (task + notification), and `AppState::request_halt` asks the process to stop cleanly
+(exit 70, a reason on stderr) so the operator pins a version or pushes a fix rather than finding a wiped install. Ordinary churn
+still applies; `FINSTATS_ALLOW_LIBRARY_SHRINK=1` waves a genuine emptying through (and clears a halt loop). After a library read, `backfill_playbacks` links plays to libraries and
 `relink.rs` re-attaches orphaned plays to renamed items (Jellyfin ids derive from the path): provider-id match
 first, then cleaned title + year, episodes by series + S/E number — only when unambiguous.
 
