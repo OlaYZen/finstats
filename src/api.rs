@@ -101,7 +101,7 @@ pub fn router(app: App) -> Router {
         .route("/backups/{name}", get(download_backup).delete(delete_backup))
         .route("/backups/{name}/restore", post(restore_stored))
         .fallback(|| async { ApiError::not_found("Endpoint") })
-        .layer(middleware::from_fn(same_origin));
+        .layer(middleware::from_fn_with_state(app.clone(), same_origin));
 
     Router::new()
         .nest("/api", api)
@@ -117,18 +117,36 @@ pub fn router(app: App) -> Router {
 
 /// Browsers attach `Origin` to cross-site writes. Refuse any write whose origin is not us.
 /// (SameSite=Lax cookies already cover this; this is the second lock.)
-async fn same_origin(req: Request, next: Next) -> Response {
-    if !matches!(*req.method(), Method::GET | Method::HEAD | Method::OPTIONS) {
-        let headers = req.headers();
-        if let (Some(origin), Some(host)) = (headers.get(ORIGIN).and_then(|v| v.to_str().ok()), headers.get(HOST).and_then(|v| v.to_str().ok())) {
-            let forwarded = headers.get("x-forwarded-host").and_then(|v| v.to_str().ok());
-            let origin_host = origin.split_once("://").map(|(_, h)| h).unwrap_or(origin);
-            if origin_host != host && Some(origin_host) != forwarded {
-                return ApiError::new(StatusCode::FORBIDDEN, "Cross-site request refused").into_response();
-            }
-        }
+///
+/// Behind a reverse proxy the browser's `Origin` is the public name while `Host` has been rewritten to
+/// the internal one, so a proxy's `X-Forwarded-Host` is what the origin should match. But that header
+/// is trusted **only** when `FINSTATS_TRUST_PROXY` is set — the same gate `client_ip` uses. Without a
+/// trusted proxy a client sets `X-Forwarded-Host` itself, and honouring it would let any client vouch
+/// for its own foreign `Origin` (`Origin: https://evil` + `X-Forwarded-Host: evil` sailed straight
+/// through), which is the whole lock undone by one header.
+async fn same_origin(State(app): State<App>, req: Request, next: Next) -> Response {
+    let write = !matches!(*req.method(), Method::GET | Method::HEAD | Method::OPTIONS);
+    let h = req.headers();
+    let origin = h.get(ORIGIN).and_then(|v| v.to_str().ok());
+    let host = h.get(HOST).and_then(|v| v.to_str().ok());
+    let forwarded = h.get("x-forwarded-host").and_then(|v| v.to_str().ok());
+    if write && cross_site(origin, host, forwarded, app.trust_proxy) {
+        return ApiError::new(StatusCode::FORBIDDEN, "Cross-site request refused").into_response();
     }
     next.run(req).await
+}
+
+/// The same-origin decision, pulled out so it can be tested without a live request. A write is
+/// cross-site when it carries both an `Origin` and a `Host` and the origin's host matches neither the
+/// real `Host` nor — **only behind a trusted proxy** — the `X-Forwarded-Host`. A request with no
+/// `Origin` (a native client, curl) is not judged here: the SameSite=Lax cookie is what covers it.
+fn cross_site(origin: Option<&str>, host: Option<&str>, forwarded: Option<&str>, trust_proxy: bool) -> bool {
+    let (Some(origin), Some(host)) = (origin, host) else { return false };
+    let origin_host = origin.split_once("://").map(|(_, h)| h).unwrap_or(origin);
+    // A client can set X-Forwarded-Host itself; only a trusted proxy's copy may vouch for the origin,
+    // or `Origin: https://evil` + `X-Forwarded-Host: evil` would defeat the whole check.
+    let forwarded = trust_proxy.then_some(forwarded).flatten();
+    origin_host != host && Some(origin_host) != forwarded
 }
 
 async fn security_headers(req: Request, next: Next) -> Response {
@@ -739,5 +757,30 @@ mod tests {
         for id in sync::TASKS.iter().chain(services::TASKS.iter()) {
             assert!(RUNNABLE.contains(id), "`{id}` cannot be started by hand");
         }
+    }
+
+    #[test]
+    fn a_write_is_cross_site_only_when_its_origin_is_not_us() {
+        let us = "finstats.example";
+        // Same origin: allowed. (`Host` carries no scheme; `Origin` does.)
+        assert!(!cross_site(Some("https://finstats.example"), Some(us), None, false));
+        assert!(!cross_site(Some("http://finstats.example"), Some(us), None, false));
+        // No Origin at all (a native client): not judged here — SameSite=Lax covers it.
+        assert!(!cross_site(None, Some(us), None, false));
+        // A foreign origin is refused.
+        assert!(cross_site(Some("https://evil.example"), Some(us), None, false));
+    }
+
+    #[test]
+    fn a_client_supplied_forwarded_host_cannot_vouch_for_a_foreign_origin() {
+        let us = "finstats.example";
+        // The bug: without a trusted proxy, `Origin: evil` + `X-Forwarded-Host: evil` must still be
+        // refused — a client sets that header itself, so honouring it lets any origin vouch for itself.
+        assert!(cross_site(Some("https://evil.example"), Some(us), Some("evil.example"), false));
+        // Behind a trusted proxy the browser's Origin is the public name and Host is the internal one,
+        // so the proxy's X-Forwarded-Host is exactly what the origin should match: allowed.
+        assert!(!cross_site(Some("https://finstats.example"), Some("127.0.0.1:8080"), Some("finstats.example"), true));
+        // …but even trusted, the forwarded host must actually match the origin.
+        assert!(cross_site(Some("https://evil.example"), Some("127.0.0.1:8080"), Some("finstats.example"), true));
     }
 }
