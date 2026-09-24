@@ -23,7 +23,7 @@
 //!   the same `Perms` every page is checked against), and may only point at a public host: it is somebody
 //!   else's address that finstats would be making requests to.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -378,6 +378,9 @@ pub struct Target {
     url: String,
     secret: String,
     pub topic: Option<String>,
+    /// What this kind of destination needs beyond the three above: only mail has any (`from`, `username`).
+    /// Not a secret — the password is `secret` — but not something a page needs either.
+    pub options: BTreeMap<String, String>,
     /// `None` = the server's own destination; otherwise the person it belongs to.
     pub owner_id: Option<String>,
     pub events: Vec<String>,
@@ -397,15 +400,24 @@ impl Target {
         &self.secret
     }
 
+    /// One of the extra fields this kind of destination asked for, or "" when it was never given.
+    pub fn option(&self, key: &str) -> &str {
+        self.options.get(key).map(String::as_str).unwrap_or_default()
+    }
+
     pub fn wants(&self, kind: Kind) -> bool {
         self.events.iter().any(|e| e == kind.key())
     }
 
-    /// Host and port only, and the last thing that could be read as a name — never the token.
+    /// Host and port only, and the last thing that could be read as a name — never the token. Which
+    /// topic, which chat and which mailbox are shown because otherwise two destinations of a kind read
+    /// the same; a Pushover user key is not, because it is half of what it takes to send.
     pub fn shown(&self) -> String {
         let host = crate::outbound::host_of(&self.url);
-        match (&self.topic, self.channel) {
-            (Some(topic), Channel::Ntfy) if !topic.is_empty() => format!("{host}/{topic}"),
+        let topic = self.topic.as_deref().filter(|t| !t.is_empty());
+        match (topic, self.channel) {
+            (Some(to), Channel::Email) => format!("{to} via {host}"),
+            (Some(topic), Channel::Ntfy | Channel::Telegram) => format!("{host}/{topic}"),
             _ => format!("{host}/…"),
         }
     }
@@ -429,10 +441,11 @@ fn read_target(r: &crate::db::rusqlite::Row) -> crate::db::rusqlite::Result<Opti
         accept_invalid_certs: r.get(10)?,
         enabled: r.get(11)?,
         created_at: r.get(12)?,
+        options: serde_json::from_str(&r.get::<_, String>(13)?).unwrap_or_default(),
     }))
 }
 
-const TARGET_COLS: &str = "id, kind, name, url, secret, topic, owner_id, events, with_addresses, min_severity, accept_invalid_certs, enabled, created_at";
+const TARGET_COLS: &str = "id, kind, name, url, secret, topic, owner_id, events, with_addresses, min_severity, accept_invalid_certs, enabled, created_at, options";
 
 fn load(conn: &Connection) -> Result<Vec<Target>> {
     let mut stmt = conn.prepare(&format!("SELECT {TARGET_COLS} FROM notify_targets ORDER BY id"))?;
@@ -853,6 +866,9 @@ pub fn clean_url(input: &str, channel: Channel) -> Result<String> {
     if typed.is_empty() {
         bail!("Enter the address to send to");
     }
+    if channel.is_mail() {
+        return clean_mail_url(typed);
+    }
     let lower = typed.to_ascii_lowercase();
     if lower.contains("://") && !lower.starts_with("http://") && !lower.starts_with("https://") {
         bail!("The address must start with http:// or https://");
@@ -871,8 +887,17 @@ pub fn clean_url(input: &str, channel: Channel) -> Result<String> {
     if parsed.query().is_some() && channel != Channel::Webhook {
         bail!("The address must not contain ?");
     }
+    // A service finstats knows the address of takes that address and no other: a token is for the
+    // service it was issued by, and a look-alike host is how it would reach somebody else.
+    if let Some(fixed) = channel.fixed_url() {
+        let same = parsed.scheme() == "https" && parsed.host_str() == reqwest::Url::parse(fixed).ok().and_then(|f| f.host_str().map(str::to_string)).as_deref();
+        if !same || !parsed.path().trim_matches('/').is_empty() {
+            bail!("{} is always reached at {fixed}, so there is no address to enter", channel.label());
+        }
+        return Ok(fixed.to_string());
+    }
+    let host = parsed.host_str().unwrap_or("");
     if channel == Channel::Discord {
-        let host = parsed.host_str().unwrap_or("");
         let discord = host == "discord.com" || host == "discordapp.com" || host.ends_with(".discord.com");
         if !discord || !parsed.path().starts_with("/api/webhooks/") {
             bail!("That is not a Discord webhook address. In Discord: Channel settings → Integrations → Webhooks → Copy Webhook URL");
@@ -881,18 +906,77 @@ pub fn clean_url(input: &str, channel: Channel) -> Result<String> {
             bail!("That Discord webhook address is missing its token — copy the whole URL");
         }
     }
+    if channel == Channel::Slack {
+        if host != "hooks.slack.com" || !parsed.path().starts_with("/services/") {
+            bail!("That is not a Slack webhook address. In Slack: your app → Incoming Webhooks → Add New Webhook to Workspace, then copy the URL");
+        }
+        if parsed.path().trim_end_matches('/').split('/').count() < 5 {
+            bail!("That Slack webhook address is missing its token — copy the whole URL");
+        }
+    }
     let trimmed = parsed.as_str().trim_end_matches('/').to_string();
     Ok(if trimmed.is_empty() { parsed.to_string() } else { trimmed })
 }
 
-/// An ntfy topic: what people are allowed to type, and no slashes, because it goes in a URL.
-fn clean_topic(topic: &str) -> Result<String> {
-    let topic = topic.trim();
-    if topic.is_empty() {
-        bail!("Enter the ntfy topic to publish to");
+/// A mail server, which is a host and a port and nothing else. `smtps://` is encrypted from the first
+/// byte and is what a bare host name becomes; `smtp://` must upgrade with STARTTLS before anything is
+/// said. There is no third option: finstats does not send mail, or a password, in the clear.
+fn clean_mail_url(typed: &str) -> Result<String> {
+    let lower = typed.to_ascii_lowercase();
+    if lower.contains("://") && !lower.starts_with("smtp://") && !lower.starts_with("smtps://") {
+        bail!("A mail server address starts with smtps:// or smtp://");
     }
-    if topic.len() > 64 || !topic.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
-        bail!("An ntfy topic may hold letters, digits, - and _ only");
+    let with_scheme = if lower.contains("://") { typed.to_string() } else { format!("smtps://{typed}") };
+    let parsed = reqwest::Url::parse(&with_scheme).map_err(|_| anyhow!("That doesn't look like a mail server address"))?;
+    if !parsed.username().is_empty() || parsed.password().is_some() {
+        bail!("Leave the user name and password out of the address — there is a field for each of them");
+    }
+    if !parsed.path().trim_matches('/').is_empty() || parsed.query().is_some() || parsed.fragment().is_some() {
+        bail!("A mail server address is a host and a port, with nothing after it");
+    }
+    let host = parsed.host_str().filter(|h| !h.is_empty()).ok_or_else(|| anyhow!("The address needs a host name"))?;
+    let scheme = parsed.scheme();
+    Ok(match parsed.port() {
+        Some(port) => format!("{scheme}://{host}:{port}"),
+        None => format!("{scheme}://{host}"),
+    })
+}
+
+/// The one field beside the address and the token, checked the way its own service writes it: an ntfy
+/// topic goes in a URL, a Telegram chat is a number, a Pushover key is 30 characters, a mailbox is an
+/// address. Refusing a typo here is what saves somebody reading a 400 out of a log.
+fn clean_topic(channel: Channel, topic: &str) -> Result<String> {
+    let topic = topic.trim();
+    let what = channel.topic_label().unwrap_or("value").to_lowercase();
+    if topic.is_empty() {
+        bail!("Enter the {what}");
+    }
+    match channel {
+        Channel::Ntfy => {
+            if topic.len() > 64 || !topic.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
+                bail!("An ntfy topic may hold letters, digits, - and _ only");
+            }
+        }
+        Channel::Telegram => {
+            let ok = match topic.strip_prefix('@') {
+                // A public channel by name: Telegram's own rule is 5 characters and up, letters and _.
+                Some(name) => (5..=64).contains(&name.len()) && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_'),
+                None => {
+                    let digits = topic.strip_prefix('-').unwrap_or(topic);
+                    !digits.is_empty() && digits.len() <= 20 && digits.chars().all(|c| c.is_ascii_digit())
+                }
+            };
+            if !ok {
+                bail!("A chat id is a number like -1001234567890, or a public channel as @name");
+            }
+        }
+        Channel::Pushover => {
+            if topic.len() != 30 || !topic.chars().all(|c| c.is_ascii_alphanumeric()) {
+                bail!("A Pushover user or group key is 30 letters and digits, from the front page of pushover.net");
+            }
+        }
+        Channel::Email => return crate::mail::address(topic),
+        _ => bail!("{} has nothing to enter here", channel.label()),
     }
     Ok(topic.to_string())
 }
@@ -915,8 +999,10 @@ fn catalogue() -> Value {
     let channels: Vec<Value> = Channel::ALL
         .into_iter()
         .map(|c| {
-            json!({ "key": c.key(), "label": c.label(), "what": c.what(), "example": c.example(),
-                    "needs_topic": c.needs_topic(), "secret_label": c.secret_label(), "secret_required": c.secret_required() })
+            json!({ "key": c.key(), "label": c.label(), "what": c.what(), "example": c.example(), "fixed_url": c.fixed_url(),
+                    "topic_label": c.topic_label(), "topic_help": c.topic_help(), "topic_example": c.topic_example(),
+                    "needs_topic": c.needs_topic(), "secret_label": c.secret_label(), "secret_required": c.secret_required(),
+                    "extras": c.extras().iter().map(|e| json!({ "key": e.key, "label": e.label, "help": e.help, "example": e.example, "required": e.required })).collect::<Vec<_>>() })
         })
         .collect();
     json!({ "events": events, "channels": channels, "severities": SEVERITIES, "groups": Group::ALL.map(|g| json!({ "key": g.key(), "label": g.label() })) })
@@ -925,12 +1011,12 @@ fn catalogue() -> Value {
 /// One destination as the page sees it: never the address, never the secret.
 fn target_row(r: &crate::db::rusqlite::Row) -> crate::db::rusqlite::Result<Option<Value>> {
     let Some(t) = read_target(r)? else { return Ok(None) };
-    let (last_ok_at, last_error): (Option<i64>, Option<String>) = (r.get(13)?, r.get(14)?);
-    let owner_name: Option<String> = r.get(15)?;
+    let (last_ok_at, last_error): (Option<i64>, Option<String>) = (r.get(14)?, r.get(15)?);
+    let owner_name: Option<String> = r.get(16)?;
     Ok(Some(json!({
         "id": t.id, "kind": t.channel.key(), "label": t.channel.label(), "name": t.name, "shown": t.shown(),
         "scope": if t.owner_id.is_some() { "me" } else { "server" }, "owner_name": owner_name,
-        "topic": t.topic, "has_secret": !t.secret.is_empty(), "events": t.events, "with_addresses": t.with_addresses,
+        "topic": t.topic, "options": t.options, "has_secret": !t.secret.is_empty(), "events": t.events, "with_addresses": t.with_addresses,
         "min_severity": t.min_severity, "accept_invalid_certs": t.accept_invalid_certs, "enabled": t.enabled,
         "created_at": t.created_at, "last_ok_at": last_ok_at, "last_error": last_error,
     })))
@@ -966,6 +1052,8 @@ pub struct TargetBody {
     url: Option<String>,
     secret: Option<String>,
     topic: Option<String>,
+    /// What this kind of destination needs beyond those: only mail has any.
+    options: Option<BTreeMap<String, String>>,
     events: Option<Vec<String>>,
     with_addresses: Option<bool>,
     min_severity: Option<String>,
@@ -998,7 +1086,8 @@ fn describe(body: TargetBody, stored: Option<&Target>, user: &AuthUser) -> std::
     let url = match (body.url.as_deref().filter(|u| !u.trim().is_empty()), stored) {
         (Some(u), _) => clean_url(u, channel).map_err(|e| bad(&format!("{e}")))?,
         (None, Some(s)) => s.url.clone(),
-        (None, None) => return Err(bad(&format!("Enter the address of {}", channel.label()))),
+        // A service finstats already knows the address of is never asked for one.
+        (None, None) => channel.fixed_url().map(str::to_string).ok_or_else(|| bad(&format!("Enter the address of {}", channel.label())))?,
     };
     let secret = match (body.secret.filter(|s| !s.is_empty()), stored) {
         (Some(s), _) => s,
@@ -1011,12 +1100,36 @@ fn describe(body: TargetBody, stored: Option<&Target>, user: &AuthUser) -> std::
     if secret.is_empty() && channel.secret_required() {
         return Err(bad(&format!("Enter the {}", channel.secret_label().unwrap_or("token"))));
     }
-    let topic = match (body.topic.as_deref(), stored) {
+    let topic = match (body.topic.as_deref().filter(|t| !t.trim().is_empty()), stored) {
         _ if !channel.needs_topic() => None,
-        (Some(t), _) => Some(clean_topic(t).map_err(|e| bad(&format!("{e}")))?),
+        (Some(t), _) => Some(clean_topic(channel, t).map_err(|e| bad(&format!("{e}")))?),
         (None, Some(s)) => s.topic.clone(),
-        (None, None) => return Err(bad("Enter the ntfy topic to publish to")),
+        (None, None) => return Err(bad(&format!("Enter the {}", channel.topic_label().unwrap_or("value").to_lowercase()))),
     };
+    // Only the fields this kind of destination asked for are kept: anything else a request carries is
+    // not something finstats would know what to do with, and is not stored.
+    let given = body.options.unwrap_or_default();
+    let mut options = BTreeMap::new();
+    for extra in channel.extras() {
+        let value = match (given.get(extra.key).map(|v| v.trim()).filter(|v| !v.is_empty()), stored) {
+            (Some(v), _) => v.to_string(),
+            (None, Some(s)) => s.option(extra.key).to_string(),
+            (None, None) => String::new(),
+        };
+        if value.is_empty() {
+            if extra.required {
+                return Err(bad(&format!("Enter the {}", extra.label.to_lowercase())));
+            }
+            continue;
+        }
+        if value.len() > 200 || value.chars().any(char::is_control) {
+            return Err(bad(&format!("That does not look like a{} {}", if extra.address { "n" } else { "" }, extra.label.to_lowercase())));
+        }
+        if extra.address {
+            crate::mail::address(&value).map_err(|e| bad(&format!("{e}")))?;
+        }
+        options.insert(extra.key.to_string(), value);
+    }
     let events = match (body.events, stored) {
         (Some(list), _) => {
             if let Some(bad_key) = list.iter().find(|k| Kind::from_key(k).is_none_or(|k| k.group().is_none())) {
@@ -1041,6 +1154,7 @@ fn describe(body: TargetBody, stored: Option<&Target>, user: &AuthUser) -> std::
         url,
         secret,
         topic,
+        options,
         owner_id,
         events,
         with_addresses: pick(body.with_addresses, stored.map(|s| s.with_addresses), false),
@@ -1088,10 +1202,11 @@ pub async fn create(State(app): State<App>, user: AuthUser, Json(body): Json<Tar
         .db
         .call(move |c| {
             c.execute(
-                "INSERT INTO notify_targets(kind, name, url, secret, topic, owner_id, events, with_addresses, min_severity, accept_invalid_certs, enabled, created_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+                "INSERT INTO notify_targets(kind, name, url, secret, topic, owner_id, events, with_addresses, min_severity, accept_invalid_certs, enabled, created_at, options)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
                 params![next.channel.key(), next.name, next.url, next.secret, next.topic, next.owner_id,
-                    serde_json::to_string(&next.events)?, next.with_addresses, next.min_severity, next.accept_invalid_certs, next.enabled, next.created_at],
+                    serde_json::to_string(&next.events)?, next.with_addresses, next.min_severity, next.accept_invalid_certs, next.enabled, next.created_at,
+                    serde_json::to_string(&next.options)?],
             )?;
             Ok(c.last_insert_rowid())
         })
@@ -1114,9 +1229,9 @@ pub async fn update(State(app): State<App>, user: AuthUser, Path(id): Path<i64>,
         .call(move |c| {
             c.execute(
                 "UPDATE notify_targets SET name = ?2, url = ?3, secret = ?4, topic = ?5, events = ?6, with_addresses = ?7,
-                    min_severity = ?8, accept_invalid_certs = ?9, enabled = ?10 WHERE id = ?1",
+                    min_severity = ?8, accept_invalid_certs = ?9, enabled = ?10, options = ?11 WHERE id = ?1",
                 params![id, next.name, next.url, next.secret, next.topic, serde_json::to_string(&next.events)?,
-                    next.with_addresses, next.min_severity, next.accept_invalid_certs, next.enabled],
+                    next.with_addresses, next.min_severity, next.accept_invalid_certs, next.enabled, serde_json::to_string(&next.options)?],
             )?;
             Ok(())
         })
@@ -1276,6 +1391,7 @@ mod tests {
             url: "https://example.com/hook".into(),
             secret: "s3cret-token".into(),
             topic: None,
+            options: BTreeMap::new(),
             owner_id: owner.map(str::to_string),
             events: events.iter().map(|k| k.key().to_string()).collect(),
             with_addresses: false,
@@ -1461,6 +1577,68 @@ mod tests {
         assert!(targets_json(&c, Some("ub")).unwrap().is_empty(), "somebody else's destination is not theirs to see");
     }
 
+    /// A destination as an API request describes one.
+    fn body(value: Value) -> TargetBody {
+        serde_json::from_value(value).expect("a destination body")
+    }
+
+    fn admin() -> AuthUser {
+        AuthUser { id: "ua".into(), name: "alice".into(), is_admin: true, perms: Perms::ALL }
+    }
+
+    #[test]
+    fn the_field_beside_the_address_is_checked_the_way_its_own_service_writes_it() {
+        assert!(clean_topic(Channel::Ntfy, "finstats-abc_1").is_ok());
+        assert!(clean_topic(Channel::Ntfy, "with/a/slash").is_err(), "an ntfy topic goes in a URL");
+        assert!(clean_topic(Channel::Telegram, "-1001234567890").is_ok(), "a group chat id is negative");
+        assert!(clean_topic(Channel::Telegram, "@finstats_news").is_ok(), "a channel may be given by name");
+        assert!(clean_topic(Channel::Telegram, "my chat").is_err());
+        assert!(clean_topic(Channel::Pushover, "uQiRzpo4DXghDmr9QzzfQu27cmVRsG").is_ok());
+        assert!(clean_topic(Channel::Pushover, "not a key").is_err());
+        assert!(clean_topic(Channel::Email, "me@example.com").is_ok());
+        assert!(clean_topic(Channel::Email, "me at example.com").is_err());
+        assert!(clean_topic(Channel::Email, "me@example").is_err(), "a mailbox needs a domain that resolves");
+    }
+
+    #[test]
+    fn a_letter_needs_a_sender_and_keeps_only_what_its_own_channel_asked_for() {
+        let user = admin();
+        let full = json!({ "kind": "email", "url": "smtps://smtp.example.com", "topic": "me@example.com",
+                           "options": { "from": "finstats@example.com", "username": "finstats", "bcc": "someone@example.com" } });
+        let t = describe(body(full), None, &user).ok().expect("a destination that says everything");
+        assert_eq!(t.option("from"), "finstats@example.com");
+        assert_eq!(t.option("username"), "finstats");
+        assert_eq!(t.option("bcc"), "", "a field this kind of destination never asked for is not stored");
+
+        let no_sender = json!({ "kind": "email", "url": "smtps://smtp.example.com", "topic": "me@example.com" });
+        assert!(describe(body(no_sender), None, &user).is_err(), "there is nothing to send a letter as");
+        let bad_sender = json!({ "kind": "email", "url": "smtps://smtp.example.com", "topic": "me@example.com", "options": { "from": "finstats" } });
+        assert!(describe(body(bad_sender), None, &user).is_err());
+        // A channel whose address is its service's own is filled in rather than asked for.
+        let telegram = json!({ "kind": "telegram", "secret": "123:abc", "topic": "-1001234567890" });
+        assert_eq!(describe(body(telegram), None, &user).ok().expect("a telegram destination").url(), "https://api.telegram.org");
+    }
+
+    #[test]
+    fn what_a_destination_is_called_in_the_list_says_which_one_it_is_and_never_its_token() {
+        let mut t = target(1, None, &[]);
+        t.channel = Channel::Telegram;
+        t.url = "https://api.telegram.org".into();
+        t.secret = "123456:AAH-bot-token".into();
+        t.topic = Some("-1001234567890".into());
+        assert_eq!(t.shown(), "api.telegram.org/-1001234567890", "which chat, never the bot token that reaches it");
+
+        t.channel = Channel::Email;
+        t.url = "smtps://smtp.example.com:465".into();
+        t.topic = Some("me@example.com".into());
+        assert_eq!(t.shown(), "me@example.com via smtp.example.com:465");
+
+        t.channel = Channel::Pushover;
+        t.url = "https://api.pushover.net".into();
+        t.topic = Some("uQiRzpo4DXghDmr9QzzfQu27cmVRsG".into());
+        assert_eq!(t.shown(), "api.pushover.net/…", "a Pushover user key is half of what it takes to send");
+    }
+
     #[test]
     fn an_address_that_could_aim_the_request_elsewhere_is_refused() {
         assert!(clean_url("ftp://example.com/x", Channel::Webhook).is_err());
@@ -1472,5 +1650,17 @@ mod tests {
         assert!(clean_url("https://example.com/api/webhooks/1/tok", Channel::Discord).is_err(), "that is not Discord");
         assert!(clean_url("https://discord.com/api/webhooks/123", Channel::Discord).is_err(), "half a Discord webhook is no webhook");
         assert!(clean_url("https://discord.com/api/webhooks/123/abc", Channel::Discord).is_ok());
+        assert!(clean_url("https://example.com/services/T0/B0/tok", Channel::Slack).is_err(), "that is not Slack");
+        assert!(clean_url("https://hooks.slack.com/services/T0", Channel::Slack).is_err(), "half a Slack webhook is no webhook");
+        assert!(clean_url("https://hooks.slack.com/services/T0/B0/tok", Channel::Slack).is_ok());
+        // A channel whose address is its service's own takes that one and nothing else.
+        assert_eq!(clean_url("api.telegram.org", Channel::Telegram).unwrap(), "https://api.telegram.org");
+        assert!(clean_url("https://telegram.example.com", Channel::Telegram).is_err(), "a token is not for somebody else's server");
+        assert!(clean_url("http://api.pushover.net", Channel::Pushover).is_err(), "and never in the clear");
+        // Mail is not HTTP at all, and finstats will not send it in the clear.
+        assert_eq!(clean_url("smtps://smtp.example.com:465", Channel::Email).unwrap(), "smtps://smtp.example.com:465");
+        assert_eq!(clean_url("smtp.example.com", Channel::Email).unwrap(), "smtps://smtp.example.com", "a mail address with no scheme is the encrypted one");
+        assert!(clean_url("https://smtp.example.com", Channel::Email).is_err());
+        assert!(clean_url("smtps://user:pw@smtp.example.com", Channel::Email).is_err());
     }
 }

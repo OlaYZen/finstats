@@ -501,6 +501,12 @@ pub(crate) const MIGRATIONS: &[&str] = &[
     ) WITHOUT ROWID;
     CREATE INDEX idx_notify_due ON notify_deliveries(state, next_at);
     "#,
+    // 19 — what a destination needs beyond an address, a token and the one field beside them. Only mail
+    // has any (the sender, and a user name that is often not the sender), and it is not a secret: the
+    // password stays in `secret`.
+    r#"
+    ALTER TABLE notify_targets ADD COLUMN options TEXT NOT NULL DEFAULT '{}';
+    "#,
 ];
 
 impl Db {
