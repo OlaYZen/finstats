@@ -14,26 +14,31 @@ const PAGE: usize = 500;
 /// Library kinds that only reference items living in other libraries.
 const SKIPPED_COLLECTIONS: [&str; 2] = ["boxsets", "playlists"];
 
-/// A read that comes back far emptier than what finstats already holds is treated as broken — a
-/// Jellyfin upgrade that changed the response shape, an error dressed as `200 {"Items":[]}`, an empty
-/// page — never as "everything was deleted". Marking rows `removed` is destructive (they vanish from
-/// every page and every stat), and `items_page` turns anything it cannot parse into an empty list, so
-/// without this a breaking change on Jellyfin's side would silently wipe a library. Only the
-/// catastrophic shrink is guarded; ordinary churn (some titles gone) still applies, so a real deletion
-/// is not mistaken for a fault. `FINSTATS_ALLOW_LIBRARY_SHRINK=1` waves one through — after genuinely
-/// emptying a library, say — which is also how a fail-closed halt is cleared.
-const REMOVAL_FLOOR: i64 = 20;
+/// Whether a read is a trustworthy basis for removing what it did not return. `items_page` turns
+/// anything it cannot parse into an empty list, so a Jellyfin upgrade that changed the response shape,
+/// or an error dressed as `200 {"Items":[]}`, would otherwise silently wipe a library. But this guard
+/// exists for that "Jellyfin broke my program" case, **not** for ordinary churn — a small library
+/// genuinely losing most of its items (a handful of clips whose files went) must not be mistaken for a
+/// fault, or the guard turns a normal day into an outage. So only a *clearly* broken read is refused:
+/// a library big enough to matter read back completely empty, or a big one gutted to almost nothing.
+/// Everything else applies as before. `FINSTATS_ALLOW_LIBRARY_SHRINK=1` waves even a refused one
+/// through — after genuinely emptying a large library, say.
+const EMPTY_FLOOR: i64 = 200; // a fully-empty read is only alarming once a library is at least this big
+const WIPE_FLOOR: i64 = 1000; // ...and a partial gutting only when it would remove at least this many
 pub(crate) fn trustworthy_removal(seen: usize, current: i64) -> bool {
     if current <= 0 {
         return true; // nothing stored yet: a first sync, or a genuinely new set.
     }
+    let seen = seen as i64;
     if seen == 0 {
-        return false; // saw nothing where finstats holds rows: never trust it, whatever the size.
+        // A sizeable library read back completely empty is the classic broken read; a tiny one going
+        // empty is just a tiny one going empty.
+        return current < EMPTY_FLOOR;
     }
-    // Past the empty case, allow ordinary churn: fine to remove a handful, and fine as long as a
-    // tenth of the set survives. Only a catastrophic shrink of something sizeable is refused.
-    let would_remove = current - seen as i64;
-    would_remove < REMOVAL_FLOOR || (seen as i64).saturating_mul(10) >= current
+    // Otherwise refuse only a large, near-total wipe: a four-figure loss that leaves under a twentieth
+    // of the library standing. A big library dropping to a handful is a fault; ordinary churn is not.
+    let would_remove = current - seen;
+    !(would_remove >= WIPE_FLOOR && seen.saturating_mul(20) < current)
 }
 
 fn allow_shrink() -> bool {
@@ -836,22 +841,28 @@ mod tests {
     }
 
     #[test]
-    fn a_read_that_comes_back_empty_is_never_grounds_to_remove_what_we_hold() {
-        // The whole point: a library finstats knows holds thousands of items, read back as empty or a
-        // handful, is a broken read (a Jellyfin upgrade, an error dressed as 200) — not a deletion.
-        assert!(!trustworthy_removal(0, 4000), "empty read of a stocked library must be refused");
-        assert!(!trustworthy_removal(0, 3), "even a small stocked set: an empty read is a refusal");
-        assert!(!trustworthy_removal(1, 5000), "one item where we hold thousands is not trustworthy");
-        assert!(!trustworthy_removal(300, 5000), "6% surviving is a catastrophic shrink");
+    fn only_a_clearly_broken_read_is_refused_ordinary_shrink_is_normal() {
+        // The guard is for the "Jellyfin broke my program" case — a stocked library that reads back
+        // empty, or a big one gutted to almost nothing — not for ordinary churn. A real install losing
+        // most of a small library (37 clips down to 3 as their files go) must NOT be mistaken for a
+        // fault, or the guard turns a normal day into an outage.
+        assert!(trustworthy_removal(3, 37), "a 37-item library down to 3 is ordinary churn, not a fault");
+        assert!(trustworthy_removal(0, 37), "a small library reading empty is allowed, not a crash");
+        assert!(trustworthy_removal(100, 1244), "8% of a mid library surviving is allowed");
         // First sync (nothing stored) and genuinely-new sets are always fine.
         assert!(trustworthy_removal(0, 0));
         assert!(trustworthy_removal(4000, 0));
-        // Ordinary churn is fine: some titles gone, most present; a handful removed from a small set.
+        // Ordinary churn on a big library is fine.
         assert!(trustworthy_removal(4800, 5000), "4% churn is normal");
-        assert!(trustworthy_removal(600, 5000), "12% surviving is allowed, not a halt");
-        assert!(trustworthy_removal(3, 15), "removing a dozen from a tiny set is under the floor");
-        // Boundary: exactly a tenth surviving is allowed; just under it is refused.
-        assert!(trustworthy_removal(500, 5000));
-        assert!(!trustworthy_removal(499, 5000));
+        assert!(trustworthy_removal(600, 5000), "12% surviving is allowed");
+        // Clearly broken: a sizeable library read empty, or gutted to under 5% with a big loss.
+        assert!(!trustworthy_removal(0, 16743), "a stocked library read empty is a broken read");
+        assert!(!trustworthy_removal(0, 200), "at the empty-floor, an empty read is refused");
+        assert!(!trustworthy_removal(3, 16743), "thousands down to three is a broken read");
+        assert!(!trustworthy_removal(200, 4773), "under 5% of a big library surviving is refused");
+        // But an empty read of a set below the floor, and a shrink that removes fewer than the wipe
+        // floor however small the survivor, are treated as ordinary.
+        assert!(trustworthy_removal(0, 199), "just below the empty-floor is allowed");
+        assert!(trustworthy_removal(1, 900), "removing under the wipe-floor is ordinary, even to one");
     }
 }
