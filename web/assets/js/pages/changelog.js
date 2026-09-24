@@ -66,15 +66,17 @@ function group(g, current, open) {
   const n = g.releases.length;
   const dates = newest.date && oldest.date && newest.date !== oldest.date ? `${longDate(oldest.date)} – ${longDate(newest.date)}` : longDate(newest.date);
   // The x.y.0 release says what the series was about; fall back to the newest summary.
-  // Its first sentence only: a headline, not the whole introduction cut off by an ellipsis.
-  const about = ((oldest.summary || newest.summary || '').match(/^.+?[.!?](?=\s|$)/) || [''])[0];
+  // A title line carries no full stop, so it is taken whole; anything that is a sentence
+  // gives only its first, so a headline is never an introduction cut off by an ellipsis.
+  const about = (oldest.summary || newest.summary || '').trim();
+  const headline = (about.match(/^.+?[.!?](?=\s|$)/) || [about])[0];
   return h('details', { class: ['cl-series', running && 'is-current'], open: !!open },
     h('summary', { class: 'cl-series-head' },
       icon('chevronRight', 14, 'cl-chev'),
       h('span', { class: 'cl-series-name mono' }, `v${g.key}`),
       h('span', { class: 'cl-series-range mono' }, n > 1 ? `${oldest.version} – ${newest.version}` : newest.version),
       running ? h('span', { class: 'chip cl-running' }, icon('check', 12), 'Running now') : null,
-      about ? h('span', { class: 'cl-series-about' }, inline(about)) : null,
+      headline ? h('span', { class: 'cl-series-about' }, inline(headline)) : null,
       h('span', { class: 'cl-series-meta' }, `${n} ${n === 1 ? 'release' : 'releases'}`, dates ? ` · ${dates}` : '')),
     h('div', { class: 'cl-series-body' }, g.releases.map((r) => release(r, current))));
 }

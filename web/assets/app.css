@@ -1155,7 +1155,8 @@ a.chip-link:hover { border-color: var(--accent); color: var(--text); text-decora
 .cl-version { margin: 0; font-size: 17px; font-weight: 650; letter-spacing: -0.01em; color: #f0f0f0; }
 .cl-running { align-self: center; color: var(--text); background: var(--accent-wash); border-color: transparent; }
 .cl-date { margin-left: auto; color: var(--text-faint); font-size: 12.5px; }
-.cl-summary { margin: 8px 0 0; color: var(--text-muted); font-size: 14px; max-width: 70ch; }
+/* An x.y.0 release opens with a short title, not a paragraph, so it is set as one. */
+.cl-summary { margin: 6px 0 0; color: var(--text); font-size: 14.5px; font-weight: 600; max-width: 70ch; }
 .cl-group { margin-top: 14px; }
 .cl-kind { display: inline-flex; align-items: center; gap: 5px; margin: 0 0 6px; font-size: 11.5px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; color: var(--text-muted); }
 .cl-kind .icon { color: var(--accent-hi); }
