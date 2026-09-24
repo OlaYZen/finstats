@@ -7,6 +7,30 @@ Format: `## [version] - date`, then `### Added`, `### Changed`, `### Fixed` or `
 with one bullet per change. An `x.y.0` release carries a short title line under its heading:
 that title is what the app uses as the headline of the whole series.
 
+## [1.6.0] - 2026-09-24
+
+Notifications
+
+### Added
+- **Notifications** card under Settings: add a destination, tick what it should hear about, press Test. No destination means no request is made to anything.
+- Four kinds of destination: a plain **webhook** (JSON, documented in `docs/api.md`, optional `Authorization` header), **Discord** (an embed through a channel webhook URL), **ntfy** (ntfy.sh or your own, to a topic) and **Gotify** (your own server, with an application token). Titles travel in the message rather than in a header.
+- Eleven kinds of event, each a tick of its own: impossible travel, an account seen in a new country, a burst of failed sign-ins, a task that failed, a backup that could not be written, something that stopped answering (Jellyfin, Sonarr, Radarr or Seerr) and when it answers again, new titles in the library (folded per show and day, as the dashboard shelf folds them), a request that became watchable, and a play beginning or ending. The last two are off by default.
+- A request that became watchable names the title, who asked, and how long they waited.
+- Personal destinations: grant **Be sent notifications** and somebody can add one of their own, which is sent only what they may already see — their own requests and alerts always, other people's with *see everyone's activity*, addresses with *see network details*. A personal destination must point at a public address; only an administrator may aim one inside the network.
+- **Include IP addresses and places**, per destination and off by default: a message about impossible travel otherwise names places only ("Oslo, Norway and London, United Kingdom").
+- **Recently sent**, in the same card: what was said, to which destination, and what the other side answered when it did not arrive. A failed message is retried four times over about an hour, and a destination that is rate-limiting is waited for.
+- **The address of finstats**, a setting for administrators, is what a notification's link is built from. Empty means messages carry no link.
+- Jellyfin's own scheduled tasks on the Server page: what each one does in words rather than by the name of its code, and whether it is one of the heavy ones. A running task shows a progress bar, a percentage and how much is left; the rest show when they next run, when they last ran and whether that went well. Tasks Jellyfin hides from its own dashboard are included, and nothing in finstats can start or stop a task.
+- How much of a task is left is measured from the rate its percentage has actually moved at, against the most recent reading far enough back to mean something rather than the average of the whole run, so a task that speeds up or slows down is described by the pace it has now.
+- The task lists finstats already reads for other reasons — the library-scan check every 5 minutes, the server details every 15 — feed the same measurement, so a task that has been running an hour usually has an estimate the moment the page opens. Nothing extra is asked of Jellyfin for it.
+- A running task with nothing measured yet shows **ETA** and a cycling ellipsis instead of a number, and one whose percentage has not moved for half a minute reads "68% for 4m" beside it. Nothing stands in for an estimate that was not measured.
+- A list of every version beside the patch notes: one click goes to any release, it marks the one being read, and on a narrow screen it becomes a row of series above the notes.
+
+### Changed
+- Patch notes no longer fold. Every series stands open and the list of versions is how you get about, instead of one group open at a time and a click to reach any other.
+- **Settings → Outbound connections** lists every notification destination alongside Jellyfin and the service connections: what it is, its host, whether it is switched on, and when it last took a message.
+- Nothing about collection, history or any figure on screen changes. finstats still only ever *reads* from Jellyfin, Sonarr, Radarr and Seerr.
+
 ## [1.5.2] - 2026-09-22
 
 ### Changed
