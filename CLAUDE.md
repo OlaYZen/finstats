@@ -399,9 +399,12 @@ every bug fixed. It is a local tool and must never be committed; the same goes f
 
 `CHANGELOG.md` is the single source for the in-app **Patch notes** tab (`changelog.rs` parses it). A test fails if
 the top entry's version differs from `Cargo.toml`, or an entry lacks a date/notes/known group — so a version bump
-and its changelog entry land together. Format: `## [x.y.z] - YYYY-MM-DD`, a summary paragraph (required for `x.y.0`, where its first sentence becomes that series'
-headline in the app, and a test enforces it; optional otherwise), then
-`### Added | Changed | Fixed | Removed` with one-line bullets (`**bold**` and `` `code` `` are rendered).
+and its changelog entry land together. Format: `## [x.y.z] - YYYY-MM-DD`, then `### Added | Changed | Fixed | Removed`
+with one-line bullets (`**bold**` and `` `code` `` are rendered). An `x.y.0` entry opens with a **short title line**
+and nothing else — "Notifications", "WebSocket session tracking" — which the app shows as that whole series' headline
+(`changelog.js` takes the summary's first sentence, or all of it when there is no full stop, so a title stays whole);
+a test enforces that an `x.y.0` has one. Notes are terse and factual, in the shape of a GitHub changelog: what
+changed, and the fact that makes it make sense. Nothing a release did not do.
 
 History shape: a release is its logical commits (backend before UI, `fix(...)` on their own, then `docs:`),
 followed by `chore(release): x.y.z` bumping `Cargo.toml` + `Cargo.lock`, and an annotated tag `vX.Y.Z`. Every
