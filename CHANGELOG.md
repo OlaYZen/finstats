@@ -7,6 +7,12 @@ Format: `## [version] - date`, then `### Added`, `### Changed`, `### Fixed` or `
 with one bullet per change. An `x.y.0` release carries a short title line under its heading:
 that title is what the app uses as the headline of the whole series.
 
+## [1.6.4] - 2026-09-24
+
+### Added
+- **Five more places to send notifications**: Telegram, Slack, Pushover, Pushbullet and e-mail, beside the webhook, Discord, ntfy and Gotify destinations already there. Each asks only for what it needs — a chat id, a user key, a mailbox — and the three that live at one service (Telegram, Pushover, Pushbullet) can only ever be reached there, so a token cannot be posted to a look-alike host. Mail goes out over TLS from the first byte or `STARTTLS`, and there is no third option.
+- **Licences**, under **Settings**: finstats' own GPL and every third-party licence it is built on — 253 Rust crates, the two bundled fonts, the map outlines and the geolocation database — each text in full, as its own project wrote it. Pick a component and its licence opens in the window beside the list; a crate that ships several files switches between them in place. The list is generated from the crates finstats is actually built from, so a dependency cannot be added without its licence being recorded.
+
 ## [1.6.3] - 2026-09-24
 
 ### Fixed
