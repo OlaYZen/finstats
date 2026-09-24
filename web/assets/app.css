@@ -1160,7 +1160,7 @@ a.chip-link:hover { border-color: var(--accent); color: var(--text); text-decora
 .cl-group { margin-top: 14px; }
 .cl-kind { display: inline-flex; align-items: center; gap: 5px; margin: 0 0 6px; font-size: 11.5px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; color: var(--text-muted); }
 .cl-kind .icon { color: var(--accent-hi); }
-.cl-items { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 6px; color: var(--text); font-size: 13.5px; line-height: 1.55; max-width: 78ch; overflow-wrap: anywhere; }
+.cl-items { margin: 0; padding-left: 18px; list-style: disc; display: flex; flex-direction: column; gap: 6px; color: var(--text); font-size: 13.5px; line-height: 1.55; max-width: 78ch; overflow-wrap: anywhere; }
 .cl-items li::marker { color: var(--text-faint); }
 .cl-items strong { color: #f0f0f0; font-weight: 600; }
 .cl-code { padding: 1px 5px; border-radius: 4px; background: var(--bg-sunken); border: 1px solid var(--border-soft); font-size: 12px; }
@@ -1274,25 +1274,53 @@ button.ep[aria-disabled="true"]:hover { filter: none; outline: 0; }
 /* ------------------------------------------------------------ patch notes: one fold per minor series */
 .cl-series { background: var(--bg-2); border: 1px solid var(--border-soft); border-radius: var(--radius); min-width: 0; }
 .cl-series.is-current { border-color: color-mix(in srgb, var(--accent) 55%, var(--border-soft)); }
-.cl-series-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; padding: 13px 18px; cursor: pointer; list-style: none; border-radius: var(--radius); }
-.cl-series-head::-webkit-details-marker { display: none; }
-.cl-series-head:hover { background: var(--hover); }
-.cl-series[open] > .cl-series-head { border-bottom: 1px solid var(--border-soft); border-radius: var(--radius) var(--radius) 0 0; }
-.cl-chev { align-self: center; color: var(--text-faint); transition: transform var(--ease); flex: none; }
-.cl-series[open] > .cl-series-head .cl-chev { transform: rotate(90deg); }
+/* Nothing folds here, so the head is a heading and not a button: every series stands open and
+   the list of versions beside the notes is what gets you about. */
+.cl-series-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; padding: 13px 18px;
+  border-bottom: 1px solid var(--border-soft); border-radius: var(--radius) var(--radius) 0 0; }
 .cl-series-name { font-size: 17px; font-weight: 650; letter-spacing: -0.01em; color: #f0f0f0; }
 .cl-series-range { color: var(--text-faint); font-size: 12px; }
-.cl-series-head .cl-running { align-self: center; }
 .cl-series-about { flex: 1 1 260px; min-width: 0; color: var(--text-muted); font-size: 13.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .cl-series-meta { margin-left: auto; color: var(--text-faint); font-size: 12.5px; white-space: nowrap; }
 .cl-series-body { padding: 4px 18px 8px; }
+.cl-series, .cl-release { scroll-margin-top: 14px; }
 /* inside a fold the releases are sections, not cards of their own */
 .cl-series-body .cl-release { padding: 14px 0 12px; background: none; border: 0; border-radius: 0; }
 .cl-series-body .cl-release + .cl-release { border-top: 1px solid var(--border-soft); }
 .cl-series-body .cl-version { font-size: 14.5px; }
 @media (max-width: 560px) { .cl-series-meta { margin-left: 0; flex-basis: 100%; } .cl-series-about { flex-basis: 100%; white-space: normal; } }
-/* the release inside already says so */
-.cl-series[open] > .cl-series-head .cl-running { display: none; }
+
+/* ---- patch notes: the list of versions beside the notes
+   Wide enough for two columns and it sits alongside, stuck to the top and scrolling on its own;
+   narrower and it becomes a row of series above the notes, wrapping rather than scrolling
+   sideways, because a row you have to drag is worse than one that is two lines tall. */
+.cl-wrap { display: grid; gap: 14px; align-items: start; }
+.cl-toc { min-width: 0; }
+.cl-toc-title { margin: 0 0 8px; padding-left: 8px; font-size: 11.5px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--text-muted); }
+.cl-toc-list { display: flex; flex-direction: column; gap: 1px; }
+.cl-toc-head { display: flex; align-items: center; gap: 8px; width: 100%; padding: 5px 8px; border: 0; border-radius: var(--radius-sm);
+  background: none; color: var(--text-muted); font-size: 12.5px; text-align: left; transition: background var(--ease), color var(--ease); }
+.cl-toc-head:hover { background: var(--hover); color: var(--text); }
+.cl-toc-key { font-weight: 600; }
+.cl-toc-n { margin-left: auto; color: var(--text-faint); font-size: 11px; }
+.cl-toc-series.is-at > .cl-toc-head { color: var(--text); background: var(--accent-wash); }
+.cl-toc-vers { display: flex; flex-direction: column; gap: 1px; margin: 1px 0 3px 15px; padding-left: 7px; border-left: 1px solid var(--border-soft); }
+.cl-toc-ver { display: flex; align-items: center; gap: 6px; width: 100%; padding: 3px 8px; border: 0; border-radius: var(--radius-sm);
+  background: none; color: var(--text-faint); font-size: 12px; text-align: left; transition: background var(--ease), color var(--ease); }
+.cl-toc-ver:hover { background: var(--hover); color: var(--text); }
+.cl-toc-ver.is-at { color: var(--text); background: var(--hover); }
+.cl-toc-ver.is-running::after { content: ''; width: 5px; height: 5px; margin-left: auto; border-radius: 50%; background: var(--accent-hi); flex: none; }
+@media (min-width: 1180px) {
+  .cl-wrap { grid-template-columns: minmax(0, 1fr) 176px; column-gap: 26px; }
+  .cl-list { grid-column: 1; grid-row: 1; }
+  .cl-toc { grid-column: 2; grid-row: 1; position: sticky; top: 14px; max-height: calc(100vh - var(--statusbar-h) - 28px); overflow-y: auto; overscroll-behavior: contain; }
+}
+@media (max-width: 1179px) {
+  .cl-toc-list { flex-direction: row; flex-wrap: wrap; gap: 6px; }
+  .cl-toc-head { width: auto; border: 1px solid var(--border-soft); }
+  .cl-toc-vers { display: none; }
+  .cl-toc-n { margin-left: 0; }
+}
 
 /* ------------------------------------------------------------ radar */
 .radar { display: flex; justify-content: center; }
