@@ -1083,7 +1083,7 @@ Running jobs come first, then whatever ran most recently.
 
 ---
 
-# v1.7 — Licences
+# v1.6.4 — Licences
 
 `GET /api/licenses` (any signed-in user) — what finstats is built on, and the licence each part is under. It is the
 same for every caller and cannot change while the process runs, so it is rendered once at the first call and handed out
@@ -1091,9 +1091,9 @@ unchanged after that; it runs to about half a megabyte of licence text (≈ 55 K
 
 ```jsonc
 {
-  "version": "1.7.0",                        // the running version
+  "version": "1.6.4",                        // the running version
   "components": [
-    {"name": "finstats", "version": "1.7.0", "license": "GPL-3.0-only",
+    {"name": "finstats", "version": "1.6.4", "license": "GPL-3.0-only",
      "repository": "https://github.com/OlaYZen/finstats",
      "notices": [253],                       // indices into "notices" below; may be empty
      "kind": "app" | "bundled" | "crate"}
