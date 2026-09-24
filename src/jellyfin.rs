@@ -382,17 +382,6 @@ impl Jellyfin {
         self.get_array("/ScheduledTasks", &[]).await
     }
 
-    /// Jellyfin's own "Scan Media Library" task: (is it running right now, when it last finished).
-    /// `None` when the server does not list such a task.
-    pub async fn library_scan_status(&self) -> Result<Option<(bool, Option<i64>)>> {
-        let tasks = self.scheduled_tasks().await?;
-        Ok(tasks.iter().find(|t| t["Key"].as_str() == Some("RefreshLibrary") || t["Name"].as_str() == Some("Scan Media Library")).map(|t| {
-            let running = t["State"].as_str().is_some_and(|s| s != "Idle");
-            let finished = t["LastExecutionResult"]["EndTimeUtc"].as_str().and_then(crate::db::parse_ts);
-            (running, finished)
-        }))
-    }
-
     /// Disk usage per library and system folder. Only exists on Jellyfin 10.11+.
     pub async fn storage(&self) -> Option<Value> {
         self.get_json("/System/Info/Storage", &[]).await.ok()
@@ -459,6 +448,17 @@ impl Jellyfin {
             .to_string();
         Ok(Some((resp.bytes().await?.to_vec(), ct)))
     }
+}
+
+/// Jellyfin's own "Scan Media Library" task in a list of tasks: (is it running right now, when it last
+/// finished). `None` when the list holds no such task. Pure, so one read of `/ScheduledTasks` can answer
+/// this and still be worth something to `jobs::observe`.
+pub fn scan_status(tasks: &[Value]) -> Option<(bool, Option<i64>)> {
+    tasks.iter().find(|t| t["Key"].as_str() == Some("RefreshLibrary") || t["Name"].as_str() == Some("Scan Media Library")).map(|t| {
+        let running = t["State"].as_str().is_some_and(|s| s != "Idle");
+        let finished = t["LastExecutionResult"]["EndTimeUtc"].as_str().and_then(crate::db::parse_ts);
+        (running, finished)
+    })
 }
 
 #[cfg(test)]

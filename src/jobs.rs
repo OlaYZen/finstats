@@ -7,12 +7,17 @@
 //!
 //! **A run is timed by watching it, because Jellyfin does not say when it started.** A task carries a
 //! percentage and nothing else — no start time for the run in progress — so `Watch` remembers the
-//! percentages this finstats has seen and `eta_s` works the rest out from the rate they moved at, falling
-//! back to how long the last run took. It is therefore an estimate that gets better the longer a page is
-//! open, and it says so rather than pretending.
+//! percentages this finstats has seen and `eta_s` works the rest out from the rate they moved at. When
+//! nothing has been seen to move there is no number, and the page says so rather than guessing.
 //!
-//! **Nothing is asked for unless somebody is looking.** The list is read from Jellyfin at most every
-//! `MIN_GAP_S`, only when this endpoint is called, and finstats never starts, stops or changes a task
+//! **The watching does not wait for somebody to look.** `observe` feeds the same `Watch` from task lists
+//! finstats has already read for other reasons — the scan check every 5 minutes, the server details every
+//! 15 — so a run that has been going for an hour is an estimate the moment the page opens, instead of an
+//! ellipsis until it has been watched. Those reads happen either way; this only stops throwing the
+//! percentages in them away.
+//!
+//! **Nothing is asked for unless somebody is looking.** The list is read from Jellyfin *for this endpoint*
+//! at most every `MIN_GAP_S`, only when it is called, and finstats never starts, stops or changes a task
 //! there: it is the same read-only relationship as everywhere else.
 
 use std::collections::HashMap;
@@ -263,6 +268,33 @@ impl Watch {
     fn forget(&mut self, running: &[String]) {
         self.runs.retain(|id, _| running.iter().any(|r| r == id));
     }
+
+    /// Note where every running job in a task list has got to. Unlike the endpoint's own path this
+    /// touches nothing else: not `answer`, not `fetched_at`, so what a page is served and how often
+    /// Jellyfin is read for it are exactly as they were.
+    ///
+    /// A job the list says is idle has finished, and its run is dropped. A job the list does not mention
+    /// at all is left alone, because the lists finstats reads elsewhere leave out the hidden tasks and a
+    /// hidden job the page is watching must not be forgotten by a read that could not see it.
+    pub fn observe(&mut self, tasks: &[Value], now: i64) {
+        for t in tasks {
+            let Some(id) = t["Id"].as_str().or_else(|| t["Key"].as_str()).filter(|s| !s.is_empty()) else { continue };
+            if t["State"].as_str().unwrap_or("Idle") == "Idle" {
+                self.runs.remove(id);
+            } else {
+                self.note(id, t["CurrentProgressPercentage"].as_f64().unwrap_or(0.0).clamp(0.0, 100.0), now);
+            }
+        }
+    }
+}
+
+/// Time the runs in a task list finstats read for another reason. Costs no request: the caller already
+/// has the list in hand.
+pub fn observe(app: &App, tasks: &[Value]) {
+    if tasks.is_empty() {
+        return;
+    }
+    app.jf_jobs.lock().unwrap().observe(tasks, db::now());
 }
 
 // ---------------------------------------------------------------- the answer
@@ -425,6 +457,44 @@ mod tests {
 
         w.forget(&["b".to_string()]);
         assert_eq!(w.note("a", 5.0, 300).first_at, 300, "a job that stopped is not remembered");
+    }
+
+    /// The whole point of `observe`: the reads finstats already makes time the run, so the first thing a
+    /// page is ever told about a slow job is a number rather than an ellipsis.
+    #[test]
+    fn a_job_is_already_timed_by_the_time_anybody_opens_the_page() {
+        let task = |state: &str, pct: f64| json!({ "Id": "trickplay", "Key": "RefreshTrickplay", "State": state, "CurrentProgressPercentage": pct });
+        let mut w = Watch::default();
+
+        // Two of the five-minute scan checks, with nobody looking at anything.
+        w.observe(&[task("Running", 4.0)], 0);
+        w.observe(&[task("Running", 6.0)], 300);
+
+        // Somebody opens the Server page. This is its first reading, and it already has an estimate:
+        // 2% per five minutes, 94% to go.
+        let run = w.note("trickplay", 6.0, 303);
+        let (gained, over_s) = run.measured();
+        assert_eq!(eta_s(6.0, gained, over_s), Some(14_241), "about four hours, said straight away");
+        assert_eq!(run.first_at, 0, "watched since the first background reading, not since the page opened");
+
+        // Without it, the same page would have nothing to say until the percentage moved under it.
+        let mut cold = Watch::default();
+        let run = cold.note("trickplay", 6.0, 303);
+        let (gained, over_s) = run.measured();
+        assert_eq!(eta_s(6.0, gained, over_s), None, "one reading is nothing to measure between");
+    }
+
+    #[test]
+    fn observing_forgets_what_has_stopped_but_never_what_it_could_not_see() {
+        let mut w = Watch::default();
+        w.note("hidden-one", 10.0, 0);
+        w.note("scan", 10.0, 0);
+
+        // The lists finstats reads elsewhere leave the hidden tasks out. A job missing from one of them
+        // has not stopped; it was never in the list to begin with.
+        w.observe(&[json!({ "Id": "scan", "State": "Idle", "CurrentProgressPercentage": 0.0 })], 60);
+        assert_eq!(w.note("hidden-one", 12.0, 60).first_at, 0, "a hidden run the read could not see is still being watched");
+        assert_eq!(w.note("scan", 10.0, 60).first_at, 60, "a run the read says is over is dropped");
     }
 
     #[test]

@@ -147,18 +147,26 @@ pub async fn scheduler(app: App) {
                 timer_due
             } else if now - last_scan_check >= SCAN_CHECK_EVERY_S {
                 last_scan_check = now;
-                match jf.library_scan_status().await {
-                    Ok(Some((true, _))) => false, // mid-scan: a read now would be half old, half new
-                    Ok(Some((false, Some(finished)))) => {
-                        if finished > last_library {
-                            tracing::info!("Jellyfin finished a library scan; reading the library");
+                // One read, two answers: whether a scan is on, and where every running job has got to.
+                // Timing a run costs nothing once the list is in hand, and it is what lets the Jellyfin
+                // jobs card open on an estimate instead of on an ellipsis.
+                match jf.scheduled_tasks().await {
+                    Ok(tasks) => {
+                        crate::jobs::observe(&app, &tasks);
+                        match crate::jellyfin::scan_status(&tasks) {
+                            Some((true, _)) => false, // mid-scan: a read now would be half old, half new
+                            Some((false, Some(finished))) => {
+                                if finished > last_library {
+                                    tracing::info!("Jellyfin finished a library scan; reading the library");
+                                }
+                                finished > last_library || now - last_library >= SAFETY_NET_S
+                            }
+                            Some((false, None)) => timer_due, // Jellyfin has never scanned: fall back to the timer
+                            None => {
+                                tracing::debug!("Jellyfin lists no library scan task; using the timer");
+                                timer_due
+                            }
                         }
-                        finished > last_library || now - last_library >= SAFETY_NET_S
-                    }
-                    Ok(Some((false, None))) => timer_due, // Jellyfin has never scanned: fall back to the timer
-                    Ok(None) => {
-                        tracing::debug!("Jellyfin lists no library scan task; using the timer");
-                        timer_due
                     }
                     Err(_) => false,                                 // Jellyfin unreachable; the collector already reports that
                 }
@@ -583,6 +591,7 @@ async fn sync_server(app: &App, jf: &Jellyfin) -> Result<String> {
     let storage_raw = jf.storage().await;
     let plugins = jf.plugins().await.unwrap_or_default();
     let tasks = jf.scheduled_tasks().await.unwrap_or_default();
+    crate::jobs::observe(app, &tasks);
     app.tasks.update(ID, "Reading devices", Some(0.6));
     let devices = jf.devices().await.unwrap_or_default();
 
