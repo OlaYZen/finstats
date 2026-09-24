@@ -41,6 +41,14 @@ pub(crate) fn trustworthy_removal(seen: usize, current: i64) -> bool {
     !(would_remove >= WIPE_FLOOR && seen.saturating_mul(20) < current)
 }
 
+/// A whole set gone at once — Jellyfin listing zero libraries, or zero users, where finstats holds
+/// some — is a broken read (an auth failure, an API change), never a normal day: you do not lose every
+/// library at once. Unlike the item guard there is no "big enough to matter" floor, because a set going
+/// entirely empty is the catastrophe whatever its size. Losing *some* (one library of five) is normal.
+fn whole_set_vanished(seen: usize, current: i64) -> bool {
+    current > 0 && seen == 0
+}
+
 fn allow_shrink() -> bool {
     std::env::var("FINSTATS_ALLOW_LIBRARY_SHRINK").is_ok_and(|v| v == "1" || v.eq_ignore_ascii_case("true"))
 }
@@ -296,7 +304,7 @@ async fn sync_users(app: &App, jf: &Jellyfin) -> Result<String> {
             // The same guard as libraries and items: an empty /Users where finstats knows people is a
             // broken read, not everyone deleted — do not mark them all removed.
             let current: i64 = tx.query_row("SELECT COUNT(*) FROM users WHERE removed = 0", [], |r| r.get(0))?;
-            if !shrink_ok && !trustworthy_removal(count, current) {
+            if !shrink_ok && whole_set_vanished(count, current) {
                 tx.rollback()?;
                 return Ok(Some(current));
             }
@@ -476,7 +484,7 @@ async fn sync_libraries(app: &App, jf: &Jellyfin) -> Result<String> {
             // The same guard as items, at the level above: a Jellyfin that lists no libraries where
             // finstats knows several is a broken read, not an emptied server.
             let current: i64 = tx.query_row("SELECT COUNT(*) FROM libraries WHERE removed = 0", [], |r| r.get(0))?;
-            if !shrink_ok && !trustworthy_removal(seen_libs, current) {
+            if !shrink_ok && whole_set_vanished(seen_libs, current) {
                 tx.rollback()?;
                 return Ok(Some(current));
             }
@@ -838,6 +846,15 @@ mod tests {
 
         store_people(&conn, &json!({ "Id": "AB-CD", "People": [{ "Id": "d2", "Name": "John Roe", "Type": "Director" }] })).unwrap();
         assert_eq!(count("SELECT COUNT(*) FROM item_people"), 1);
+    }
+
+    #[test]
+    fn losing_every_library_or_user_at_once_is_always_a_broken_read() {
+        assert!(whole_set_vanished(0, 5), "five libraries down to none is a broken read");
+        assert!(whole_set_vanished(0, 1), "even one set going to zero is caught");
+        assert!(!whole_set_vanished(4, 5), "losing one of five is normal");
+        assert!(!whole_set_vanished(0, 0), "nothing held, nothing lost");
+        assert!(!whole_set_vanished(3, 3), "unchanged");
     }
 
     #[test]
