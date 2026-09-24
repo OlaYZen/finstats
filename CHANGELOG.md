@@ -7,6 +7,11 @@ Format: `## [version] - date`, then `### Added`, `### Changed`, `### Fixed` or `
 with one bullet per change. An `x.y.0` release carries a short title line under its heading:
 that title is what the app uses as the headline of the whole series.
 
+## [1.6.2] - 2026-09-24
+
+### Fixed
+- The data-integrity guard added in 1.6.1 was too eager: a library genuinely losing most of its items — a handful of clips whose files went, say — was mistaken for a broken read, so finstats refused to update it and stopped. It now steps in only for a *clearly* broken read: a library big enough to matter that reads back completely empty, or a large one gutted to almost nothing. Everyday changes apply as before, and the "Jellyfin returned nothing" case is still caught.
+
 ## [1.6.1] - 2026-09-24
 
 ### Added
