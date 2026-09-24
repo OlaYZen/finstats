@@ -529,6 +529,7 @@ impl Db {
         let db = Db { pool };
         let running = env!("CARGO_PKG_VERSION");
         refuse_downgrade(&*db.conn()?, running)?;
+        back_up_before_update(&*db.conn()?, path, running)?;
         db.migrate()?;
         record_version(&*db.conn()?, running)?;
         Ok(db)
@@ -613,6 +614,90 @@ fn refuse_downgrade(conn: &Connection, running: &str) -> Result<()> {
          or start this version on an empty data folder and bring your history back from one of the files in\n\
          the old folder's backups/ directory:   finstats restore <file>"
     )
+}
+
+/// Whether opening this database is an *update* worth snapshotting first: a populated database (it has
+/// a schema, so it holds data) that a different finstats version is now opening, or that still has
+/// migrations to run. A brand-new database has nothing to protect, and the same version restarting is
+/// not an update.
+fn is_update(schema: i64, stored: Option<&str>, running: &str, migrations_len: usize) -> bool {
+    schema > 0 && ((schema as usize) < migrations_len || stored != Some(running))
+}
+
+/// Kept apart from the exportable JSON backups in `backups/`: these are byte-for-byte copies of the
+/// whole database — the library and the secrets included — for going back locally if an upgrade breaks
+/// something, so they are never served over the API.
+const PRE_UPDATE_DIR: &str = "pre-update-backups";
+const PRE_UPDATE_KEEP: usize = 3;
+
+/// Before a newer finstats touches an older database, copy the whole thing, so that nothing an upgrade
+/// might break — a migration, or the new binary writing rows the old one cannot — can lose the user's
+/// data beyond recovery. They can go back to the copy and report the bug without having lost anything.
+/// The copy is a consistent full snapshot (`VACUUM INTO`), taken before any migration runs. Missing the
+/// copy is only fatal when migrations are pending (the risky case); a plain version bump warns and goes on.
+fn back_up_before_update(conn: &Connection, path: &Path, running: &str) -> Result<()> {
+    let schema: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
+    if schema == 0 {
+        return Ok(()); // brand new: no settings table yet, and no data to protect
+    }
+    let stored = get_setting(conn, VERSION_KEY)?;
+    if !is_update(schema, stored.as_deref(), running, MIGRATIONS.len()) {
+        return Ok(());
+    }
+    let from = stored.as_deref().unwrap_or("an unknown earlier version");
+    let pending = (schema as usize) < MIGRATIONS.len();
+    if std::env::var("FINSTATS_SKIP_PREUPDATE_BACKUP").is_ok_and(|v| v == "1" || v.eq_ignore_ascii_case("true")) {
+        tracing::warn!("update detected ({from} -> {running}) but FINSTATS_SKIP_PREUPDATE_BACKUP is set; not backing up first");
+        return Ok(());
+    }
+    let dir = path.parent().unwrap_or_else(|| Path::new(".")).join(PRE_UPDATE_DIR);
+    let stamp = chrono::Local::now().format("%Y%m%d-%H%M%S");
+    let dst = dir.join(format!("finstats-{}-{stamp}.db", stored.as_deref().unwrap_or("pre-1.0.5")));
+    match snapshot_into(conn, &dir, &dst) {
+        Ok(()) => {
+            tracing::info!(
+                "update detected ({from} -> {running}); backed up the database to {} before upgrading. If anything looks wrong after this update, stop finstats, replace {} with that file, and start the previous version — then report the bug.",
+                dst.display(),
+                path.display()
+            );
+            prune_snapshots(&dir, PRE_UPDATE_KEEP);
+            Ok(())
+        }
+        Err(e) if pending => bail!(
+            "could not back up the database before applying migrations ({from} -> {running}): {e:#}\n\n\
+             finstats will not run migrations without a safety copy, so nothing was changed. Free up disk\n\
+             space (the copy needs about as much room as the database) or fix the permissions on {}, then\n\
+             start again. To upgrade without a copy anyway, set FINSTATS_SKIP_PREUPDATE_BACKUP=1.",
+            dir.display()
+        ),
+        Err(e) => {
+            tracing::warn!("could not back up before the update ({from} -> {running}): {e:#}; continuing, since there is no schema change this time");
+            Ok(())
+        }
+    }
+}
+
+/// A consistent copy of the whole database to `dst` (which must not already exist). `VACUUM INTO`
+/// writes a compact, fully-committed snapshot without needing the file closed or a special build feature.
+fn snapshot_into(conn: &Connection, dir: &Path, dst: &Path) -> Result<()> {
+    std::fs::create_dir_all(dir).with_context(|| format!("creating {}", dir.display()))?;
+    let dst = dst.to_str().context("backup path is not valid UTF-8")?;
+    conn.execute_batch(&format!("VACUUM INTO '{}'", dst.replace('\'', "''")))?;
+    Ok(())
+}
+
+/// Keep only the newest `keep` snapshots; a full copy is large, and the point is recovery from the last
+/// upgrade or two, not a museum.
+fn prune_snapshots(dir: &Path, keep: usize) {
+    let Ok(entries) = std::fs::read_dir(dir) else { return };
+    let mut snaps: Vec<_> = entries.filter_map(|e| e.ok()).map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "db")).collect();
+    if snaps.len() <= keep {
+        return;
+    }
+    snaps.sort_by_key(|p| std::fs::metadata(p).and_then(|m| m.modified()).ok());
+    for old in &snaps[..snaps.len() - keep] {
+        let _ = std::fs::remove_file(old);
+    }
 }
 
 /// Remember the newest version that has opened this database; never lowers it.
@@ -715,6 +800,22 @@ mod tests {
     }
 
     #[test]
+    fn an_update_is_a_populated_database_a_different_version_now_opens() {
+        let n = MIGRATIONS.len();
+        // Brand new: nothing to protect, whatever the versions say.
+        assert!(!is_update(0, None, "1.7.0", n));
+        assert!(!is_update(0, Some("1.6.3"), "1.7.0", n));
+        // The same version, fully migrated, restarting: not an update.
+        assert!(!is_update(n as i64, Some("1.7.0"), "1.7.0", n));
+        // A different (newer) binary opening a populated database: an update.
+        assert!(is_update(n as i64, Some("1.6.3"), "1.7.0", n));
+        // A pending migration is an update even without a version change (a dev adding one).
+        assert!(is_update((n - 1) as i64, Some("1.7.0"), "1.7.0", n));
+        // A database from before versions were recorded: unknown past, back it up to be safe.
+        assert!(is_update(n as i64, None, "1.7.0", n));
+    }
+
+    #[test]
     fn versions_compare_as_numbers_not_text() {
         assert!(parse_version("1.10.0") > parse_version("1.9.12"));
         assert_eq!(parse_version("2.0.0-rc.1+build5"), Some((2, 0, 0)));
@@ -737,6 +838,41 @@ mod tests {
             assert!(err.contains("older finstats 1.0.4") && err.contains("finstats restore"), "{err}");
         }
         assert!(refuse_downgrade(&db_at(n, Some("1.1.0")), "1.0.4").unwrap_err().to_string().contains("last used by finstats 1.1.0"));
+    }
+
+    #[test]
+    fn an_update_snapshots_the_whole_database_before_migrating() {
+        let dir = std::env::temp_dir().join(format!("finstats-preupdate-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("finstats.db");
+        {
+            let db = Db::open(&path).unwrap();
+            let c = db.conn().unwrap();
+            set_setting(&c, "marker", "keep-me").unwrap();
+            // Pretend an older finstats last opened it, so the next open is an update.
+            set_setting(&c, VERSION_KEY, "0.1.0").unwrap();
+        }
+        // Opening as the current (newer) version detects the update and snapshots first.
+        let _db = Db::open(&path).unwrap();
+        let snaps: Vec<_> = std::fs::read_dir(dir.join("pre-update-backups"))
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .map(|e| e.path())
+            .filter(|p| p.extension().is_some_and(|x| x == "db"))
+            .collect();
+        assert_eq!(snaps.len(), 1, "exactly one pre-update snapshot");
+        // The snapshot is a real database that still holds the data, and it captured the OLD version —
+        // i.e. it was taken before the upgrade rewrote anything.
+        let snap = Connection::open(&snaps[0]).unwrap();
+        assert_eq!(get_setting(&snap, "marker").unwrap().as_deref(), Some("keep-me"));
+        assert_eq!(get_setting(&snap, VERSION_KEY).unwrap().as_deref(), Some("0.1.0"));
+        // A plain restart of the same version does not pile up another snapshot.
+        drop(_db);
+        let _db = Db::open(&path).unwrap();
+        let count = std::fs::read_dir(dir.join("pre-update-backups")).unwrap().filter_map(|e| e.ok()).filter(|e| e.path().extension().is_some_and(|x| x == "db")).count();
+        assert_eq!(count, 1, "a restart of the same version must not snapshot again");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
