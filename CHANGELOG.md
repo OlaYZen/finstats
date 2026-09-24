@@ -7,6 +7,11 @@ Format: `## [version] - date`, then `### Added`, `### Changed`, `### Fixed` or `
 with one bullet per change. An `x.y.0` release carries a short title line under its heading:
 that title is what the app uses as the headline of the whole series.
 
+## [1.6.3] - 2026-09-24
+
+### Fixed
+- The safety guard now also steps in when Jellyfin lists *no* libraries or *no* users at all — a broken read, never a normal day — which the 1.6.2 tuning had let through. Losing some libraries is still treated as ordinary; losing every one of them at once is not.
+
 ## [1.6.2] - 2026-09-24
 
 ### Fixed
