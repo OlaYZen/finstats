@@ -15,6 +15,17 @@ const SECRET_HELP = {
   webhook: 'Sent as “Authorization: Bearer …”. Leave empty if your receiver needs no header.',
   ntfy: 'Only for a protected topic or your own ntfy with access control.',
   gotify: 'Gotify → Apps → create an application → its token.',
+  telegram: 'Talk to @BotFather in Telegram → /newbot → the token it gives you.',
+  pushover: 'pushover.net → Your Applications → Create an Application → its API token.',
+  pushbullet: 'pushbullet.com → Settings → Account → Create Access Token.',
+  email: 'Leave empty for a relay that needs no sign-in. A mail provider usually wants an app password rather than the one you sign in with.',
+};
+
+// The address field, where a channel needs more said about it than “post here”.
+const ADDRESS_HELP = {
+  discord: 'Discord → Channel settings → Integrations → Webhooks → Copy Webhook URL. That URL is the password: finstats stores it and never shows it again.',
+  slack: 'Slack → your app → Incoming Webhooks → Add New Webhook to Workspace, then copy the URL. That URL is the password: finstats stores it and never shows it again.',
+  email: 'Your mail server. smtps:// is encrypted from the first byte (port 465); smtp:// starts plain and must upgrade with STARTTLS (587). finstats sends neither the letter nor the password in the clear.',
 };
 
 const STATE_LABEL = { sent: 'Sent', queued: 'Waiting', failed: 'Given up' };
@@ -104,7 +115,11 @@ export function notificationsPanel(ctx) {
     const kindHelp = h('p', { class: 'help', id: 'notify-kind-help' });
     const name = formField({ id: 'notify-name', label: 'Name (optional)', autocomplete: 'off', help: 'Shown in finstats: “Household channel”, “My phone”.' });
     const url = formField({ id: 'notify-url', label: 'Address', autocomplete: 'off', inputMode: 'url', help: ' ' });
-    const topic = formField({ id: 'notify-topic', label: 'Topic', autocomplete: 'off', help: 'The ntfy topic to publish to. Anybody who knows it can read your notifications, so make it hard to guess.' });
+    const topic = formField({ id: 'notify-topic', label: 'Topic', autocomplete: 'off', help: ' ' });
+    // One field per extra any channel asks for (only mail has any), shown for the one being added.
+    const extraKeys = [...new Set(channels.flatMap((c) => (c.extras || []).map((e) => e.key)))];
+    const extras = new Map(extraKeys.map((key) => [key, formField({ id: `notify-x-${key}`, label: key, autocomplete: 'off', help: ' ' })]));
+    const specOf = (key) => (channel.extras || []).find((e) => e.key === key);
     const secret = formField({ id: 'notify-secret', label: 'Token', type: 'password', autocomplete: 'new-password', help: ' ' });
     const severity = h('select', { class: 'input', id: 'notify-sev' }, data.catalogue.severities.map((s) => h('option', { value: s }, { info: 'Everything', warn: 'Warnings and alerts', alert: 'Alerts only' }[s] || s)));
     const addresses = h('input', { type: 'checkbox', id: 'notify-addresses', 'aria-describedby': 'notify-addresses-help' });
@@ -132,11 +147,24 @@ export function notificationsPanel(ctx) {
 
     function paintKind() {
       kindHelp.textContent = channel.what;
-      url.input.placeholder = channel.example;
-      url.el.querySelector('.help').textContent = channel.key === 'discord'
-        ? 'Discord → Channel settings → Integrations → Webhooks → Copy Webhook URL. That URL is the password: finstats stores it and never shows it again.'
-        : `The address finstats posts to, like ${channel.example}.`;
+      // A channel finstats already knows the address of asks for no address at all.
+      url.el.hidden = !!channel.fixed_url;
+      url.input.placeholder = existing && existing.kind === channel.key ? 'Unchanged' : channel.example;
+      url.el.querySelector('.help').textContent = ADDRESS_HELP[channel.key] || `The address finstats posts to, like ${channel.example}.`;
       topic.el.hidden = !channel.needs_topic;
+      if (channel.needs_topic) {
+        topic.el.querySelector('.field-label').textContent = channel.topic_label;
+        topic.el.querySelector('.help').textContent = channel.topic_help;
+        topic.input.placeholder = channel.topic_example;
+      }
+      for (const [key, field] of extras) {
+        const spec = specOf(key);
+        field.el.hidden = !spec;
+        if (!spec) continue;
+        field.el.querySelector('.field-label').textContent = spec.label;
+        field.el.querySelector('.help').textContent = spec.help;
+        field.input.placeholder = spec.example;
+      }
       secret.el.hidden = !channel.secret_label;
       if (channel.secret_label) {
         secret.el.querySelector('.field-label').textContent = channel.secret_label;
@@ -147,8 +175,8 @@ export function notificationsPanel(ctx) {
     if (existing) {
       kindSel.value = existing.kind; kindSel.disabled = true;
       name.input.value = existing.name;
-      url.input.placeholder = 'Unchanged';
       topic.input.value = existing.topic || '';
+      for (const [key, field] of extras) field.input.value = (existing.options && existing.options[key]) || '';
       severity.value = existing.min_severity;
       addresses.checked = !!existing.with_addresses;
       certs.checked = !!existing.accept_invalid_certs;
@@ -161,7 +189,7 @@ export function notificationsPanel(ctx) {
       scopeMine.checked = !data.can_add_server;
     }
     kindSel.addEventListener('change', () => { channel = channelOf(kindSel.value); paintKind(); });
-    for (const f of [url, secret, topic]) f.input.addEventListener('input', () => f.setError(''));
+    for (const f of [url, secret, topic, ...extras.values()]) f.input.addEventListener('input', () => f.setError(''));
     paintKind();
 
     const body = () => {
@@ -170,22 +198,32 @@ export function notificationsPanel(ctx) {
         with_addresses: addresses.checked, min_severity: severity.value, accept_invalid_certs: certs.checked, enabled: enabled.checked,
       };
       if (!existing) b.scope = scopeMine.checked ? 'me' : 'server';
-      if (url.input.value.trim()) b.url = url.input.value.trim();
+      if (url.input.value.trim() && !channel.fixed_url) b.url = url.input.value.trim();
       if (secret.input.value) b.secret = secret.input.value;
       if (channel.needs_topic) b.topic = topic.input.value.trim();
+      if (channel.extras && channel.extras.length) {
+        b.options = {};
+        for (const e of channel.extras) b.options[e.key] = extras.get(e.key).input.value.trim();
+      }
       return b;
     };
     function valid() {
       let ok = true;
-      if (!existing && !url.input.value.trim()) { url.setError(`Enter the address, like ${channel.example}.`); ok = false; }
-      if (channel.needs_topic && !topic.input.value.trim()) { topic.setError('Enter the topic to publish to.'); ok = false; }
+      if (!existing && !url.input.value.trim() && !channel.fixed_url) { url.setError(`Enter the address, like ${channel.example}.`); ok = false; }
+      if (channel.needs_topic && !topic.input.value.trim()) { topic.setError(`Enter the ${channel.topic_label.toLowerCase()}.`); ok = false; }
+      for (const e of channel.extras || []) {
+        if (e.required && !extras.get(e.key).input.value.trim()) { extras.get(e.key).setError(`Enter the ${e.label.toLowerCase()}.`); ok = false; }
+      }
       if (channel.secret_required && !secret.input.value && !(existing && existing.has_secret)) { secret.setError(`Enter the ${channel.secret_label}.`); ok = false; }
       if (!ok) root.querySelector('[aria-invalid="true"]').focus();
       return ok;
     }
     function place(err) {
       const text = err.message || 'Something went wrong.';
-      if (/topic/i.test(text)) { topic.setError(text); topic.input.focus(); }
+      const extra = (channel.extras || []).find((e) => text.toLowerCase().includes(e.label.toLowerCase()));
+      if (extra) { const f = extras.get(extra.key); f.setError(text); f.input.focus(); }
+      else if (channel.needs_topic && text.toLowerCase().includes(channel.topic_label.toLowerCase())) { topic.setError(text); topic.input.focus(); }
+      else if (/topic|chat|mailbox/i.test(text)) { topic.setError(text); topic.input.focus(); }
       else if (/token|key/i.test(text)) { secret.setError(text); secret.input.focus(); }
       else if (err.status === 400) { url.setError(text); url.input.focus(); }
       else mount(formErr, inlineError('notify-form-err', text));
@@ -195,7 +233,7 @@ export function notificationsPanel(ctx) {
       h('h3', { class: 'conn-form-title' }, existing ? `Edit ${existing.name}` : 'Add a destination'),
       h('div', { class: 'form-grid' },
         h('div', { class: 'field' }, h('label', { class: 'field-label', htmlFor: 'notify-kind' }, 'Kind'), kindSel, kindHelp),
-        name.el, url.el, topic.el, secret.el,
+        name.el, url.el, topic.el, ...[...extras.values()].map((f) => f.el), secret.el,
         !existing && data.can_add_server
           ? h('div', { class: 'field' }, h('span', { class: 'field-label' }, 'Who it is for'),
             h('label', { class: 'check' }, scopeServer, 'The server — everything you ticked, about anybody'),
@@ -209,7 +247,7 @@ export function notificationsPanel(ctx) {
         h('label', { class: 'check' }, addresses, 'Include IP addresses and places'),
         h('p', { class: 'help', id: 'notify-addresses-help' }, 'Off: a message says the place is “Oslo, Norway” but never the address it came from. On: the addresses go out too — worth thinking about for a destination somebody else runs, like Discord.'),
         isAdmin() ? h('label', { class: 'check' }, certs, 'Accept a self-signed certificate') : null,
-        isAdmin() ? h('p', { class: 'help', id: 'notify-certs-help' }, 'Only for an https:// address whose certificate is your own.') : null,
+        isAdmin() ? h('p', { class: 'help', id: 'notify-certs-help' }, 'Only for an address whose certificate is your own: a service on your own network, or a mail server of your own.') : null,
         existing ? h('label', { class: 'check' }, enabled, 'Switched on') : null),
       formErr,
       h('div', { class: 'form-actions' }, saveBtn, h('button', { type: 'button', class: 'btn btn-ghost', onClick: () => { editing = null; render(); } }, 'Cancel')));

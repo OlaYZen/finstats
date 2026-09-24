@@ -1123,7 +1123,7 @@ fn describe(body: TargetBody, stored: Option<&Target>, user: &AuthUser) -> std::
             continue;
         }
         if value.len() > 200 || value.chars().any(char::is_control) {
-            return Err(bad(&format!("That does not look like a{} {}", if extra.address { "n" } else { "" }, extra.label.to_lowercase())));
+            return Err(bad(&format!("The {} is too long, or has something in it that cannot be sent", extra.label.to_lowercase())));
         }
         if extra.address {
             crate::mail::address(&value).map_err(|e| bad(&format!("{e}")))?;

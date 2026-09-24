@@ -43,7 +43,7 @@ const EMAIL_EXTRAS: [Extra; 2] = [
     Extra {
         key: "from",
         address: true,
-        label: "From",
+        label: "From address",
         help: "The address the mail is sent as. Many servers only accept one they know.",
         example: "finstats@example.com",
         required: true,
