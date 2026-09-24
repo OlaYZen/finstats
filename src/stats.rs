@@ -465,6 +465,24 @@ pub struct ActivityQuery {
 
 /// `ORDER BY` for a paginated list: a whitelisted column, empty values last whichever way it runs,
 /// and a fixed tiebreaker so pages never shuffle. Unknown keys fall back to the default order.
+/// The words of a `q` filter, each one ready for LIKE: cut to a length a word can plausibly be, then
+/// escaped. The cut is part of building the pattern rather than a check somewhere above it, because
+/// SQLite refuses a LIKE pattern longer than `SQLITE_MAX_LIKE_PATTERN_LENGTH` (50 000) with an error —
+/// so `?q=<50 000 letters>` was a 500 and a line in the log, from any signed-in caller. Escaping comes
+/// after the cut: the other way round, a trim could leave half of an escape pair behind.
+pub(crate) fn like_words(q: Option<&str>) -> Vec<String> {
+    const WORDS: usize = 8;
+    const LONGEST: usize = 100;
+    q.unwrap_or_default()
+        .split_whitespace()
+        .take(WORDS)
+        .map(|w| {
+            let w: String = w.chars().take(LONGEST).collect();
+            format!("%{}%", w.replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_"))
+        })
+        .collect()
+}
+
 pub(crate) fn order_by(columns: &[(&str, &str)], sort: Option<&str>, dir: Option<&str>, default: &str) -> String {
     let Some((_, expr)) = sort.and_then(|k| columns.iter().find(|(key, _)| *key == k)) else { return default.to_string() };
     let dir = if dir == Some("asc") { "ASC" } else { "DESC" };
@@ -505,8 +523,7 @@ pub async fn activity(State(app): State<App>, user: AuthUser, Query(q): Query<Ac
             cond.add("p.series_id = ?", db::norm_id(&id));
         }
         // Word by word: "alya opera" finds plays of Alya… on Opera. Every word must be somewhere in the row.
-        for word in q.q.as_deref().unwrap_or_default().split_whitespace().take(8) {
-            let like = format!("%{}%", word.replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_"));
+        for like in like_words(q.q.as_deref()) {
             let mut fields = vec!["p.item_name", "p.series_name", "p.user_name", "p.client", "p.device_name"];
             if scope.perms.see_network {
                 fields.push("p.remote_ip");
@@ -1219,8 +1236,7 @@ pub async fn events(State(app): State<App>, ServerViewer(_): ServerViewer, Query
                 clauses.push("e.type = ?".into());
                 args.push(t.into());
             }
-            for word in q.q.as_deref().unwrap_or_default().split_whitespace().take(8) {
-                let like = format!("%{}%", word.replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_"));
+            for like in like_words(q.q.as_deref()) {
                 clauses.push("(e.name LIKE ? ESCAPE '\\' OR e.short_overview LIKE ? ESCAPE '\\' OR e.overview LIKE ? ESCAPE '\\')".into());
                 args.extend([like.clone().into(), like.clone().into(), like.into()]);
             }
@@ -1294,7 +1310,10 @@ fn jellyfin_flags(conn: &Connection, user_id: &str) -> Result<Value> {
 
 /// Sweep over play intervals: the most streams (and transcodes) that ever overlapped, and the peak per bucket.
 fn concurrency(conn: &Connection, scope: &Scope, cond: &Cond) -> Result<Value> {
-    let sql = format!("SELECT p.started_at, p.ended_at, p.play_method = 'Transcode' FROM playbacks p {} AND p.ended_at > p.started_at", cond.with_raw("1 = 1").sql());
+    // COALESCE, because `play_method` may be NULL — a row restored from a backup written before the
+    // column existed has nothing to put there — and `NULL = 'Transcode'` is NULL, which is not a
+    // boolean and made this whole page a 500 for everybody until that one row was found.
+    let sql = format!("SELECT p.started_at, p.ended_at, COALESCE(p.play_method = 'Transcode', 0) FROM playbacks p {} AND p.ended_at > p.started_at", cond.with_raw("1 = 1").sql());
     let mut points: Vec<(i64, i32, i32)> = vec![];
     let mut stmt = conn.prepare(&sql)?;
     let mut rows = stmt.query(params_from_iter(cond.args.iter()))?;
@@ -1361,8 +1380,8 @@ pub async fn insights(State(app): State<App>, user: AuthUser, Query(q): Query<Fi
         let client_methods = rows_json(
             c,
             &format!(
-                "SELECT p.client, SUM(p.play_method = 'DirectPlay') AS direct_play, SUM(p.play_method = 'DirectStream') AS direct_stream,
-                        SUM(p.play_method = 'Transcode') AS transcode, COALESCE(SUM(p.duration_s), 0) AS watch_s
+                "SELECT p.client, COALESCE(SUM(p.play_method = 'DirectPlay'), 0) AS direct_play, COALESCE(SUM(p.play_method = 'DirectStream'), 0) AS direct_stream,
+                        COALESCE(SUM(p.play_method = 'Transcode'), 0) AS transcode, COALESCE(SUM(p.duration_s), 0) AS watch_s
                  FROM playbacks p {} GROUP BY p.client ORDER BY COUNT(*) DESC LIMIT 12",
                 cm.sql()
             ),
@@ -1571,6 +1590,24 @@ pub async fn server(State(app): State<App>, ServerViewer(_): ServerViewer) -> Ap
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_search_word_can_never_grow_into_a_pattern_sqlite_refuses() {
+        // SQLite's own limit is 50 000 characters; over it, LIKE is an error and the request a 500.
+        let long = "x".repeat(200_000);
+        let words = like_words(Some(&long));
+        assert_eq!(words.len(), 1);
+        assert_eq!(words[0].len(), 102, "%…% around 100 characters");
+        // Only the first eight words are used, and each is escaped so that % and _ are not wildcards.
+        let many = (0..20).map(|i| format!("w{i}")).collect::<Vec<_>>().join(" ");
+        assert_eq!(like_words(Some(&many)).len(), 8);
+        assert_eq!(like_words(Some("100%_a\\b")), vec![r"%100\%\_a\\b%"]);
+        assert!(like_words(None).is_empty() && like_words(Some("   ")).is_empty());
+        // Escaping happens after the cut, so a trim can never leave half of an escape pair behind.
+        let backslashes = "\\".repeat(200);
+        let one = &like_words(Some(&backslashes))[0];
+        assert_eq!(one.matches("\\\\").count(), 100, "{one}");
+    }
 
     #[test]
     fn order_by_only_accepts_known_columns() {
