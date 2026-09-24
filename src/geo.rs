@@ -340,6 +340,30 @@ mod tests {
     use super::*;
 
     #[test]
+    fn a_database_that_is_not_one_is_refused_rather_than_trusted() {
+        // The file comes off the internet once a month. Nothing about a truncated download, a wrong
+        // kind of database, or a file that is not one at all may take the process with it: `open`
+        // answers `Err`, `load` logs it and lookups simply stop until a good file turns up.
+        let dir = std::env::temp_dir().join(format!("finstats-geo-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let cases: Vec<(&str, Vec<u8>)> = vec![
+            ("empty.mmdb", vec![]),
+            ("text.mmdb", b"this is not a database, it is a sentence".to_vec()),
+            ("zeros.mmdb", vec![0u8; 4096]),
+            ("random.mmdb", (0..8192u32).map(|i| (i.wrapping_mul(2_654_435_761) >> 13) as u8).collect()),
+            // The metadata marker with nothing usable behind it: the shape a truncated download has.
+            ("truncated.mmdb", [&b"\xab\xcd\xefMaxMind.com"[..], &[0u8; 64]].concat()),
+        ];
+        for (name, bytes) in cases {
+            let path = dir.join(name);
+            std::fs::write(&path, &bytes).unwrap();
+            assert!(Database::open(&path).is_err(), "{name} was accepted as a city database");
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn distances_are_great_circle_kilometres() {
         // London to Paris is about 344 km, London to New York about 5570 km.
         assert!((distance_km(51.5074, -0.1278, 48.8566, 2.3522) - 344.0).abs() < 5.0);
