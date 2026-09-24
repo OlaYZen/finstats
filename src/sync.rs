@@ -14,6 +14,32 @@ const PAGE: usize = 500;
 /// Library kinds that only reference items living in other libraries.
 const SKIPPED_COLLECTIONS: [&str; 2] = ["boxsets", "playlists"];
 
+/// A read that comes back far emptier than what finstats already holds is treated as broken — a
+/// Jellyfin upgrade that changed the response shape, an error dressed as `200 {"Items":[]}`, an empty
+/// page — never as "everything was deleted". Marking rows `removed` is destructive (they vanish from
+/// every page and every stat), and `items_page` turns anything it cannot parse into an empty list, so
+/// without this a breaking change on Jellyfin's side would silently wipe a library. Only the
+/// catastrophic shrink is guarded; ordinary churn (some titles gone) still applies, so a real deletion
+/// is not mistaken for a fault. `FINSTATS_ALLOW_LIBRARY_SHRINK=1` waves one through — after genuinely
+/// emptying a library, say — which is also how a fail-closed halt is cleared.
+const REMOVAL_FLOOR: i64 = 20;
+pub(crate) fn trustworthy_removal(seen: usize, current: i64) -> bool {
+    if current <= 0 {
+        return true; // nothing stored yet: a first sync, or a genuinely new set.
+    }
+    if seen == 0 {
+        return false; // saw nothing where finstats holds rows: never trust it, whatever the size.
+    }
+    // Past the empty case, allow ordinary churn: fine to remove a handful, and fine as long as a
+    // tenth of the set survives. Only a catastrophic shrink of something sizeable is refused.
+    let would_remove = current - seen as i64;
+    would_remove < REMOVAL_FLOOR || (seen as i64).saturating_mul(10) >= current
+}
+
+fn allow_shrink() -> bool {
+    std::env::var("FINSTATS_ALLOW_LIBRARY_SHRINK").is_ok_and(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+}
+
 fn opt_str(v: &Value) -> Option<String> {
     v.as_str().map(str::trim).filter(|s| !s.is_empty()).map(str::to_string)
 }
@@ -233,7 +259,9 @@ async fn sync_users(app: &App, jf: &Jellyfin) -> Result<String> {
     app.tasks.update("sync_users", "Fetching users", None);
     let users = jf.users().await?;
     let count = users.len();
-    app.db
+    let shrink_ok = allow_shrink();
+    let refused = app
+        .db
         .call(move |c| {
             let now = db::now();
             let tx = c.transaction()?;
@@ -260,11 +288,25 @@ async fn sync_users(app: &App, jf: &Jellyfin) -> Result<String> {
                     ])?;
                 }
             }
+            // The same guard as libraries and items: an empty /Users where finstats knows people is a
+            // broken read, not everyone deleted — do not mark them all removed.
+            let current: i64 = tx.query_row("SELECT COUNT(*) FROM users WHERE removed = 0", [], |r| r.get(0))?;
+            if !shrink_ok && !trustworthy_removal(count, current) {
+                tx.rollback()?;
+                return Ok(Some(current));
+            }
             tx.execute("UPDATE users SET removed = 1 WHERE updated_at < ?1", [now])?;
             tx.commit()?;
-            Ok(())
+            Ok(None)
         })
         .await?;
+    if let Some(current) = refused {
+        let msg = format!(
+            "Jellyfin returned {count} user(s) where finstats knows {current}. Refusing to mark the missing ones removed — this looks like a Jellyfin change or a bad read. Nothing was changed."
+        );
+        app.request_halt(msg.clone());
+        return Err(anyhow!(msg));
+    }
     Ok(format!("{count} users"))
 }
 
@@ -412,7 +454,10 @@ async fn sync_libraries(app: &App, jf: &Jellyfin) -> Result<String> {
         })
         .collect();
 
-    app.db
+    let seen_libs = lib_rows.len();
+    let shrink_ok = allow_shrink();
+    let refused = app
+        .db
         .call(move |c| {
             let tx = c.transaction()?;
             for l in &lib_rows {
@@ -423,11 +468,26 @@ async fn sync_libraries(app: &App, jf: &Jellyfin) -> Result<String> {
                     params![l["id"].as_str(), l["name"].as_str(), l["collection_type"].as_str(), l["image_tag"].as_str(), started],
                 )?;
             }
+            // The same guard as items, at the level above: a Jellyfin that lists no libraries where
+            // finstats knows several is a broken read, not an emptied server.
+            let current: i64 = tx.query_row("SELECT COUNT(*) FROM libraries WHERE removed = 0", [], |r| r.get(0))?;
+            if !shrink_ok && !trustworthy_removal(seen_libs, current) {
+                tx.rollback()?;
+                return Ok(Some(current));
+            }
             tx.execute("UPDATE libraries SET removed = 1 WHERE updated_at < ?1", [started])?;
             tx.commit()?;
-            Ok(())
+            Ok(None)
         })
         .await?;
+    if let Some(current) = refused {
+        let plural = if seen_libs == 1 { "y" } else { "ies" };
+        let msg = format!(
+            "Jellyfin listed {seen_libs} librar{plural} where finstats knows {current}. Refusing to mark the missing ones removed — this looks like a Jellyfin change or a bad read, not an emptied server. Nothing was changed."
+        );
+        app.request_halt(msg.clone());
+        return Err(anyhow!(msg));
+    }
 
     let mut total_items = 0usize;
     let lib_count = libraries.len();
@@ -498,14 +558,32 @@ async fn sync_libraries(app: &App, jf: &Jellyfin) -> Result<String> {
             }
         }
 
-        // Only after a library was read completely is "not seen" proof of removal.
+        // Only after a library was read completely is "not seen" proof of removal — and only if the
+        // read is trustworthy. `start` is how many items this pass actually saw; if that is a fraction
+        // of what finstats holds, the read is broken, not the library empty. Refuse, keep the data,
+        // and halt so the operator can look (see `trustworthy_removal`).
         let lib = lib_id.clone();
-        app.db
+        let seen = start;
+        let shrink_ok = allow_shrink();
+        let refused = app
+            .db
             .call(move |c| {
+                let current: i64 = c.query_row("SELECT COUNT(*) FROM items WHERE library_id = ?1 AND removed = 0", [&lib], |r| r.get(0))?;
+                if !shrink_ok && !trustworthy_removal(seen, current) {
+                    return Ok(Some(current));
+                }
                 c.execute("UPDATE items SET removed = 1 WHERE library_id = ?1 AND updated_at < ?2 AND removed = 0", params![lib, started])?;
-                Ok(())
+                Ok(None)
             })
             .await?;
+        if let Some(current) = refused {
+            let msg = format!(
+                "Jellyfin returned {seen} item(s) for library “{lib_name}” but finstats holds {current}. Refusing to mark {} items removed — this looks like a Jellyfin change or a bad read, not a deletion. The library was left exactly as it was.",
+                current - seen as i64
+            );
+            app.request_halt(msg.clone());
+            return Err(anyhow!(msg));
+        }
     }
 
     app.tasks.update(ID, "Linking plays to libraries", Some(1.0));
@@ -755,5 +833,25 @@ mod tests {
 
         store_people(&conn, &json!({ "Id": "AB-CD", "People": [{ "Id": "d2", "Name": "John Roe", "Type": "Director" }] })).unwrap();
         assert_eq!(count("SELECT COUNT(*) FROM item_people"), 1);
+    }
+
+    #[test]
+    fn a_read_that_comes_back_empty_is_never_grounds_to_remove_what_we_hold() {
+        // The whole point: a library finstats knows holds thousands of items, read back as empty or a
+        // handful, is a broken read (a Jellyfin upgrade, an error dressed as 200) — not a deletion.
+        assert!(!trustworthy_removal(0, 4000), "empty read of a stocked library must be refused");
+        assert!(!trustworthy_removal(0, 3), "even a small stocked set: an empty read is a refusal");
+        assert!(!trustworthy_removal(1, 5000), "one item where we hold thousands is not trustworthy");
+        assert!(!trustworthy_removal(300, 5000), "6% surviving is a catastrophic shrink");
+        // First sync (nothing stored) and genuinely-new sets are always fine.
+        assert!(trustworthy_removal(0, 0));
+        assert!(trustworthy_removal(4000, 0));
+        // Ordinary churn is fine: some titles gone, most present; a handful removed from a small set.
+        assert!(trustworthy_removal(4800, 5000), "4% churn is normal");
+        assert!(trustworthy_removal(600, 5000), "12% surviving is allowed, not a halt");
+        assert!(trustworthy_removal(3, 15), "removing a dozen from a tiny set is under the floor");
+        // Boundary: exactly a tenth surviving is allowed; just under it is refused.
+        assert!(trustworthy_removal(500, 5000));
+        assert!(!trustworthy_removal(499, 5000));
     }
 }

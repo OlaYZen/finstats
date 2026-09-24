@@ -51,6 +51,14 @@ pub struct AppState {
     pub downloads_wake: Notify,
     /// Wakes background loops when configuration or settings change.
     pub wake: Notify,
+    /// A controlled, fail-closed shutdown: when finstats reads something from Jellyfin it refuses to
+    /// act on — a library that came back empty where the database holds thousands of items, the shape
+    /// of a Jellyfin that has changed under an upgrade — it declines the destructive change (the data
+    /// is kept intact) and asks the process to stop, with a reason, so the operator sees it and can
+    /// pin a version or push a fix rather than discovering a wiped install later. `halt` wakes the
+    /// serve loop; `halt_reason` is what to print, set once.
+    pub halt: Notify,
+    pub halt_reason: Mutex<Option<String>>,
 }
 
 #[derive(Clone, Debug)]
@@ -197,6 +205,24 @@ impl AppState {
         self.settings.read().unwrap().clone()
     }
 
+    /// Refuse to go on: keep whatever is already stored, record why, and ask the serve loop to shut
+    /// down cleanly. Only the first reason is kept — the first thing to notice a broken read is the
+    /// one that matters, and a flood of follow-on errors must not bury it. Safe to call from anywhere,
+    /// including inside a `db.call` closure.
+    pub fn request_halt(&self, reason: impl Into<String>) {
+        let reason = reason.into();
+        let mut slot = self.halt_reason.lock().unwrap();
+        if slot.is_none() {
+            tracing::error!("halting: {reason}");
+            *slot = Some(reason);
+            self.halt.notify_waiters();
+        }
+    }
+
+    pub fn halt_reason(&self) -> Option<String> {
+        self.halt_reason.lock().unwrap().clone()
+    }
+
     pub fn is_configured(&self) -> bool {
         self.config.read().unwrap().is_some()
     }
@@ -311,6 +337,8 @@ pub fn test_app() -> App {
         notify_targets: Default::default(),
         notify_wake: Notify::new(),
         wake: Notify::new(),
+        halt: Notify::new(),
+        halt_reason: Mutex::new(None),
     })
 }
 

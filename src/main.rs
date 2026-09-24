@@ -217,6 +217,8 @@ async fn serve(db: db::Db, data_dir: PathBuf) -> Result<()> {
         notify_targets: Default::default(),
         notify_wake: Notify::new(),
         wake: Notify::new(),
+        halt: Notify::new(),
+        halt_reason: Mutex::new(None),
     });
 
     services::reload(&app).await?;
@@ -247,13 +249,33 @@ async fn serve(db: db::Db, data_dir: PathBuf) -> Result<()> {
         None => tracing::info!("finstats {} on http://{bind} — open it in a browser to finish setup", env!("CARGO_PKG_VERSION")),
     }
 
-    axum::serve(listener, api::router(app).into_make_service_with_connect_info::<SocketAddr>())
-        .with_graceful_shutdown(async {
+    let serve_app = app.clone();
+    axum::serve(listener, api::router(app.clone()).into_make_service_with_connect_info::<SocketAddr>())
+        .with_graceful_shutdown(async move {
             let ctrl_c = tokio::signal::ctrl_c();
             let mut term = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()).expect("SIGTERM handler");
-            tokio::select! { _ = ctrl_c => {}, _ = term.recv() => {} }
-            tracing::info!("shutting down");
+            // A fail-closed halt (`request_halt`) is a third way out, next to Ctrl-C and SIGTERM: finstats
+            // refused to apply something from Jellyfin and is stopping so the operator can look.
+            tokio::select! {
+                _ = ctrl_c => tracing::info!("shutting down"),
+                _ = term.recv() => tracing::info!("shutting down"),
+                _ = serve_app.halt.notified() => {}
+            }
         })
         .await?;
+    // A clean stop returns 0; a fail-closed halt returns non-zero and says why, so a process manager
+    // surfaces it (a restart loop stops as soon as the operator sets FINSTATS_ALLOW_LIBRARY_SHRINK=1 or
+    // fixes Jellyfin). The refused change was never applied — the database is exactly as it was.
+    if let Some(reason) = app.halt_reason() {
+        tracing::error!("finstats stopped without applying a change it did not trust: {reason}");
+        eprintln!("
+finstats halted: {reason}
+
+Nothing was changed. Check Jellyfin (an upgrade may have changed its API),
+then restart. To allow it through once (for example after really emptying a library),
+set FINSTATS_ALLOW_LIBRARY_SHRINK=1.
+");
+        std::process::exit(70);
+    }
     Ok(())
 }
