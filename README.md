@@ -1,3 +1,6 @@
+> [!WARNING]
+> The repo has been moved to [here](https://github.com/finstats/finstats)
+
 <p align="center"><img src="web/assets/logo.svg" width="88" height="88" alt=""></p>
 <h1 align="center">finstats</h1>
 
